@@ -231,3 +231,16 @@ def save_layout(
         layout=[item.model_dump() for item in body.layout],
         db=db,
     )
+
+
+@router.post("/deduplicate", status_code=200)
+def deduplicate_dashboards(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Remove duplicate Default Dashboards created by concurrent requests.
+    Keeps the oldest dashboard per user, deletes the rest.
+    Called automatically on UserDashboardPage mount.
+    """
+    return user_dashboard_service.deduplicate_dashboards(user_id, db)

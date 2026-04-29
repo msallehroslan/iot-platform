@@ -68,34 +68,71 @@ def _ensure_single_default(user_id: str, exclude_id: Optional[UUID], db: Session
 
 
 def _get_or_create_default(user_id: str, db: Session) -> UserDashboard:
-    """Return user's default dashboard, creating it if none exist."""
-    existing = (
+    """
+    Return the user's default dashboard, creating it if none exist.
+
+    Uses a SELECT-then-INSERT-with-count-recheck pattern to prevent
+    duplicate creation when two requests race (React StrictMode double
+    render, two tabs, or concurrent API calls).
+
+    The recheck inside the transaction means: even if two requests both
+    pass the first SELECT (both see 0 rows), only one INSERT succeeds
+    because the second recheck finds count=1 and returns existing.
+    """
+    # Fast path — user already has dashboards
+    rows = (
         db.query(UserDashboard)
         .filter(UserDashboard.user_id == user_id)
         .order_by(UserDashboard.created_at)
-        .first()
+        .all()
     )
-    if existing:
-        # Make sure exactly one is marked default
-        default = db.query(UserDashboard).filter(
-            UserDashboard.user_id == user_id, UserDashboard.is_default == True
-        ).first()
+    if rows:
+        # Ensure exactly one is marked default
+        default = next((d for d in rows if d.is_default), None)
         if not default:
-            existing.is_default = True
+            rows[0].is_default = True
             db.commit()
-            db.refresh(existing)
-        return default or existing
+            db.refresh(rows[0])
+            return rows[0]
+        return default
 
-    # No dashboards at all — auto-create
-    d = UserDashboard(
-        user_id=user_id,
-        name=DEFAULT_DASHBOARD_NAME,
-        is_default=True,
-    )
-    db.add(d)
-    db.commit()
-    db.refresh(d)
-    return d
+    # Slow path — no dashboards. Re-check inside a serialised block
+    # to guard against concurrent requests both seeing count=0.
+    db.begin_nested()   # SAVEPOINT — safe to rollback without losing session
+    try:
+        # Re-count inside the savepoint (will see any concurrent INSERT)
+        count = db.query(UserDashboard).filter(
+            UserDashboard.user_id == user_id
+        ).count()
+
+        if count > 0:
+            # Another request beat us to it — just return what exists
+            db.rollback()
+            return (
+                db.query(UserDashboard)
+                .filter(UserDashboard.user_id == user_id)
+                .order_by(UserDashboard.created_at)
+                .first()
+            )
+
+        d = UserDashboard(
+            user_id=user_id,
+            name=DEFAULT_DASHBOARD_NAME,
+            is_default=True,
+        )
+        db.add(d)
+        db.commit()
+        db.refresh(d)
+        return d
+    except Exception:
+        db.rollback()
+        # Last resort — return whatever exists after the rollback
+        return (
+            db.query(UserDashboard)
+            .filter(UserDashboard.user_id == user_id)
+            .order_by(UserDashboard.created_at)
+            .first()
+        )
 
 
 # ── Dashboard service ─────────────────────────────────────────────────────────
@@ -103,17 +140,24 @@ def _get_or_create_default(user_id: str, db: Session) -> UserDashboard:
 def list_dashboards(user_id: str, db: Session) -> List[dict]:
     """
     Return all dashboards for the user, sorted oldest-first.
-    Auto-creates a default dashboard if the user has none.
+    Auto-creates a single default dashboard if the user has none.
+    The auto-create is race-condition safe — see _get_or_create_default.
     """
-    # Trigger auto-create if needed
-    _get_or_create_default(user_id, db)
-
     rows = (
         db.query(UserDashboard)
         .filter(UserDashboard.user_id == user_id)
         .order_by(UserDashboard.created_at)
         .all()
     )
+    if not rows:
+        # Trigger safe auto-create then re-fetch
+        _get_or_create_default(user_id, db)
+        rows = (
+            db.query(UserDashboard)
+            .filter(UserDashboard.user_id == user_id)
+            .order_by(UserDashboard.created_at)
+            .all()
+        )
     return [_dashboard_out(d, include_widgets=False) for d in rows]
 
 
@@ -342,3 +386,38 @@ def save_layout(dashboard_id: UUID, user_id: str,
 
     db.commit()
     return {"updated": updated, "count": len(updated)}
+
+
+def deduplicate_dashboards(user_id: str, db: Session) -> dict:
+    """
+    Remove duplicate dashboards for this user — keeps the oldest, deletes the rest.
+    Safe to call on every page load; does nothing if there is only one dashboard.
+    """
+    rows = (
+        db.query(UserDashboard)
+        .filter(UserDashboard.user_id == user_id)
+        .order_by(UserDashboard.created_at)
+        .all()
+    )
+    if len(rows) <= 1:
+        return {"removed": 0}
+
+    # Group by name, keep oldest per name
+    seen_names = {}
+    to_delete  = []
+    for d in rows:
+        if d.name not in seen_names:
+            seen_names[d.name] = d
+        else:
+            to_delete.append(d)
+
+    for d in to_delete:
+        db.delete(d)
+
+    # Ensure exactly one default remains
+    remaining = [d for d in rows if d not in to_delete]
+    if remaining and not any(d.is_default for d in remaining):
+        remaining[0].is_default = True
+
+    db.commit()
+    return {"removed": len(to_delete)}
