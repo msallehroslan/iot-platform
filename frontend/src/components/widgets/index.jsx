@@ -110,9 +110,9 @@ export function BarChartSVG({ data = [], color = "#3b82f6" }) {
   const bw = Math.max(1, w / vals.length - 1);
   const px = i => pad.l + (i / vals.length) * w + bw / 2;
   const bh = v => Math.max(1, ((v - mn) / rng) * h);
-  const gid = \`bc\${color.replace(/[^a-z0-9]/gi, "")}\`;
+  const gid = `bc${color.replace(/[^a-z0-9]/gi, "")}`;
   return (
-    <svg viewBox={\`0 0 \${W} \${H}\`} style={{ width: "100%", height: H }}>
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
       <defs>
         <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stopColor={color} stopOpacity="0.9" />
@@ -133,7 +133,7 @@ export function BarChartSVG({ data = [], color = "#3b82f6" }) {
           y={pad.t + h - bh(v)}
           width={bw}
           height={bh(v)}
-          fill={\`url(#\${gid})\`}
+          fill={`url(#${gid})`}
           rx="2"
         />
       ))}

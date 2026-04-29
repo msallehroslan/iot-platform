@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -374,11 +374,118 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
 function SettingsPage({ user, onLogout }) {
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   const WS_BASE=BASE_URL.replace(/^http/,"ws");
+  const [provKey, setProvKey] = useState("");
+  const [provLoading, setProvLoading] = useState(true);
+  const [provCopied, setProvCopied] = useState(false);
+  const [provEndpoint, setProvEndpoint] = useState("");
+
+  useEffect(() => {
+    provisioningApi.getKey()
+      .then(d => { setProvKey(d.provisioning_key || ""); setProvEndpoint(d.provision_endpoint || ""); })
+      .catch(() => {})
+      .finally(() => setProvLoading(false));
+  }, []);
+
+  const copyKey = () => {
+    navigator.clipboard.writeText(provKey).catch(() => {});
+    setProvCopied(true);
+    setTimeout(() => setProvCopied(false), 2000);
+  };
+
+  const esp32Code = `// ── Device Provisioning (auto-register on first boot) ──────
+#define PROVISION_KEY  "${provKey}"
+#define PROVISION_URL  "${BASE_URL}/api/v1/devices/provision"
+#define DEVICE_NAME    "ESP32-GluciQ-001"  // unique name per device
+
+String deviceToken = "";  // filled after provisioning
+
+bool provision() {
+  HTTPClient http;
+  http.begin(PROVISION_URL);
+  http.addHeader("Content-Type", "application/json");
+  String body = "{\"provision_key\":\"" + String(PROVISION_KEY) + "\","
+                "\"device_name\":\"" + String(DEVICE_NAME) + "\","
+                "\"device_type\":\"SENSOR\"}";
+  int code = http.POST(body);
+  if (code == 200 || code == 201) {
+    String resp = http.getString();
+    // Parse token from: {"device_id":"...","token":"...","status":"..."}
+    int t1 = resp.indexOf("\"token\":\"") + 9;
+    int t2 = resp.indexOf("\"", t1);
+    deviceToken = resp.substring(t1, t2);
+    Serial.println("Provisioned! Token: " + deviceToken);
+    http.end(); return true;
+  }
+  http.end(); return false;
+}`;
+
   return (
-    <div className="max-w-xl space-y-4">
-      {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||""}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
+    <div className="max-w-2xl space-y-4">
+      {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
         <div key={s.t} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
       ))}
+
+      {/* ── Device Provisioning Key ── */}
+      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="px-5 py-3.5 border-b border-slate-50 flex items-center gap-2">
+          <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+          <h3 className="text-sm font-semibold text-slate-700">Device Provisioning</h3>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Use this key in your ESP32 / firmware so devices can <strong>self-register</strong> the first time
+            they boot — without needing a user account or JWT token. The device receives a unique token
+            it can use for all future telemetry ingestion.
+          </p>
+
+          {/* Provisioning key display */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">Your Provisioning Key</label>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={provLoading ? "Loading…" : provKey}
+                className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 outline-none font-mono"
+              />
+              <button
+                onClick={copyKey}
+                disabled={provLoading || !provKey}
+                className="flex items-center gap-1.5 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
+              >
+                {provCopied
+                  ? <><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied!</>
+                  : <><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</>
+                }
+              </button>
+            </div>
+          </div>
+
+          {/* Endpoint */}
+          <div>
+            <label className="block text-xs font-medium text-slate-400 mb-1.5">Provision Endpoint</label>
+            <input readOnly value={`${BASE_URL}/api/v1/devices/provision`}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/>
+          </div>
+
+          {/* How it works */}
+          <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+            <p className="font-semibold">How it works</p>
+            <p>1. Device sends <code className="bg-blue-100 px-1 rounded">POST /api/v1/devices/provision</code> with your key and a unique device name</p>
+            <p>2. Platform creates the device under your tenant and returns a <strong>device token</strong></p>
+            <p>3. Device saves the token and uses it for all future telemetry: <code className="bg-blue-100 px-1 rounded">/api/v1/telemetry/ingest/&#123;token&#125;</code></p>
+            <p>4. If the device name already exists, the same token is returned — safe to call on every boot</p>
+          </div>
+
+          {/* ESP32 code snippet */}
+          {provKey && (
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">ESP32 Arduino Code Snippet</label>
+              <pre className="bg-slate-800 text-slate-300 text-[10px] rounded-lg p-3 overflow-x-auto leading-relaxed font-mono whitespace-pre">{esp32Code}</pre>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="bg-white rounded-xl border border-red-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-red-50"><h3 className="text-sm font-semibold text-red-600">Danger Zone</h3></div><div className="p-5 flex items-center justify-between"><div><p className="text-sm font-medium text-slate-700">Sign out</p><p className="text-xs text-slate-400 mt-0.5">Clears your session</p></div><button onClick={onLogout} className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign Out</button></div></div>
     </div>
   );

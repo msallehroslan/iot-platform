@@ -159,6 +159,32 @@ class TelemetryDataPoint(BaseModel):
         from_attributes = True
 
 
+# ── Device Provisioning ──────────────────────────────────────────────────────
+
+class ProvisionRequest(BaseModel):
+    """
+    Sent by a device (e.g. ESP32) to self-register without a user JWT.
+    The provision_key identifies the tenant; a device token is returned.
+    """
+    provision_key: str
+    device_name:   str
+    device_type:   str = "DEFAULT"
+    label:         Optional[str] = None
+
+
+class ProvisionResponse(BaseModel):
+    device_id: str
+    name:      str
+    token:     str
+    status:    str
+
+
+class ProvisioningKeyOut(BaseModel):
+    """Returned to authenticated users so they can view their tenant's key."""
+    provisioning_key: str
+    provision_endpoint: str
+
+
 class LatestTelemetryOut(BaseModel):
     key: str
     value: Any

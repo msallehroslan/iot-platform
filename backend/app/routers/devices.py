@@ -22,7 +22,12 @@ import uuid
 from app.core.database import get_db
 from app.core.auth_deps import get_current_user
 from app.models.models import Device, DeviceStatus, User
-from app.schemas.schemas import DeviceCreate, DeviceUpdate, DeviceOut
+from app.core.config import settings
+from app.models.models import Tenant
+from app.schemas.schemas import (
+    DeviceCreate, DeviceUpdate, DeviceOut,
+    ProvisionRequest, ProvisionResponse, ProvisioningKeyOut,
+)
 
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
@@ -130,3 +135,105 @@ def regenerate_token(
     db.commit()
     db.refresh(device)
     return device
+
+
+# ── Device Provisioning ───────────────────────────────────────────────────────
+
+@router.get("/provisioning-key", response_model=ProvisioningKeyOut)
+def get_provisioning_key(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return the authenticated user's tenant provisioning key.
+    This key is used by devices (e.g. ESP32) to self-register without a user JWT.
+    The key is read-only — it is generated once when the tenant is created.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    # Auto-generate key for old tenants that existed before this feature
+    if not tenant.provisioning_key:
+        import secrets
+        tenant.provisioning_key = secrets.token_hex(16)
+        db.commit()
+        db.refresh(tenant)
+
+    base_url = settings.BASE_URL if hasattr(settings, "BASE_URL") else ""
+    return ProvisioningKeyOut(
+        provisioning_key=tenant.provisioning_key,
+        provision_endpoint=f"{base_url}/api/v1/devices/provision",
+    )
+
+
+@router.post("/provision", response_model=ProvisionResponse, status_code=201)
+def provision_device(
+    body: ProvisionRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    ThingsBoard-style device self-registration.
+    No user JWT required — the device sends its provisioning key.
+
+    Flow:
+      1. Validate provision_key → find the owning tenant
+      2. If a device with the same name already exists in that tenant → return it (idempotent)
+      3. Otherwise create a new device with a fresh token and ACTIVE status
+      4. Return device_id, name, token, status
+
+    The device can then use the returned token for all future telemetry ingestion:
+      POST /api/v1/telemetry/ingest/{token}
+
+    Security:
+      - Invalid provision_key → 401
+      - Tenant isolation is automatic — the key maps to exactly one tenant
+      - Never exposes data from other tenants
+    """
+    if not body.provision_key or not body.provision_key.strip():
+        raise HTTPException(status_code=401, detail="Provision key is required")
+    if not body.device_name or not body.device_name.strip():
+        raise HTTPException(status_code=400, detail="device_name is required")
+
+    # Validate the provision key — find the owning tenant
+    tenant = db.query(Tenant).filter(
+        Tenant.provisioning_key == body.provision_key.strip()
+    ).first()
+    if not tenant:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid provisioning key",
+        )
+
+    # Idempotent: if a device with this name already exists in the tenant, return it
+    existing = db.query(Device).filter(
+        Device.tenant_id == tenant.id,
+        Device.name == body.device_name.strip(),
+    ).first()
+    if existing:
+        return ProvisionResponse(
+            device_id=str(existing.id),
+            name=existing.name,
+            token=existing.token,
+            status=existing.status.value,
+        )
+
+    # Create new device under this tenant
+    device = Device(
+        name=body.device_name.strip(),
+        device_type=body.device_type or "DEFAULT",
+        label=body.label,
+        tenant_id=tenant.id,
+        token=str(uuid.uuid4()),
+        status=DeviceStatus.INACTIVE,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+    return ProvisionResponse(
+        device_id=str(device.id),
+        name=device.name,
+        token=device.token,
+        status=device.status.value,
+    )

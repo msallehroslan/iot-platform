@@ -85,6 +85,15 @@ export const statsApi = {
   get: () => apiFetch("/dashboard/stats"),
 };
 
+// ── Device Provisioning ───────────────────────────────────────────────────────
+export const provisioningApi = {
+  // Returns the tenant's provisioning key (JWT required)
+  getKey: () => apiFetch("/devices/provisioning-key"),
+  // Self-register a device using only the provision key (no JWT)
+  // Used by ESP32 / firmware — not called from the web UI
+  provision: (body) => apiFetch("/devices/provision", { method: "POST", body: JSON.stringify(body) }),
+};
+
 // ── Dashboards (raw HTTP — use dashboardService.js for business logic) ────────
 export const dashboardsHttp = {
   list:         deviceId           => apiFetch(`/dashboards/?device_id=${deviceId}`),

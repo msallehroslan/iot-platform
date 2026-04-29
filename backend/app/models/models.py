@@ -43,6 +43,14 @@ class Tenant(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
+    # provisioning_key is used by devices to self-register without a user JWT.
+    # ThingsBoard-style: the key identifies the tenant; the device gets a token back.
+    # Auto-generated at tenant creation. Users can view (but not change) it.
+    provisioning_key = Column(
+        String(64), nullable=True, unique=True, index=True,
+        default=lambda: str(uuid.uuid4()).replace("-", "")
+    )
+
     users = relationship("User", back_populates="tenant")
     customers = relationship("Customer", back_populates="tenant")
     devices = relationship("Device", back_populates="tenant")

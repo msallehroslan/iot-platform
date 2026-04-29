@@ -18,6 +18,7 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.models.models import User, Tenant
 from app.schemas.schemas import UserCreate, UserOut, LoginRequest, TokenResponse
 import uuid
+import secrets
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -37,7 +38,10 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    tenant = Tenant(name=f"{user_in.email}'s Organization")
+    tenant = Tenant(
+        name=f"{user_in.email}'s Organization",
+        provisioning_key=secrets.token_hex(16),
+    )
     db.add(tenant)
     db.flush()
 
@@ -81,7 +85,10 @@ def seed_demo(db: Session = Depends(get_db)):
             "password": "demo1234",
         }
 
-    tenant = Tenant(name="Demo Organization")
+    tenant = Tenant(
+        name="Demo Organization",
+        provisioning_key=secrets.token_hex(16),
+    )
     db.add(tenant)
     db.flush()
 

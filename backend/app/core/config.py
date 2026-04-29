@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Example: "https://myapp.onrender.com,http://localhost:5173"
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
 
+    # Base URL for self-referential links (e.g. provisioning endpoint in API responses)
+    BASE_URL: str = ""
+
     @property
     def cors_origins_list(self) -> List[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

@@ -115,3 +115,24 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "004_add_provisioning_key_to_tenants",
+        "desc": "Add provisioning_key column to tenants table for device self-registration",
+        "sql":  """
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS provisioning_key VARCHAR(64) UNIQUE;
+        """,
+    },
+    {
+        "id":   "005_backfill_provisioning_keys",
+        "desc": "Generate provisioning keys for existing tenants that don't have one",
+        "sql":  """
+            UPDATE tenants
+            SET provisioning_key = REPLACE(gen_random_uuid()::text, '-', '')
+            WHERE provisioning_key IS NULL;
+        """,
+    },
+]
