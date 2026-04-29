@@ -156,9 +156,16 @@ async def ingest_telemetry(
     ts = ts or datetime.now(timezone.utc)
 
     # ── 4. Persist each telemetry key ─────────────────────────────────────────
-    keys_saved = 0
+    keys_saved     = 0
+    coerced_values = {}   # collects coerced values for WS broadcast
     for key, raw_value in values.items():
         val_str, val_num, val_bool, val_json = _coerce_value(raw_value)
+        coerced_values[key] = (
+            val_num  if val_num  is not None else
+            val_bool if val_bool is not None else
+            val_json if val_json is not None else
+            val_str
+        )
 
         # Append time-series record
         db.add(TelemetryData(
@@ -214,9 +221,11 @@ async def ingest_telemetry(
     # ── 7. Broadcast to WebSocket clients (non-fatal) ─────────────────────────
     try:
         from app.core.websocket_manager import manager as ws_manager
+        # Broadcast coerced values (always numeric where possible)
+        # so widgets receive the same type the DB stores
         await ws_manager.broadcast(
             device_id=str(device.id),
-            values=values,
+            values=coerced_values,
             ts=ts.isoformat(),
         )
     except Exception as exc:

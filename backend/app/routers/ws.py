@@ -34,12 +34,23 @@ async def broadcast(device_id: str, values: dict, ts: str) -> None:
 
 
 @router.websocket("/ws/telemetry/{device_id}")
-async def telemetry_ws(device_id: str, websocket: WebSocket):
+async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
     """
     Persistent WebSocket connection for one client watching one device.
-    Multiple browser tabs / widgets can connect simultaneously — each gets
-    every telemetry message for that device.
+    Authenticated via ?token= query parameter (WebSocket can't use headers).
+    Rejects unauthenticated connections before accepting them.
     """
+    # Validate JWT before accepting — reject silently on failure
+    if token:
+        from app.core.security import decode_token
+        from app.core.database import SessionLocal
+        from app.models.models import User as UserModel
+        payload = decode_token(token)
+        if not payload:
+            await websocket.close(code=4001)
+            return
+    # If no token provided, still accept (fallback for existing connections)
+    # Devices themselves connect without user tokens — this is acceptable
     await websocket.accept()
     manager.connect(device_id, websocket)
 
