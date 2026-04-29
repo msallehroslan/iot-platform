@@ -97,3 +97,21 @@ def run():
 
 if __name__ == "__main__":
     run()
+
+
+# Migration 003: Assign NULL tenant_id devices to the first tenant
+# Devices created before the auth fix have tenant_id = NULL.
+# This assigns them to the oldest tenant in the database as a best-effort fix.
+# In a real system you'd match them to their creator's tenant.
+MIGRATIONS += [
+    {
+        "id":   "003_assign_null_tenant_devices",
+        "desc": "Assign devices with NULL tenant_id to the first available tenant",
+        "sql":  """
+            UPDATE devices
+            SET tenant_id = (SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1)
+            WHERE tenant_id IS NULL
+              AND (SELECT COUNT(*) FROM tenants) > 0;
+        """,
+    },
+]
