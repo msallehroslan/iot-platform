@@ -117,5 +117,6 @@ export function getDefaultPositionForType(widgetType) {
     entity_table:     { w: 6, h: 4 },
     html_card:        { w: 4, h: 3 },
   };
-  return { x: 0, y: Infinity, ...(sizes[widgetType] || { w: 4, h: 3 }) };
+  // y: 9999 tells RGL to place at the bottom row (Infinity is invalid JSON → null → 422).
+  return { x: 0, y: 9999, ...(sizes[widgetType] || { w: 4, h: 3 }) };
 }
