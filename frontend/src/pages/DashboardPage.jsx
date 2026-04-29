@@ -68,8 +68,8 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
   });
   const set = (k, v) => setCfg(c => ({ ...c, [k]: v }));
 
-  const needsKey      = !["alarm_list","bar_chart","markdown","entity_table","html_card","pie_chart"].includes(type);
-  const needsMultiKey = ["bar_chart","pie_chart"].includes(type);
+  const needsKey      = !["alarm_list","markdown","entity_table","html_card","pie_chart"].includes(type);  // bar_chart now needs a key
+  const needsMultiKey = ["pie_chart"].includes(type);  // bar_chart now uses single key (time-series)
   const needsContent  = ["markdown","html_card"].includes(type);
 
   const handleSave = () => {

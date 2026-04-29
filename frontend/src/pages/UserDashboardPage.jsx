@@ -125,8 +125,8 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
   // bar_chart, pie_chart need multiple keys
   // markdown, html_card need freeform content
   const noTelemetry   = ["markdown"].includes(type);
-  const needsKey      = !["alarm_list","bar_chart","markdown","entity_table","html_card","pie_chart"].includes(type);
-  const needsMultiKey = ["bar_chart","pie_chart"].includes(type);
+  const needsKey      = !["alarm_list","markdown","entity_table","html_card","pie_chart"].includes(type);  // bar_chart now needs a key
+  const needsMultiKey = ["pie_chart"].includes(type);  // bar_chart now uses single key (time-series)
   const needsContent  = ["markdown","html_card"].includes(type);
   const needsDevice   = !["markdown"].includes(type);  // everything except pure markdown needs a device
 

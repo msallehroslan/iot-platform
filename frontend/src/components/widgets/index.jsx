@@ -96,29 +96,49 @@ export function GaugeSVG({ value, min = 0, max = 100, color = "#3b82f6" }) {
 }
 
 export function BarChartSVG({ data = [], color = "#3b82f6" }) {
+  // data = [{ts, value}, ...] — time-series array, same shape as LineChartSVG
   if (!data.length) return (
-    <div style={{ height: 80, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
-      <svg style={{ width: 22, height: 22, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
-      <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>No data yet</p>
+    <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
+      <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
     </div>
   );
-  const W = 280, H = 80, pad = { t: 4, r: 4, b: 20, l: 4 };
-  const maxV = Math.max(...data.map(d => d.value), 1);
-  const bw   = (W - pad.l - pad.r) / data.length - 4;
+  const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
+  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const bw = Math.max(1, w / vals.length - 1);
+  const px = i => pad.l + (i / vals.length) * w + bw / 2;
+  const bh = v => Math.max(1, ((v - mn) / rng) * h);
+  const gid = \`bc\${color.replace(/[^a-z0-9]/gi, "")}\`;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
-      {data.map((d, i) => {
-        const bh = ((d.value / maxV) * (H - pad.t - pad.b));
-        const bx = pad.l + i * ((W - pad.l - pad.r) / data.length);
-        return (
-          <g key={d.key}>
-            <rect x={bx} y={H - pad.b - bh} width={bw} height={bh} rx="3" fill={color} opacity="0.85" />
-            <text x={bx + bw / 2} y={H - 5} textAnchor="middle" fontSize="7" fill="#94a3b8" fontFamily="monospace">
-              {d.key.slice(0, 6)}
-            </text>
-          </g>
-        );
+    <svg viewBox={\`0 0 \${W} \${H}\`} style={{ width: "100%", height: H }}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor={color} stopOpacity="0.9" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.4" />
+        </linearGradient>
+      </defs>
+      {[0, 0.25, 0.5, 0.75, 1].map(t => {
+        const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
+        return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
       })}
+      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map(p => {
+        const idx = data.indexOf(p);
+        return <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>;
+      })}
+      {vals.map((v, i) => (
+        <rect key={i}
+          x={pad.l + (i / vals.length) * w}
+          y={pad.t + h - bh(v)}
+          width={bw}
+          height={bh(v)}
+          fill={\`url(#\${gid})\`}
+          rx="2"
+        />
+      ))}
+      {/* Latest value dot */}
+      <circle cx={px(vals.length - 1)} cy={pad.t + h - bh(vals[vals.length - 1])} r="3" fill={color} stroke="white" strokeWidth="2" />
     </svg>
   );
 }
@@ -243,37 +263,17 @@ export function StatusLight({ config, liveTelem }) {
   );
 }
 
-export function BarChartWidget({ config, liveTelem }) {
-  // Use config.keys if any match liveTelem; otherwise fall back to all available keys
-  const configuredKeys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
-  const fallbackKeys   = configuredKeys.length ? configuredKeys
-    : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
-  const keys = fallbackKeys;
-  const data = keys.map(k => ({ key: k, value: parseFloat(liveTelem[k]) || 0 }));
-
-  // No liveTelem received yet — show a waiting state
-  if (!liveTelem || Object.keys(liveTelem).length === 0) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8 }}>
-        <svg style={{ width: 24, height: 24, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
-        <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>Waiting for data…</p>
-        {(config.keys || []).length > 0 && (
-          <p style={{ fontSize: 10, color: "#cbd5e1", margin: 0 }}>Keys: {config.keys.join(", ")}</p>
-        )}
-      </div>
-    );
-  }
-
+export function BarChartWidget({ config, historyData }) {
+  // Uses historyData exactly like LineChartWidget — time-series bars over time
+  // config.key = single key to plot as bars (uses first of config.keys if key not set)
+  const key = config.key || (config.keys || [])[0] || "";
+  const history = historyData?.[key] || [];
   return (
-    <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%" }}>
-      <BarChartSVG data={data} color={config.color || "#3b82f6"} />
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-        {data.map(d => (
-          <span key={d.key} style={{ fontSize: 9, background: "#f1f5f9", color: "#64748b", padding: "1px 5px", borderRadius: 4, fontFamily: "monospace" }}>
-            {d.key}: {d.value.toFixed(1)}
-          </span>
-        ))}
-        {data.length === 0 && <span style={{ fontSize: 10, color: "#f59e0b" }}>No matching keys in telemetry</span>}
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <BarChartSVG data={history} color={config.color || "#3b82f6"} />
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · {key}</span>
       </div>
     </div>
   );
