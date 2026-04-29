@@ -526,7 +526,11 @@ export default function App() {
 
   const handleRefresh = () => { setRefreshing(true); setRefreshKey(k => k + 1); setTimeout(() => setRefreshing(false), 700); };
   const handleLogin   = u => { setUser(u); setAuthed(true); };
-  const handleLogout  = () => { localStorage.removeItem("access_token"); localStorage.removeItem("user"); setUser(null); setAuthed(false); setPage("overview"); };
+  const handleLogout  = () => {
+    // Clear everything — prevents stale data leaking to next login session
+    localStorage.clear();
+    setUser(null); setAuthed(false); setPage("overview");
+  };
   const showToast     = (msg, type = "success") => setToast({ msg, type });
 
   if (!authed) return <LoginPage onLogin={handleLogin} />;
