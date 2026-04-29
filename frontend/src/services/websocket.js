@@ -156,7 +156,10 @@ function _connect(deviceId) {
   if (!state.subscribers.length) return;   // nobody is listening, skip
   if (state.ws && state.ws.readyState <= WebSocket.OPEN) return;  // already open/connecting
 
-  const url = `${WS_BASE}/api/v1/ws/telemetry/${deviceId}`;
+  // Include JWT token in WS URL query param — WS connections can't use headers
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : '';
+  const tokenParam = token ? `?token=${encodeURIComponent(token)}` : '';
+  const url = `${WS_BASE}/api/v1/ws/telemetry/${deviceId}${tokenParam}`;
 
   let ws;
   try {

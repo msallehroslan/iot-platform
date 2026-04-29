@@ -644,6 +644,20 @@ export default function UserDashboardPage({ onToast }) {
           const values = {};
           rows.forEach(r => { values[r.key] = r.value; });
           setLiveTelem(prev => ({ ...prev, [deviceId]: { ...(prev[deviceId] || {}), ...values } }));
+
+          // Seed history for each key so line charts show data immediately on load
+          rows.forEach(r => {
+            telemetryApi.history(deviceId, r.key, 50)
+              .then(pts => {
+                if (!pts?.length) return;
+                setHistoryData(prev => {
+                  const deviceHistory = { ...(prev[deviceId] || {}) };
+                  deviceHistory[r.key] = pts;
+                  return { ...prev, [deviceId]: deviceHistory };
+                });
+              })
+              .catch(() => {});
+          });
         })
         .catch(() => {});
 
