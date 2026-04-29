@@ -88,55 +88,6 @@ def create_device(
     return device
 
 
-@router.get("/{device_id}", response_model=DeviceOut)
-def get_device(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    return _get_device_owned(device_id, current_user, db)
-
-
-@router.put("/{device_id}", response_model=DeviceOut)
-def update_device(
-    device_id: UUID,
-    device_in: DeviceUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    device = _get_device_owned(device_id, current_user, db)
-    update_data = device_in.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(device, field, value)
-    db.commit()
-    db.refresh(device)
-    return device
-
-
-@router.delete("/{device_id}", status_code=204)
-def delete_device(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    device = _get_device_owned(device_id, current_user, db)
-    db.delete(device)
-    db.commit()
-
-
-@router.post("/{device_id}/token/regenerate", response_model=DeviceOut)
-def regenerate_token(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    device = _get_device_owned(device_id, current_user, db)
-    device.token = str(uuid.uuid4())
-    db.commit()
-    db.refresh(device)
-    return device
-
-
 # ── Device Provisioning ───────────────────────────────────────────────────────
 
 @router.get("/provisioning-key", response_model=ProvisioningKeyOut)
@@ -237,3 +188,53 @@ def provision_device(
         token=device.token,
         status=device.status.value,
     )
+
+
+@router.get("/{device_id}", response_model=DeviceOut)
+def get_device(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return _get_device_owned(device_id, current_user, db)
+
+
+@router.put("/{device_id}", response_model=DeviceOut)
+def update_device(
+    device_id: UUID,
+    device_in: DeviceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = _get_device_owned(device_id, current_user, db)
+    update_data = device_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(device, field, value)
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+@router.delete("/{device_id}", status_code=204)
+def delete_device(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = _get_device_owned(device_id, current_user, db)
+    db.delete(device)
+    db.commit()
+
+
+@router.post("/{device_id}/token/regenerate", response_model=DeviceOut)
+def regenerate_token(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    device = _get_device_owned(device_id, current_user, db)
+    device.token = str(uuid.uuid4())
+    db.commit()
+    db.refresh(device)
+    return device
+
