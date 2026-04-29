@@ -30,7 +30,19 @@ export async function apiFetch(path, opts = {}) {
   if (res.status === 204) return null;
 
   const data = await res.json();
-  if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // FastAPI validation errors return detail as an array of objects.
+    // Extract a readable string instead of letting it become [object Object].
+    const detail = data?.detail;
+    let msg;
+    if (Array.isArray(detail)) {
+      // [{loc:[...], msg:'...', type:'...'}, ...]
+      msg = detail.map(e => `${e.loc?.slice(-1)[0] || 'field'}: ${e.msg}`).join(' | ');
+    } else {
+      msg = typeof detail === 'string' ? detail : `HTTP ${res.status}`;
+    }
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -38,7 +50,8 @@ export async function apiFetch(path, opts = {}) {
 export const authApi = {
   login:    (email, password) => apiFetch("/auth/login",    { method: "POST", body: JSON.stringify({ email, password }) }),
   register: (body)            => apiFetch("/auth/register", { method: "POST", body: JSON.stringify(body) }),
-  seedDemo: ()                => apiFetch("/auth/seed-demo",{ method: "POST" }),
+  seedDemo:      ()                    => apiFetch("/auth/seed-demo",      { method: "POST" }),
+  resetPassword: (email, new_password) => apiFetch("/auth/reset-password", { method: "POST", body: JSON.stringify({ email, new_password }) }),
 };
 
 // ── Devices ───────────────────────────────────────────────────────────────────
@@ -100,5 +113,6 @@ export const userDashboardsHttp = {
   addWidget:    (dashId, body)      => apiFetch(`/user-dashboards/${dashId}/widgets/`,        { method: "POST",   body: JSON.stringify(body) }),
   updateWidget: (dashId, wId, body) => apiFetch(`/user-dashboards/${dashId}/widgets/${wId}`, { method: "PUT",    body: JSON.stringify(body) }),
   deleteWidget: (dashId, wId)       => apiFetch(`/user-dashboards/${dashId}/widgets/${wId}`, { method: "DELETE" }),
-  saveLayout:   (dashId, layout)    => apiFetch(`/user-dashboards/${dashId}/layout`,          { method: "PUT",    body: JSON.stringify({ layout }) }),
+  saveLayout:    (dashId, layout)    => apiFetch(`/user-dashboards/${dashId}/layout`,          { method: "PUT",    body: JSON.stringify({ layout }) }),
+  deduplicate:   ()                  => apiFetch(`/user-dashboards/deduplicate`,               { method: "POST" }),
 };

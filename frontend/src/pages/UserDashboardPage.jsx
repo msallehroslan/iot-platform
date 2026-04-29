@@ -458,6 +458,8 @@ export default function UserDashboardPage({ onToast }) {
   useEffect(() => {
     let cancelled = false;
     const init = async () => {
+      // Remove duplicate dashboards silently on every mount
+      try { await userDashboardsHttp.deduplicate(); } catch (_) {}
       setLoadingList(true); setListError("");
       try {
         const [list, dash] = await Promise.all([
