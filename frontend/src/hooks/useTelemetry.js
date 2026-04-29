@@ -28,8 +28,8 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { TelemetrySocket } from "./websocket.js";
-import { telemetryApi } from "./api.js";
+import { TelemetrySocket } from "../services/websocket.js";
+import { telemetryApi } from "../services/api.js";
 
 const MAX_HISTORY = 50;
 
