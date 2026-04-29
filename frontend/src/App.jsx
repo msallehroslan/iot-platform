@@ -421,7 +421,7 @@ bool provision() {
 
   return (
     <div className="max-w-2xl space-y-4">
-      {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
+      {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||""}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
         <div key={s.t} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
       ))}
 
