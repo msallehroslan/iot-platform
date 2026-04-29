@@ -259,7 +259,19 @@ export default function DashboardPage({ device, onBack }) {
     if (!device?.id) return;
     setLoadingList(true);
     listDashboards(device.id)
-      .then(list => {
+      .then(async list => {
+        if (list.length === 0) {
+          // Auto-create a default dashboard so the user can add widgets immediately
+          try {
+            const d = await createDashboard(device.id, "Default Dashboard");
+            setDashboards([d]);
+            loadDashboard(d.id);
+          } catch (e) {
+            setError(e.message);
+            setLoadingList(false);
+          }
+          return;
+        }
         setDashboards(list);
         const def = list.find(d => d.is_default) || list[0];
         if (def) loadDashboard(def.id);
@@ -359,6 +371,7 @@ export default function DashboardPage({ device, onBack }) {
 
   // ── Widget CRUD ───────────────────────────────────────────────────────────
   const handleSaveWidget = async (data) => {
+    if (!activeDash?.id) { setError("No dashboard selected. Create a dashboard first."); return; }
     setSaving(true); setError("");
     try {
       if (data.id) {
@@ -376,6 +389,7 @@ export default function DashboardPage({ device, onBack }) {
   };
 
   const handleRemoveWidget = async (widgetId) => {
+    if (!activeDash?.id) return;
     setSaving(true); setError("");
     try {
       await deleteWidget(activeDash.id, widgetId);
@@ -462,11 +476,13 @@ export default function DashboardPage({ device, onBack }) {
             {editMode ? "Done Editing" : "Edit Layout"}
           </button>
           {editMode && (
+            {activeDash && (
             <button onClick={() => { setEditingWidget(null); setShowModal(true); }}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: "#3b82f6", color: "white", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>
               <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add Widget
             </button>
+            )}
           )}
         </div>
       </div>
