@@ -94,13 +94,19 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
       .then(res => {
         const ks = res?.keys || [];
         setDeviceKeys(ks);
-        // Auto-select first key if current key not in this device's key list
-        setCfg(c => ({
-          ...c,
-          device_id: selectedDeviceId,
-          key:  ks.includes(c.key) ? c.key : (ks[0] || ""),
-          keys: (c.keys || []).filter(k => ks.includes(k)),
-        }));
+        setCfg(c => {
+          const filteredKeys = (c.keys || []).filter(k => ks.includes(k));
+          // For multi-key widgets (bar/pie), auto-select ALL keys when none selected
+          // so the Add Widget button is enabled without requiring an extra click
+          const isMultiKey = ["bar_chart", "pie_chart"].includes(c.widget_type || type);
+          const autoKeys = isMultiKey && filteredKeys.length === 0 ? ks : filteredKeys;
+          return {
+            ...c,
+            device_id: selectedDeviceId,
+            key:  ks.includes(c.key) ? c.key : (ks[0] || ""),
+            keys: autoKeys,
+          };
+        });
       })
       .catch(e => {
         setKeysError(`Could not fetch keys: ${e.message}`);

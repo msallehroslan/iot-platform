@@ -250,6 +250,20 @@ export function BarChartWidget({ config, liveTelem }) {
     : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
   const keys = fallbackKeys;
   const data = keys.map(k => ({ key: k, value: parseFloat(liveTelem[k]) || 0 }));
+
+  // No liveTelem received yet — show a waiting state
+  if (!liveTelem || Object.keys(liveTelem).length === 0) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8 }}>
+        <svg style={{ width: 24, height: 24, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
+        <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>Waiting for data…</p>
+        {(config.keys || []).length > 0 && (
+          <p style={{ fontSize: 10, color: "#cbd5e1", margin: 0 }}>Keys: {config.keys.join(", ")}</p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%" }}>
       <BarChartSVG data={data} color={config.color || "#3b82f6"} />
@@ -259,6 +273,7 @@ export function BarChartWidget({ config, liveTelem }) {
             {d.key}: {d.value.toFixed(1)}
           </span>
         ))}
+        {data.length === 0 && <span style={{ fontSize: 10, color: "#f59e0b" }}>No matching keys in telemetry</span>}
       </div>
     </div>
   );

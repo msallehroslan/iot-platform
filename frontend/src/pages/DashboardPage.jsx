@@ -51,13 +51,21 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
   const [step,  setStep]  = useState(isEdit ? 2 : 1);
   const [type,  setType]  = useState(editWidget?.widget_type || "");
   const [title, setTitle] = useState(editWidget?.title || "");
-  const [cfg,   setCfg]   = useState(() => ({
-    key: availableKeys[0] || "temperature",
-    label: "", unit: "", color: "#3b82f6",
-    min: 0, max: 100, decimals: 1,
-    threshold_high: "", keys: [], content: "",
-    ...(editWidget?.config || {}),
-  }));
+  const [cfg,   setCfg]   = useState(() => {
+    const base = {
+      key: availableKeys[0] || "temperature",
+      label: "", unit: "", color: "#3b82f6",
+      min: 0, max: 100, decimals: 1,
+      threshold_high: "", keys: [], content: "",
+      ...(editWidget?.config || {}),
+    };
+    // Auto-select all available keys for bar/pie chart when creating a new widget
+    const isMultiKey = ["bar_chart", "pie_chart"].includes(editWidget?.widget_type || "");
+    if (!editWidget && isMultiKey && availableKeys.length > 0) {
+      base.keys = [...availableKeys];
+    }
+    return base;
+  });
   const set = (k, v) => setCfg(c => ({ ...c, [k]: v }));
 
   const needsKey      = !["alarm_list","bar_chart","markdown","entity_table","html_card","pie_chart"].includes(type);
@@ -103,7 +111,14 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
           {step === 1 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {WIDGET_REGISTRY.map(wt => (
-                <button key={wt.id} onClick={() => { setType(wt.id); setStep(2); }}
+                <button key={wt.id} onClick={() => {
+            setType(wt.id);
+            // Auto-select all keys for multi-key widgets
+            if (["bar_chart", "pie_chart"].includes(wt.id) && availableKeys.length > 0) {
+              setCfg(c => ({ ...c, keys: [...availableKeys] }));
+            }
+            setStep(2);
+          }}
                   style={{ padding: 16, borderRadius: 12, border: `2px solid ${type === wt.id ? "#3b82f6" : "#e2e8f0"}`, background: type === wt.id ? "#eff6ff" : "white", cursor: "pointer", textAlign: "left" }}>
                   <svg style={{ width: 20, height: 20, color: "#3b82f6", marginBottom: 8, display: "block" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={wt.icon}/></svg>
                   <p style={{ fontSize: 13, fontWeight: 600, color: "#1e293b", margin: "0 0 2px" }}>{wt.label}</p>
