@@ -335,15 +335,13 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
   const [device,setDevice]=useState(initDev); const [chartData,setChartData]=useState([]); const [selKey,setSelKey]=useState(""); const [copied,setCopied]=useState(false); const [regen,setRegen]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   // Real-time via WebSocket; keys come from useTelemetry
-  const { values: liveMap, historyData, connected: wsLive } = useDeviceTelemetry(device.id);
+  const { values: liveMap, connected: wsLive } = useDeviceTelemetry(device.id);
   const rows = Object.entries(liveMap).map(([key, value]) => ({ key, value }));
   const keys = Object.keys(liveMap);
   useEffect(()=>{if(keys.length>0&&!selKey)setSelKey(keys[0]);},[keys.join(",")]);
   useEffect(()=>{
-    // History from WS hook if available, otherwise fetch via REST
-    if(selKey&&historyData[selKey]?.length){setChartData(historyData[selKey]);}
-    else if(selKey){telemetryApi.history(device.id,selKey,50).then(setChartData).catch(()=>setChartData([]));}
-  },[selKey, historyData[selKey]?.length, device.id]);
+    if(selKey){telemetryApi.history(device.id,selKey,50).then(setChartData).catch(()=>setChartData([]));}
+  },[selKey, device.id]);
   const handleRegen=async()=>{if(!window.confirm("Regenerate token?"))return;setRegen(true);try{const u=await deviceApi.regenerateToken(device.id);setDevice(u);onToast("Token regenerated");}catch(e){onToast(e.message,"error");}finally{setRegen(false);}};
   const copy=t=>{navigator.clipboard.writeText(t).catch(()=>{});setCopied(true);setTimeout(()=>setCopied(false),1800);};
   const curl=`curl -X POST \\\n  ${BASE_URL}/api/v1/telemetry/ingest/${device.token} \\\n  -H "Content-Type: application/json" \\\n  -d '{"values": {"temperature": 25.4}}'`;
@@ -387,11 +385,89 @@ function SettingsPage({ user, onLogout }) {
 }
 function ComingSoon({ label, desc, icon }) { return <div className="flex flex-col items-center justify-center py-20 gap-3"><div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-1"><svg className="w-7 h-7 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={icon}/></svg></div><h2 className="text-base font-semibold text-slate-700">{label}</h2><p className="text-sm text-slate-400 text-center max-w-xs">{desc}</p><span className="text-xs font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full mt-1">Coming Soon</span></div>; }
 // ── Login page ────────────────────────────────────────────────────────────────
+// ── Reset Password page ───────────────────────────────────────────────────────
+// Option 1 — simple direct reset: enter email + new password, no email link needed.
+function ResetPasswordPage({ onBack }) {
+  const [email,   setEmail]   = useState("");
+  const [pw,      setPw]      = useState("");
+  const [pw2,     setPw2]     = useState("");
+  const [loading, setLoading] = useState(false);
+  const [done,    setDone]    = useState(false);
+  const [error,   setError]   = useState("");
+
+  const submit = async () => {
+    if (!email.trim())         { setError("Please enter your email address"); return; }
+    if (!pw || pw.length < 8)  { setError("Password must be at least 8 characters"); return; }
+    if (pw !== pw2)             { setError("Passwords do not match"); return; }
+    setLoading(true); setError("");
+    try {
+      await authApi.resetPassword(email.trim(), pw);
+      setDone(true);
+    } catch(e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-8">
+      <div className="w-full max-w-sm">
+        <button onClick={onBack} className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-600 mb-8">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+          Back to login
+        </button>
+        {done ? (
+          <div className="text-center">
+            <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-7 h-7 text-green-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <h2 className="text-xl font-bold text-slate-800 mb-2">Password updated!</h2>
+            <p className="text-sm text-slate-400 mb-6">Your password has been reset successfully.</p>
+            <button onClick={onBack} className="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold text-sm py-2.5 rounded-lg">
+              Back to Login
+            </button>
+          </div>
+        ) : (
+          <>
+            <h1 className="text-2xl font-bold text-slate-800 mb-1">Reset password</h1>
+            <p className="text-sm text-slate-400 mb-6">Enter your registered email and choose a new password.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Email address</label>
+                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP} placeholder="you@example.com"/>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">New Password</label>
+                <input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP} placeholder="Min 8 characters"/>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Confirm Password</label>
+                <input type="password" value={pw2} onChange={e=>setPw2(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&submit()} className={INP} placeholder="Repeat password"/>
+              </div>
+            </div>
+            {error && <p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <button onClick={submit} disabled={loading}
+              className="w-full mt-5 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">
+              {loading && <Spinner/>} Reset Password
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Login page ────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@iotplatform.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState("");
+  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@iotplatform.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   const submit=async()=>{setLoading(true);setError("");try{let d;if(tab==="signin"){d=await authApi.login(email,pw);}else{await authApi.register({email,password:pw,first_name:fname,last_name:lname});d=await authApi.login(email,pw);}localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError(e.message);}finally{setLoading(false);}};
   const demo=async()=>{setLoading(true);setError("");try{await authApi.seedDemo();const d=await authApi.login("demo@iotplatform.com","demo1234");localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError("Backend not reachable. Start it first.");}finally{setLoading(false);}};
+
+  if (showReset) return <ResetPasswordPage onBack={() => setShowReset(false)} />;
+
   return (
     <div className="min-h-screen flex bg-slate-50">
       <div className="hidden lg:flex flex-col justify-between w-96 bg-slate-900 p-10 flex-shrink-0">
@@ -411,6 +487,7 @@ function LoginPage({ onLogin }) {
           </div>
           {error&&<p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
           <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
+          {tab==="signin"&&<div className="text-right mt-2"><button onClick={()=>setShowReset(true)} className="text-xs text-blue-500 hover:underline">Forgot password?</button></div>}
           <div className="flex items-center gap-3 my-4"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-slate-400">or</span><div className="flex-1 border-t border-slate-200"/></div>
           <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 font-medium text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}🚀 Try Demo Account</button>
           <p className="text-[10px] text-slate-400 text-center mt-2">Requires backend at {BASE_URL}</p>
