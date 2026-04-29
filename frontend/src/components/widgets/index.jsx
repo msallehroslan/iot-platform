@@ -96,7 +96,12 @@ export function GaugeSVG({ value, min = 0, max = 100, color = "#3b82f6" }) {
 }
 
 export function BarChartSVG({ data = [], color = "#3b82f6" }) {
-  if (!data.length) return null;
+  if (!data.length) return (
+    <div style={{ height: 80, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <svg style={{ width: 22, height: 22, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
+      <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>No data yet</p>
+    </div>
+  );
   const W = 280, H = 80, pad = { t: 4, r: 4, b: 20, l: 4 };
   const maxV = Math.max(...data.map(d => d.value), 1);
   const bw   = (W - pad.l - pad.r) / data.length - 4;
@@ -239,7 +244,11 @@ export function StatusLight({ config, liveTelem }) {
 }
 
 export function BarChartWidget({ config, liveTelem }) {
-  const keys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
+  // Use config.keys if any match liveTelem; otherwise fall back to all available keys
+  const configuredKeys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
+  const fallbackKeys   = configuredKeys.length ? configuredKeys
+    : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
+  const keys = fallbackKeys;
   const data = keys.map(k => ({ key: k, value: parseFloat(liveTelem[k]) || 0 }));
   return (
     <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%" }}>
@@ -314,7 +323,11 @@ export function TimeseriesTable({ config, historyData }) {
 }
 
 export function PieChartWidget({ config, liveTelem }) {
-  const keys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
+  // Use config.keys if any match liveTelem; otherwise fall back to all available numeric keys
+  const configuredKeys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
+  const fallbackKeys   = configuredKeys.length ? configuredKeys
+    : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
+  const keys = fallbackKeys;
   const data = keys.map(k => ({ key: k, value: Math.abs(parseFloat(liveTelem[k])) || 0 }));
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, height: "100%" }}>
