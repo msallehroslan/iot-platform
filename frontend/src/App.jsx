@@ -94,29 +94,29 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
   return (
-    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"linear-gradient(160deg,#060d1f 0%,#0a1628 40%,#0d2158 100%)"}}>
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-blue-900/30 overflow-hidden">
+    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
         <div className="flex items-center justify-center flex-shrink-0" style={{width:col?32:28}}>
           <img src="/taat-logo.png" alt="TAAT" style={{height:28, width:"auto", flexShrink:0}} />
         </div>
-        {!col && <span className="font-bold text-white text-sm tracking-wide truncate">TriAxis IoT</span>}
+        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis IoT</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-blue-400/60">Menu</p>}
+        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
         {NAV.map(({id,label,icon}) => (
           <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-blue-500/20 text-blue-300":"text-slate-400 hover:bg-white/5 hover:text-white"}`}>
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
             <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
             {!col && <span className="truncate">{label}</span>}
             {!col && id==="alarms" && alarmCount>0 && <span className="ml-auto bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">{alarmCount}</span>}
-            {!col && id==="device-dashboards" && <span className="ml-auto text-[9px] font-bold bg-blue-500 text-white px-1.5 py-0.5 rounded-full">NEW</span>}
-            {!col && page===id && !["alarms","device-dashboards"].includes(id) && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0"/>}
+            {!col && id==="device-dashboards" && <span className="ml-auto text-[9px] font-bold bg-[#2F8CFF] text-white px-1.5 py-0.5 rounded-full">NEW</span>}
+            {!col && page===id && !["alarms","device-dashboards"].includes(id) && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#2F8CFF] flex-shrink-0"/>}
           </button>
         ))}
       </nav>
-      <div className="border-t border-blue-900/30 p-3 space-y-2">
-        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-slate-800 transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-slate-200 truncate">{name}</p><p className="text-[10px] text-slate-500">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
-        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <div className="border-t border-[#D8E3F3] p-3 space-y-2">
+        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
+        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
     </aside>
   );
@@ -126,12 +126,12 @@ function Header({ title, onRefresh, refreshing }) {
   const [time, setTime] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
-    <header className="h-14 flex-shrink-0 bg-white border-b border-slate-100 flex items-center justify-between px-6">
-      <div><h1 className="text-[15px] font-semibold text-slate-800">{title}</h1><p className="text-[11px] text-slate-400 mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
+    <header className="h-14 flex-shrink-0 border-b flex items-center justify-between px-6" style={{background:"#F4F8FF",borderColor:"#D8E3F3"">
+      <div><h1 className="text-[15px] font-semibold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
       <div className="flex items-center gap-3">
-        <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
-        <div className="w-px h-4 bg-slate-200"/>
-        <span className="text-[11px] font-mono text-slate-400">{time.toLocaleTimeString()}</span>
+        <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
+        <div className="w-px h-4 bg-[#D8E3F3]"/>
+        <span className="text-[11px] font-mono text-[#6B7F9F]">{time.toLocaleTimeString()}</span>
       </div>
     </header>
   );
@@ -163,26 +163,26 @@ function OverviewPage({ refreshKey, onToast }) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-4 gap-4">
-        {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-blue-50",ic:"text-blue-500",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
-          <div key={label} className="bg-white rounded-xl border border-slate-100 p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-shadow">
-            <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 mb-1">{label}</p><p className="text-3xl font-bold text-slate-800 leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
+        {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
+          <div key={label} className="rounded-xl border p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"">
+            <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
             <Sparkline data={sparkRef.current.map(i=>(value||5)+Math.sin(i*.5+label.length)*2)} color={color} height={36}/>
           </div>
         ))}
       </div>
       <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-          <div className="flex items-start justify-between mb-5"><div><h2 className="text-sm font-semibold text-slate-800">Telemetry History</h2><p className="text-xs text-slate-400 mt-0.5">Last 50 points</p></div>
+        <div className="col-span-2 rounded-xl border shadow-sm p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"">
+          <div className="flex items-start justify-between mb-5"><div><h2 className="text-sm font-semibold text-[#0B1426]">Telemetry History</h2><p className="text-xs text-[#6B7F9F] mt-0.5">Last 50 points</p></div>
             <div className="flex items-center gap-2">
-              {devices.length>0&&<select value={chartDev?.id||""} onChange={e=>setChartDev(devices.find(d=>d.id===e.target.value))} className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 outline-none cursor-pointer max-w-[140px]">{devices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>}
-              {chartKeys.length>0?<select value={chartKey} onChange={e=>setChartKey(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 bg-white text-slate-600 outline-none cursor-pointer">{chartKeys.map(k=><option key={k}>{k}</option>)}</select>:<input value={chartKey} onChange={e=>setChartKey(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-28 bg-white text-slate-600 outline-none" placeholder="key…"/>}
+              {devices.length>0&&<select value={chartDev?.id||""} onChange={e=>setChartDev(devices.find(d=>d.id===e.target.value))} className="text-xs border rounded-lg px-3 py-1.5 bg-white outline-none cursor-pointer max-w-[140px]" style={{borderColor:"#D8E3F3",color:"#334866"">{devices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>}
+              {chartKeys.length>0?<select value={chartKey} onChange={e=>setChartKey(e.target.value)} className="text-xs border rounded-lg px-3 py-1.5 bg-white outline-none cursor-pointer" style={{borderColor:"#D8E3F3",color:"#334866"">{chartKeys.map(k=><option key={k}>{k}</option>)}</select>:<input value={chartKey} onChange={e=>setChartKey(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-28 bg-white text-slate-600 outline-none" placeholder="key…"/>}
             </div>
           </div>
           <LineChart data={chartData} color="#3b82f6"/>
           <div className="flex items-center justify-end gap-2 mt-3"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/><span className="text-[10px] text-slate-400 font-medium">{chartData.length} pts · LIVE</span></div>
         </div>
-        <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4"><h2 className="text-sm font-semibold text-slate-800">Recent Alarms</h2>{alarms.length>0&&<span className="text-[10px] font-semibold bg-red-50 text-red-600 px-2 py-0.5 rounded-full">{alarms.length}</span>}</div>
+        <div className="rounded-xl border shadow-sm p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"">
+          <div className="flex items-center justify-between mb-4"><h2 className="text-sm font-semibold text-[#0B1426]">Recent Alarms</h2>{alarms.length>0&&<span className="text-[10px] font-semibold bg-red-50 text-red-600 px-2 py-0.5 rounded-full">{alarms.length}</span>}</div>
           {alarms.length===0?<Empty icon="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" title="No alarms" sub="System healthy"/>:<div className="space-y-2">{alarms.map(a=><div key={a.id} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50"><span className={SEVB[a.severity]||SEVB.INDETERMINATE}>{a.severity}</span><div className="min-w-0"><p className="text-xs font-medium text-slate-700 truncate">{a.alarm_type}</p><p className="text-[10px] text-slate-400 mt-0.5 truncate">{a.device_name||"—"} · {new Date(a.start_ts).toLocaleTimeString()}</p></div></div>)}</div>}
         </div>
       </div>
@@ -196,7 +196,7 @@ function TelCard({ device }) {
   const { values, ts, connected } = useDeviceTelemetry(device.id);
   const rows = Object.entries(values).map(([key, value]) => ({ key, value }));
   return (
-    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+    <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3" p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0"><p className="text-xs font-semibold text-slate-700 truncate">{device.name}</p><p className="text-[10px] text-slate-400 mt-0.5">{device.device_type}</p></div>
         <div className="flex items-center gap-2">
@@ -217,7 +217,7 @@ function DeviceListForDashboards({ onOpen }) {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-sm font-semibold text-slate-800">Device Dashboards</h2><p className="text-xs text-slate-400 mt-0.5">Select a device to build its custom widget dashboard</p></div>
+        <div><h2 className="text-sm font-semibold text-[#0B1426]">Device Dashboards</h2><p className="text-xs text-[#6B7F9F] mt-0.5">Select a device to build its custom widget dashboard</p></div>
         <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-56" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       </div>
       {loading?<div className="flex justify-center py-12"><Spinner/></div>:
@@ -226,7 +226,7 @@ function DeviceListForDashboards({ onOpen }) {
             <div key={d.id} onClick={()=>onOpen(d)} className="bg-white rounded-xl border border-slate-100 p-5 cursor-pointer hover:shadow-md hover:-translate-y-0.5 hover:border-blue-200 transition-all shadow-sm relative overflow-hidden">
               <div className="absolute top-0 inset-x-0 h-0.5" style={{background:d.status==="ACTIVE"?"linear-gradient(to right,#10b981,#3b82f6)":"#e2e8f0",borderRadius:"12px 12px 0 0"}}/>
               <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center"><svg className="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div><div><p className="text-sm font-semibold text-slate-800">{d.name}</p><p className="text-[10px] text-slate-400 mt-0.5">{d.device_type}{d.label?` · ${d.label}`:""}</p></div></div>
+                <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center"><svg className="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div><div><p className="text-sm font-semibold text-[#0B1426]">{d.name}</p><p className="text-[10px] text-slate-400 mt-0.5">{d.device_type}{d.label?` · ${d.label}`:""}</p></div></div>
                 <span className={`${SB[d.status]||SB.INACTIVE} text-[10px]`}><span className={SD[d.status]||SD.INACTIVE}/>{d.status}</span>
               </div>
               <div className="flex items-center justify-between"><p className="text-[10px] text-slate-400">Open dashboard →</p><div className="flex items-center gap-1 text-xs font-medium text-blue-500">Open<svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg></div></div>
@@ -251,9 +251,9 @@ function DevicesPage({ onOpenDrawer, onToast }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-64" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-        <button onClick={()=>{setEditDev(null);setShowM(true);}} className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Device</button>
+        <button onClick={()=>{setEditDev(null);setShowM(true);}} className="flex items-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Device</button>
       </div>
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3" overflow-hidden">
         {loading?<div className="flex justify-center py-12"><Spinner/></div>:filtered.length===0?<Empty icon="M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4" title={search?"No match":"No devices"} sub="Add your first device"/>:
         <><table className="w-full text-sm"><thead><tr className="border-b border-slate-100 bg-slate-50">{["Device","Type","Status","Token","Created",""].map(h=><th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>)}</tr></thead>
           <tbody>{filtered.map(d=>(
@@ -289,7 +289,7 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Label</label><input className={INP} placeholder="Building A" value={form.label} onChange={e=>set("label",e.target.value)}/></div>
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Description</label><textarea className={INP+" resize-none"} rows={2} value={form.description} onChange={e=>set("description",e.target.value)}/></div>
           {err&&<p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
-          <div className="flex gap-2 pt-1"><button onClick={submit} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-medium text-sm py-2.5 rounded-lg">{saving&&<Spinner/>}{isEdit?"Update":"Create"}</button><button onClick={onClose} className="px-4 border border-slate-200 text-sm text-slate-500 rounded-lg hover:bg-slate-50">Cancel</button></div>
+          <div className="flex gap-2 pt-1"><button onClick={submit} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-medium text-sm py-2.5 rounded-lg">{saving&&<Spinner/>}{isEdit?"Update":"Create"}</button><button onClick={onClose} className="px-4 border border-slate-200 text-sm text-slate-500 rounded-lg hover:bg-slate-50">Cancel</button></div>
         </div>
       </div>
     </div>
@@ -306,15 +306,15 @@ function AlarmsPage({ onToast }) {
   const unack=alarms.filter(a=>a.status==="ACTIVE_UNACK").length, crit=alarms.filter(a=>a.severity==="CRITICAL").length;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">{[{l:"Unacknowledged",v:unack,c:"text-amber-500",b:"bg-amber-50 border-amber-100"},{l:"Critical",v:crit,c:"text-red-500",b:"bg-red-50 border-red-100"},{l:"Total",v:alarms.length,c:"text-blue-500",b:"bg-blue-50 border-blue-100"}].map(x=><div key={x.l} className={`rounded-xl border p-4 flex items-center gap-4 shadow-sm ${x.b}`}><span className={`text-3xl font-bold ${x.c}`}>{x.v}</span><span className="text-xs text-slate-500 font-medium">{x.l}</span></div>)}</div>
+      <div className="grid grid-cols-3 gap-4">{[{l:"Unacknowledged",v:unack,c:"text-amber-500",b:"bg-amber-50 border-amber-100"},{l:"Critical",v:crit,c:"text-red-500",b:"bg-red-50 border-red-100"},{l:"Total",v:alarms.length,c:"text-[#2F8CFF]",b:"bg-blue-50 border-blue-100"}].map(x=><div key={x.l} className={`rounded-xl border p-4 flex items-center gap-4 shadow-sm ${x.b}`}><span className={`text-3xl font-bold ${x.c}`}>{x.v}</span><span className="text-xs text-slate-500 font-medium">{x.l}</span></div>)}</div>
       <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">{["ACTIVE","ACK","CLEARED","ALL"].map(f=><button key={f} onClick={()=>setFilter(f)} className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-all ${filter===f?"bg-white text-slate-800 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{f==="ACK"?"Acknowledged":f==="ACTIVE"?"Active":f.charAt(0)+f.slice(1).toLowerCase()}</button>)}</div>
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3" overflow-hidden">
         {loading?<div className="flex justify-center py-12"><Spinner/></div>:alarms.length===0?<Empty icon="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" title="No alarms" sub="Nothing for this filter"/>:
           <table className="w-full text-sm"><thead><tr className="border-b border-slate-100 bg-slate-50">{["Severity","Alarm Type","Device","Status","Triggered","Actions"].map(h=><th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>)}</tr></thead>
             <tbody>{alarms.map(a=>{const si=AST[a.status]||AST.ACTIVE_UNACK;return(
               <tr key={a.id} className="border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
                 <td className="px-5 py-3.5"><span className={SEVB[a.severity]||SEVB.INDETERMINATE}>{a.severity}</span></td>
-                <td className="px-5 py-3.5"><p className="font-medium text-slate-700 text-[13px]">{a.alarm_type}</p>{a.details?.message&&<p className="text-[11px] text-slate-400 mt-0.5">{a.details.message}</p>}</td>
+                <td className="px-5 py-3.5"><p className="font-medium text-slate-700 text-[13px]">{a.alarm_type}</p>{a.details?.message&&<p className="text-[11px] text-[#6B7F9F] mt-0.5">{a.details.message}</p>}</td>
                 <td className="px-5 py-3.5 text-[13px] text-slate-600">{a.device_name||"—"}</td>
                 <td className="px-5 py-3.5"><span className={si.cls}>{si.label}</span></td>
                 <td className="px-5 py-3.5 text-[12px] text-slate-400">{new Date(a.start_ts).toLocaleString()}</td>
@@ -349,7 +349,7 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
     <div className="fixed inset-0 z-50 flex justify-end"><div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose}/>
       <div className="relative w-[440px] h-full bg-white border-l border-slate-200 flex flex-col shadow-2xl overflow-y-auto" style={{animation:"slideIn .2s ease"}}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-          <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center"><svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div><div><p className="text-sm font-semibold text-slate-800">{device.name}</p><span className={`${SB[device.status]||SB.INACTIVE} text-[10px] mt-0.5`}><span className={SD[device.status]||SD.INACTIVE}/>{device.status}</span></div></div>
+          <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center"><svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div><div><p className="text-sm font-semibold text-[#0B1426]">{device.name}</p><span className={`${SB[device.status]||SB.INACTIVE} text-[10px] mt-0.5`}><span className={SD[device.status]||SD.INACTIVE}/>{device.status}</span></div></div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
         </div>
         <div className="p-5 border-b border-slate-50">
@@ -359,7 +359,7 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
           <div className="mt-4"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1.5">Ingest Example</p><pre className="bg-slate-800 text-slate-300 text-[10px] rounded-lg p-3 overflow-x-auto leading-relaxed font-mono whitespace-pre">{curl}</pre></div>
         </div>
         <div className="p-5 border-b border-slate-50"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-3">Latest Values</p>
-          {rows.length===0?<p className="text-xs text-slate-400">No telemetry</p>:<div className="grid grid-cols-2 gap-2.5">{rows.map(r=>{const nv=typeof r.value==="number"?r.value:parseFloat(r.value);const isN=!isNaN(nv);const cm={temperature:["bg-orange-50","text-orange-600"],humidity:["bg-blue-50","text-blue-600"],voltage:["bg-violet-50","text-violet-600"],pressure:["bg-emerald-50","text-emerald-600"]};const[bg,clr]=cm[r.key]||["bg-slate-50","text-slate-600"];return<div key={r.key} className={`rounded-xl p-3 ${bg}`}><p className={`text-[10px] font-medium opacity-70 mb-1 ${clr}`}>{r.key}</p><p className={`text-2xl font-bold font-mono ${clr}`}>{isN?nv.toFixed(2):String(r.value??"—")}</p></div>;})}</div>}
+          {rows.length===0?<p className="text-xs text-slate-400">No telemetry</p>:<div className="grid grid-cols-2 gap-2.5">{rows.map(r=>{const nv=typeof r.value==="number"?r.value:parseFloat(r.value);const isN=!isNaN(nv);const cm={temperature:["bg-orange-50","text-orange-600"],humidity:["bg-[#EAF2FF]","text-blue-600"],voltage:["bg-violet-50","text-violet-600"],pressure:["bg-emerald-50","text-emerald-600"]};const[bg,clr]=cm[r.key]||["bg-slate-50","text-slate-600"];return<div key={r.key} className={`rounded-xl p-3 ${bg}`}><p className={`text-[10px] font-medium opacity-70 mb-1 ${clr}`}>{r.key}</p><p className={`text-2xl font-bold font-mono ${clr}`}>{isN?nv.toFixed(2):String(r.value??"—")}</p></div>;})}</div>}
         </div>
         <div className="p-5"><div className="flex items-center justify-between mb-3"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">History</p>{keys.length>0&&<select value={selKey} onChange={e=>setSelKey(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2.5 py-1 bg-white text-slate-600 outline-none cursor-pointer">{keys.map(k=><option key={k}>{k}</option>)}</select>}</div>
           <LineChart data={chartData} color="#3b82f6"/>{chartData.length>0&&<div className="flex items-center justify-end gap-2 mt-2"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/><span className="text-[10px] text-slate-400">{chartData.length} samples · {selKey}</span></div>}
@@ -422,11 +422,11 @@ bool provision() {
   return (
     <div className="max-w-2xl space-y-4">
       {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||""}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
-        <div key={s.t} className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
+        <div key={s.t} className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3" overflow-hidden"><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
       ))}
 
       {/* ── Device Provisioning Key ── */}
-      <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3" overflow-hidden">
         <div className="px-5 py-3.5 border-b border-slate-50 flex items-center gap-2">
           <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
           <h3 className="text-sm font-semibold text-slate-700">Device Provisioning</h3>
@@ -450,7 +450,7 @@ bool provision() {
               <button
                 onClick={copyKey}
                 disabled={provLoading || !provKey}
-                className="flex items-center gap-1.5 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
+                className="flex items-center gap-1.5 px-4 py-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
               >
                 {provCopied
                   ? <><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied!</>
@@ -486,7 +486,7 @@ bool provision() {
         </div>
       </div>
 
-      <div className="bg-white rounded-xl border border-red-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-red-50"><h3 className="text-sm font-semibold text-red-600">Danger Zone</h3></div><div className="p-5 flex items-center justify-between"><div><p className="text-sm font-medium text-slate-700">Sign out</p><p className="text-xs text-slate-400 mt-0.5">Clears your session</p></div><button onClick={onLogout} className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign Out</button></div></div>
+      <div className="bg-white rounded-xl border border-red-100 shadow-sm overflow-hidden"><div className="px-5 py-3.5 border-b border-red-50"><h3 className="text-sm font-semibold text-red-600">Danger Zone</h3></div><div className="p-5 flex items-center justify-between"><div><p className="text-sm font-medium text-slate-700">Sign out</p><p className="text-xs text-[#6B7F9F] mt-0.5">Clears your session</p></div><button onClick={onLogout} className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>Sign Out</button></div></div>
     </div>
   );
 }
@@ -531,7 +531,7 @@ function ResetPasswordPage({ onBack }) {
             </div>
             <h2 className="text-xl font-bold text-slate-800 mb-2">Password updated!</h2>
             <p className="text-sm text-slate-400 mb-6">Your password has been reset successfully.</p>
-            <button onClick={onBack} className="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-semibold text-sm py-2.5 rounded-lg">
+            <button onClick={onBack} className="w-full flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white font-semibold text-sm py-2.5 rounded-lg">
               Back to Login
             </button>
           </div>
@@ -556,7 +556,7 @@ function ResetPasswordPage({ onBack }) {
             </div>
             {error && <p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
             <button onClick={submit} disabled={loading}
-              className="w-full mt-5 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">
+              className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">
               {loading && <Spinner/>} Reset Password
             </button>
           </>
@@ -593,7 +593,7 @@ function LoginPage({ onLogin }) {
             <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Password</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP}/></div>
           </div>
           {error&&<p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
+          <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
           {tab==="signin"&&<div className="text-right mt-2"><button onClick={()=>setShowReset(true)} className="text-xs text-blue-500 hover:underline">Forgot password?</button></div>}
           <div className="flex items-center gap-3 my-4"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-slate-400">or</span><div className="flex-1 border-t border-slate-200"/></div>
           <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 font-medium text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}🚀 Try Demo Account</button>
