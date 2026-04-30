@@ -56,7 +56,7 @@ export const authApi = {
 
 // ── Devices ───────────────────────────────────────────────────────────────────
 export const deviceApi = {
-  list:            (params = {}) => apiFetch(`/devices/?${new URLSearchParams(params)}`),
+  list:            (params = {}) => apiFetch(`/devices/?${new URLSearchParams(params)}`).then(r => r?.items ?? r),
   get:             id            => apiFetch(`/devices/${id}`),
   create:          body          => apiFetch("/devices/",     { method: "POST",   body: JSON.stringify(body) }),
   update:          (id, body)    => apiFetch(`/devices/${id}`,{ method: "PUT",    body: JSON.stringify(body) }),
