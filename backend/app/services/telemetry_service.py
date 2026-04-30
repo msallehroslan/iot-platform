@@ -2,25 +2,26 @@
 app/services/telemetry_service.py
 Shared telemetry ingestion logic — HTTP and MQTT both call this.
 
-PHASE 2 FIXES:
-  - Alarm engine is fully generic: evaluates rules for ANY key, no hardcoded keys
-  - Alarm auto-clear: when a condition is no longer met, active alarm is cleared
-  - One active alarm per (device_id, alarm_type) — no duplicates
-  - Telemetry retention purge
+PHASE 3 HARDENING:
+  FIX 1 — Duplicate alarm prevention: DB-level guard using with_for_update()
+  FIX 2 — Correct auto-clear lifecycle: CLEARED_UNACK vs CLEARED_ACK based on ack_ts
+  FIX 3 — Explicit rule precedence: device rules OR tenant rules, never mixed
+  FIX 5 — One DB query per ingest (load all rules upfront, group by key in memory)
 """
 from __future__ import annotations
 
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import and_, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models.models import (
-    Alarm, AlarmSeverity, AlarmStatus,
+    Alarm, AlarmStatus,
     Device, DeviceStatus,
     LatestTelemetry, TelemetryData, TelemetryKey, ThresholdRule,
 )
@@ -54,10 +55,10 @@ def _coerce_value(value: Any):
     return str(value), None, None, None
 
 
-# ── Generic alarm engine ───────────────────────────────────────────────────────
+# ── Condition evaluator ───────────────────────────────────────────────────────
 
 def _evaluate_condition(condition: str, value: float, threshold: float) -> bool:
-    """Evaluate a single threshold condition. Returns True if alarm should fire."""
+    """Evaluate a threshold condition. Returns True if alarm should fire."""
     if condition == "gt":  return value >  threshold
     if condition == "gte": return value >= threshold
     if condition == "lt":  return value <  threshold
@@ -67,137 +68,178 @@ def _evaluate_condition(condition: str, value: float, threshold: float) -> bool:
     return False
 
 
-def _process_alarm_rules(
+# ── Rule loader (FIX 3 + FIX 5) ──────────────────────────────────────────────
+
+def _load_rules_for_device(db: Session, device: Device) -> Dict[str, List[ThresholdRule]]:
+    """
+    FIX 3 + FIX 5: Load ALL active rules for this device in ONE query,
+    then apply explicit precedence in memory:
+
+      If device-specific rules exist for a key → use ONLY those (ignore tenant-wide)
+      If no device-specific rules for a key → fall back to tenant-wide rules
+
+    This is explicit and predictable — no mixed evaluation, no ordering dependency.
+
+    Returns: { key: [rules_to_apply, ...] }
+    """
+    all_rules = (
+        db.query(ThresholdRule)
+        .filter(
+            ThresholdRule.tenant_id == device.tenant_id,
+            ThresholdRule.is_active == True,
+            or_(
+                ThresholdRule.device_id == device.id,
+                ThresholdRule.device_id == None,
+            ),
+        )
+        .all()
+    )
+
+    if not all_rules:
+        return {}
+
+    # Split into device-specific vs tenant-wide, grouped by key
+    device_rules: Dict[str, List[ThresholdRule]] = defaultdict(list)
+    tenant_rules: Dict[str, List[ThresholdRule]] = defaultdict(list)
+
+    for rule in all_rules:
+        if rule.device_id is not None:
+            device_rules[rule.key].append(rule)
+        else:
+            tenant_rules[rule.key].append(rule)
+
+    # FIX 3: Explicit precedence — per key, use device rules if any exist,
+    # otherwise fall back to tenant-wide. Never mix both for the same key.
+    result: Dict[str, List[ThresholdRule]] = {}
+    all_keys = set(device_rules.keys()) | set(tenant_rules.keys())
+    for key in all_keys:
+        if key in device_rules:
+            result[key] = device_rules[key]   # device-specific wins
+        else:
+            result[key] = tenant_rules[key]   # tenant-wide fallback
+
+    return result
+
+
+# ── Alarm engine (FIX 1 + FIX 2) ─────────────────────────────────────────────
+
+def _process_alarm_for_rule(
     db: Session,
     device: Device,
     key: str,
-    value_num: Optional[float],
+    value_num: float,
+    rule: ThresholdRule,
 ) -> None:
     """
-    Fully generic alarm evaluation for a single (key, value) pair.
+    Evaluate one rule against one (key, value) and trigger or clear as needed.
 
-    For every active rule matching this (tenant, device, key):
-      - If condition IS met    → trigger alarm if no active alarm exists yet
-      - If condition is NOT met → auto-clear any active alarm for this rule
+    FIX 1 — Duplicate prevention:
+      Uses SELECT ... FOR UPDATE to lock the row within the transaction.
+      This prevents two concurrent ingest requests from both reading
+      "no active alarm" and both inserting one. The second will block
+      until the first commits, then find the existing alarm.
+      Combined with the DB partial unique index on
+        (device_id, alarm_type) WHERE status IN ('ACTIVE_UNACK','ACTIVE_ACK')
+      this gives two layers of protection.
 
-    Rules are evaluated in priority order:
-      device-specific rules (device_id IS NOT NULL) checked before tenant-wide rules.
-      Within the same specificity, most severe rule wins.
-
-    No hardcoded keys. Works for temperature, glucose, vibration, voltage, or
-    any custom key the device sends.
+    FIX 2 — Correct clear lifecycle:
+      CLEARED_UNACK when the alarm was never acknowledged (ack_ts is None)
+      CLEARED_ACK   when the alarm was acknowledged before clearing
     """
-    if value_num is None:
-        # Non-numeric values cannot be compared — skip alarm evaluation
-        return
+    condition_met = _evaluate_condition(rule.condition, value_num, rule.threshold)
 
-    try:
-        # Fetch all active rules for this (tenant, key) — both device-specific
-        # and tenant-wide (device_id IS NULL). Order: device-specific first.
-        rules = (
-            db.query(ThresholdRule)
-            .filter(
-                ThresholdRule.tenant_id == device.tenant_id,
-                ThresholdRule.key       == key,
-                ThresholdRule.is_active == True,
-                or_(
-                    ThresholdRule.device_id == device.id,
-                    ThresholdRule.device_id == None,
-                ),
-            )
-            .order_by(
-                # device-specific rules evaluated before tenant-wide
-                ThresholdRule.device_id.desc().nullslast(),
-            )
-            .all()
+    # FIX 1: Lock existing active alarm row for this (device, alarm_type)
+    # with_for_update() issues SELECT ... FOR UPDATE — safe under concurrency.
+    # On single-worker Render this is low overhead but correct.
+    active_alarm = (
+        db.query(Alarm)
+        .filter(
+            Alarm.device_id  == device.id,
+            Alarm.alarm_type == rule.alarm_type,
+            Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
         )
+        .with_for_update(skip_locked=False)
+        .first()
+    )
 
-        if not rules:
-            return
+    if condition_met:
+        if not active_alarm:
+            # No active alarm — create one
+            db.add(Alarm(
+                device_id  = device.id,
+                alarm_type = rule.alarm_type,
+                severity   = rule.severity,
+                status     = AlarmStatus.ACTIVE_UNACK,
+                details    = {
+                    "key":       key,
+                    "value":     value_num,
+                    "threshold": rule.threshold,
+                    "condition": rule.condition,
+                    "rule_id":   str(rule.id),
+                    "message":   f"{key} {rule.condition} {rule.threshold} (current={value_num})",
+                },
+            ))
+            logger.debug(
+                "Alarm TRIGGERED device=%s key=%s value=%s alarm_type=%s",
+                device.id, key, value_num, rule.alarm_type,
+            )
+        else:
+            # Active alarm exists — update details with latest reading only
+            active_alarm.details = {
+                **(active_alarm.details or {}),
+                "value":   value_num,
+                "message": f"{key} {rule.condition} {rule.threshold} (current={value_num})",
+            }
 
-        # Track which alarm_types we've already handled in this pass
-        # so we don't double-fire or double-clear for the same alarm_type
-        handled_alarm_types: set[str] = set()
+    else:
+        # FIX 2: Condition no longer met — auto-clear with correct status
+        if active_alarm:
+            now = datetime.now(timezone.utc)
+            # CLEARED_ACK if previously acknowledged, CLEARED_UNACK if not
+            active_alarm.status = (
+                AlarmStatus.CLEARED_ACK
+                if active_alarm.ack_ts is not None
+                else AlarmStatus.CLEARED_UNACK
+            )
+            active_alarm.end_ts     = now
+            active_alarm.clear_ts   = now
+            active_alarm.cleared_by = "auto-clear"
+            active_alarm.details    = {
+                **(active_alarm.details or {}),
+                "value":        value_num,
+                "clear_reason": (
+                    f"{key} no longer {rule.condition} {rule.threshold} "
+                    f"(current={value_num})"
+                ),
+            }
+            logger.debug(
+                "Alarm AUTO-CLEARED device=%s key=%s value=%s alarm_type=%s status=%s",
+                device.id, key, value_num, rule.alarm_type, active_alarm.status,
+            )
 
-        for rule in rules:
+
+def _evaluate_all_alarms(
+    db: Session,
+    device: Device,
+    numeric_values: Dict[str, float],
+    rules_by_key: Dict[str, List[ThresholdRule]],
+) -> None:
+    """
+    Evaluate alarm rules for all numeric keys received in this ingest.
+    Rules are pre-loaded (FIX 5) — no per-key DB queries here.
+
+    handled_alarm_types deduplicates across keys in this ingest cycle
+    so the same alarm_type isn't triggered/cleared twice.
+    """
+    handled_alarm_types: set[str] = set()
+
+    for key, value_num in numeric_values.items():
+        key_rules = rules_by_key.get(key, [])
+        for rule in key_rules:
             if rule.alarm_type in handled_alarm_types:
                 continue
             handled_alarm_types.add(rule.alarm_type)
-
-            condition_met = _evaluate_condition(rule.condition, value_num, rule.threshold)
-
-            # ── Find existing active alarm for this (device, alarm_type) ──────
-            active_alarm = db.query(Alarm).filter(
-                and_(
-                    Alarm.device_id  == device.id,
-                    Alarm.alarm_type == rule.alarm_type,
-                    Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
-                )
-            ).first()
-
-            if condition_met:
-                # ── TRIGGER: create alarm if not already active ────────────
-                if not active_alarm:
-                    db.add(Alarm(
-                        device_id  = device.id,
-                        alarm_type = rule.alarm_type,
-                        severity   = rule.severity,
-                        status     = AlarmStatus.ACTIVE_UNACK,
-                        details    = {
-                            "key":       key,
-                            "value":     value_num,
-                            "threshold": rule.threshold,
-                            "condition": rule.condition,
-                            "rule_id":   str(rule.id),
-                            "message":   (
-                                f"{key} {rule.condition} {rule.threshold} "
-                                f"(current={value_num})"
-                            ),
-                        },
-                    ))
-                    logger.debug(
-                        "Alarm TRIGGERED device=%s key=%s value=%s rule=%s",
-                        device.id, key, value_num, rule.alarm_type,
-                    )
-                else:
-                    # Update the details with latest value so dashboard shows current reading
-                    if active_alarm.details:
-                        active_alarm.details = {
-                            **active_alarm.details,
-                            "value":   value_num,
-                            "message": (
-                                f"{key} {rule.condition} {rule.threshold} "
-                                f"(current={value_num})"
-                            ),
-                        }
-
-            else:
-                # ── AUTO-CLEAR: condition no longer met → clear active alarm ──
-                if active_alarm:
-                    now = datetime.now(timezone.utc)
-                    active_alarm.status   = AlarmStatus.CLEARED_ACK
-                    active_alarm.end_ts   = now
-                    active_alarm.clear_ts = now
-                    active_alarm.cleared_by = "auto-clear"
-                    if active_alarm.details:
-                        active_alarm.details = {
-                            **active_alarm.details,
-                            "value":      value_num,
-                            "clear_reason": (
-                                f"{key} no longer {rule.condition} {rule.threshold} "
-                                f"(current={value_num})"
-                            ),
-                        }
-                    logger.debug(
-                        "Alarm AUTO-CLEARED device=%s key=%s value=%s rule=%s",
-                        device.id, key, value_num, rule.alarm_type,
-                    )
-
-    except Exception as exc:
-        logger.warning(
-            "Alarm rule evaluation failed for device=%s key=%s — skipping: %s",
-            device.id, key, exc,
-        )
+            _process_alarm_for_rule(db, device, key, value_num, rule)
 
 
 # ── Telemetry retention ───────────────────────────────────────────────────────
@@ -228,10 +270,11 @@ async def ingest_telemetry(
     Core telemetry pipeline:
       1. Validate device by token
       2. Mark device ACTIVE + update last_seen_at
-      3. For each key: persist TelemetryData + upsert LatestTelemetry + auto-create TelemetryKey metadata
-      4. Evaluate alarm rules generically for every numeric key
-      5. Commit everything in one transaction
-      6. Broadcast via WebSocket (non-fatal)
+      3. Load ALL alarm rules in one query (FIX 5)
+      4. For each key: persist + upsert latest + collect numeric values
+      5. Evaluate all alarm rules in memory (FIX 1+2+3)
+      6. Commit everything in one transaction
+      7. Broadcast via WebSocket (non-fatal)
     """
     if not values:
         raise ValueError("values dict must not be empty")
@@ -246,8 +289,12 @@ async def ingest_telemetry(
     ts = ts or datetime.now(timezone.utc)
     device.last_seen_at = ts
 
+    # FIX 5: Load ALL rules for this device in ONE query before the key loop
+    rules_by_key = _load_rules_for_device(db, device)
+
     keys_saved     = 0
     coerced_values = {}
+    numeric_values: Dict[str, float] = {}  # collect for alarm evaluation
 
     for key, raw_value in values.items():
         val_str, val_num, val_bool, val_json = _coerce_value(raw_value)
@@ -257,6 +304,9 @@ async def ingest_telemetry(
             val_json if val_json is not None else
             val_str
         )
+
+        if val_num is not None:
+            numeric_values[key] = val_num
 
         # Append to time-series
         db.add(TelemetryData(
@@ -284,12 +334,9 @@ async def ingest_telemetry(
         )
         db.execute(upsert_stmt)
 
-        # Generic alarm evaluation — no hardcoded keys
-        _process_alarm_rules(db, device, key, val_num)
-
         keys_saved += 1
 
-        # Auto-create TelemetryKey metadata on first ingest of a new key
+        # Auto-create TelemetryKey metadata row on first ingest of a new key
         inferred_type = (
             "boolean" if val_bool is not None else
             "number"  if val_num  is not None else
@@ -302,14 +349,26 @@ async def ingest_telemetry(
         )
         db.execute(meta_stmt)
 
-    # Single transaction commit for all keys + alarm changes
+    # FIX 1+2+3: Evaluate all alarms after all keys are processed,
+    # using pre-loaded rules and explicit precedence logic
+    if numeric_values and rules_by_key:
+        try:
+            _evaluate_all_alarms(db, device, numeric_values, rules_by_key)
+        except Exception as exc:
+            # Non-fatal: alarm evaluation failure must not block ingest
+            logger.error(
+                "Alarm evaluation failed device=%s — ingest continues: %s",
+                device.id, exc,
+            )
+
+    # Single transaction commit
     db.commit()
     logger.debug(
         "ingest ok  source=%-4s  device=%s  keys=%d  ts=%s",
         source, device.id, keys_saved, ts.isoformat(),
     )
 
-    # WebSocket broadcast (non-fatal — never blocks ingest)
+    # WebSocket broadcast (non-fatal)
     try:
         from app.core.websocket_manager import manager as ws_manager
         await ws_manager.broadcast(

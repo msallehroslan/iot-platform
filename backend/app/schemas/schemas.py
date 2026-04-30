@@ -206,6 +206,16 @@ class BulkHistoryRequest(BaseModel):
             raise ValueError("Maximum 50 keys per bulk request")
         return v
 
+    @field_validator("limit")
+    @classmethod
+    def validate_limit(cls, v):
+        # Clamp to safe maximum — prevents memory exhaustion on large datasets
+        if v < 1:
+            raise ValueError("limit must be at least 1")
+        if v > 1000:
+            return 1000   # clamp silently rather than reject
+        return v
+
 
 class BulkHistoryResponse(BaseModel):
     data: Dict[str, List[TelemetryDataPoint]]

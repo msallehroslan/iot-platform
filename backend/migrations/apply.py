@@ -285,3 +285,28 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "015_partial_unique_index_active_alarms",
+        "desc": "Prevent duplicate active alarms at DB level: unique (device_id, alarm_type) when status is ACTIVE",
+        "sql":  """
+            -- Drop any existing duplicate active alarms before creating the constraint.
+            -- Keep the most recent one per (device_id, alarm_type).
+            DELETE FROM alarms a
+            WHERE a.status IN ('ACTIVE_UNACK', 'ACTIVE_ACK')
+              AND a.id NOT IN (
+                SELECT DISTINCT ON (device_id, alarm_type) id
+                FROM alarms
+                WHERE status IN ('ACTIVE_UNACK', 'ACTIVE_ACK')
+                ORDER BY device_id, alarm_type, created_at DESC
+              );
+
+            -- Partial unique index: only one active alarm per (device_id, alarm_type)
+            CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_alarm_device_type
+                ON alarms (device_id, alarm_type)
+                WHERE status IN ('ACTIVE_UNACK', 'ACTIVE_ACK');
+        """,
+    },
+]

@@ -392,29 +392,29 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
 }
 
 export function StatusLight({ config, liveTelem, deviceLastSeen }) {
-  // PHASE 2 FIX: determine online status from last_seen_at (5min threshold)
-  // Falls back to key existence check if last_seen_at not available
+  // FIX 6: Use last_seen_at as the authoritative source for online status.
+  // UNKNOWN when last_seen_at is null — never infer from key presence (unreliable).
   const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-  const isOnline = (() => {
-    if (deviceLastSeen) {
-      return (Date.now() - new Date(deviceLastSeen).getTime()) < OFFLINE_THRESHOLD_MS;
-    }
-    // Fallback: any live telemetry value present
-    return liveTelem && Object.keys(liveTelem).length > 0;
+
+  const status = (() => {
+    if (!deviceLastSeen) return "UNKNOWN";   // no data ever received or col missing
+    const age = Date.now() - new Date(deviceLastSeen).getTime();
+    return age < OFFLINE_THRESHOLD_MS ? "ONLINE" : "OFFLINE";
   })();
 
+  const COLOR = { ONLINE: "#10b981", OFFLINE: "#94a3b8", UNKNOWN: "#f59e0b" };
+  const c   = COLOR[status];
   const raw = config.key ? liveTelem?.[config.key] : undefined;
-  const c   = isOnline ? "#10b981" : "#94a3b8";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" }}>
       <div style={{
         width: 52, height: 52, borderRadius: "50%", background: c,
-        boxShadow: isOnline ? `0 0 20px ${c}66` : "none",
+        boxShadow: status === "ONLINE" ? `0 0 20px ${c}66` : "none",
         transition: "all .5s",
       }} />
       <div style={{ textAlign: "center" }}>
-        <p style={{ fontSize: 15, fontWeight: 700, color: c }}>{isOnline ? "ONLINE" : "OFFLINE"}</p>
+        <p style={{ fontSize: 15, fontWeight: 700, color: c }}>{status}</p>
         <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{config.label || config.key || "Status"}</p>
       </div>
       {raw !== undefined && (
@@ -422,11 +422,11 @@ export function StatusLight({ config, liveTelem, deviceLastSeen }) {
           {config.key}: {String(raw)}
         </p>
       )}
-      {deviceLastSeen && (
-        <p style={{ fontSize: 10, color: "#94a3b8" }}>
-          Last seen: {new Date(deviceLastSeen).toLocaleTimeString()}
-        </p>
-      )}
+      <p style={{ fontSize: 10, color: "#94a3b8" }}>
+        {deviceLastSeen
+          ? `Last seen: ${new Date(deviceLastSeen).toLocaleTimeString()}`
+          : "No data received yet"}
+      </p>
     </div>
   );
 }
