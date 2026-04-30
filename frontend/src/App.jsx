@@ -94,18 +94,18 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
   return (
-    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200 border-r border-blue-100`} style={{background:"linear-gradient(180deg,#dbeafe 0%,#eff6ff 100%)"}}>
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-blue-100 overflow-hidden">
+    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"linear-gradient(160deg,#060d1f 0%,#0a1628 40%,#0d2158 100%)"}}>
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-blue-900/30 overflow-hidden">
         <div className="flex items-center justify-center flex-shrink-0" style={{width:col?32:28}}>
           <img src="/taat-logo.png" alt="TAAT" style={{height:28, width:"auto", flexShrink:0}} />
         </div>
-        {!col && <span className="font-bold text-blue-900 text-sm tracking-wide truncate">TriAxis IoT</span>}
+        {!col && <span className="font-bold text-white text-sm tracking-wide truncate">TriAxis IoT</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-blue-400">Menu</p>}
+        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-blue-400/60">Menu</p>}
         {NAV.map(({id,label,icon}) => (
           <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-blue-600 text-white":"text-blue-900 hover:bg-blue-100 hover:text-blue-800"}`}>
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-blue-500/20 text-blue-300":"text-slate-400 hover:bg-white/5 hover:text-white"}`}>
             <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
             {!col && <span className="truncate">{label}</span>}
             {!col && id==="alarms" && alarmCount>0 && <span className="ml-auto bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">{alarmCount}</span>}
@@ -114,7 +114,7 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
           </button>
         ))}
       </nav>
-      <div className="border-t border-blue-100 p-3 space-y-2">
+      <div className="border-t border-blue-900/30 p-3 space-y-2">
         {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-slate-800 transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-slate-200 truncate">{name}</p><p className="text-[10px] text-slate-500">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
         <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-slate-500 hover:text-slate-300 hover:bg-slate-800 transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
