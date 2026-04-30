@@ -391,10 +391,21 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
   );
 }
 
-export function StatusLight({ config, liveTelem }) {
-  const raw      = liveTelem?.[config.key];
-  const isOnline = raw !== undefined;
-  const c        = isOnline ? "#10b981" : "#94a3b8";
+export function StatusLight({ config, liveTelem, deviceLastSeen }) {
+  // PHASE 2 FIX: determine online status from last_seen_at (5min threshold)
+  // Falls back to key existence check if last_seen_at not available
+  const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+  const isOnline = (() => {
+    if (deviceLastSeen) {
+      return (Date.now() - new Date(deviceLastSeen).getTime()) < OFFLINE_THRESHOLD_MS;
+    }
+    // Fallback: any live telemetry value present
+    return liveTelem && Object.keys(liveTelem).length > 0;
+  })();
+
+  const raw = config.key ? liveTelem?.[config.key] : undefined;
+  const c   = isOnline ? "#10b981" : "#94a3b8";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" }}>
       <div style={{
@@ -409,6 +420,11 @@ export function StatusLight({ config, liveTelem }) {
       {raw !== undefined && (
         <p style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
           {config.key}: {String(raw)}
+        </p>
+      )}
+      {deviceLastSeen && (
+        <p style={{ fontSize: 10, color: "#94a3b8" }}>
+          Last seen: {new Date(deviceLastSeen).toLocaleTimeString()}
         </p>
       )}
     </div>
@@ -695,7 +711,7 @@ export const WIDGET_REGISTRY = [
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -716,7 +732,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
-  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id };
+  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id, deviceLastSeen };
 
   switch (widget.widget_type) {
     case "value_card":       return <ValueCard       {...props} />;

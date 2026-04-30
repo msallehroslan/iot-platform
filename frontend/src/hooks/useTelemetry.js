@@ -1,30 +1,17 @@
 /**
  * hooks/useTelemetry.js
  *
- * React hook that provides real-time telemetry for a single device.
+ * PHASE 2 FIX: Replace N+1 serial history fetches with single bulk request.
+ *
+ * Before: 10 keys → GET /keys + 10× GET /history = 11 requests
+ * After:  10 keys → GET /keys + POST /history/bulk = 2 requests
  *
  * Responsibilities:
- *   - Subscribes to TelemetrySocket for the given deviceId
- *   - Maintains `liveValues`  — flat { key: latestValue } map
- *   - Maintains `history`     — { key: [{ts, value}, ...] } (last 50 per key)
- *   - Exposes `connected` + `usingFallback` status flags for the UI indicator
- *   - Cleans up the subscription on unmount
- *
- * Performance:
- *   - Uses useRef for history to avoid re-creating the object on every update
- *   - liveValues is spread-updated with only changed keys — React bails out
- *     of re-rendering child components that don't use the changed key
- *   - Widgets receive only the slice of state they subscribe to
- *
- * Usage:
- *   function MyWidget({ deviceId, telemetryKey }) {
- *     const { liveValues, history, connected } = useTelemetry(deviceId, [telemetryKey]);
- *     const value   = liveValues[telemetryKey];
- *     const history = history[telemetryKey] || [];
- *   }
- *
- *   // No key filter — receive everything:
- *   const { liveValues } = useTelemetry(deviceId, null);
+ *   - Seed liveValues from GET /latest (1 request)
+ *   - Seed historyData from POST /history/bulk (1 request for all keys)
+ *   - Subscribe to WebSocket for live updates
+ *   - Append incoming WS values to history ring buffer (MAX_HISTORY points)
+ *   - Expose connected + usingFallback status
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -34,90 +21,94 @@ import { telemetryApi } from "../services/api.js";
 const MAX_HISTORY = 50;
 
 /**
- * @param {string|null}   deviceId  - device UUID; pass null to disable
- * @param {string[]|null} keys      - keys to subscribe to (null = all)
+ * @param {string|null}   deviceId - device UUID; pass null to disable
+ * @param {string[]|null} keys     - keys to watch (null = all keys for this device)
  */
 export function useTelemetry(deviceId, keys = null) {
-  const [liveValues, setLiveValues] = useState({});
-  const [connected,  setConnected]  = useState(false);
-  const [fallback,   setFallback]   = useState(false);
+  const [liveValues,  setLiveValues]  = useState({});
+  const [historyData, setHistoryData] = useState({});
+  const [connected,   setConnected]   = useState(false);
+  const [fallback,    setFallback]    = useState(false);
 
-  // History is a mutable ref so appending doesn't trigger a render.
-  // Components that need history should access historyRef.current directly,
-  // or we expose a stable historyData state updated on each WS message.
-  const [historyData, setHistoryData] = useState({});  // { key: [{ts, value}] }
   const historyRef = useRef({});
 
-  // ── Initial REST fetch to populate state before first WS message ─────────
+  // ── Initial REST seed ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!deviceId) return;
 
-    // Load initial latest values
-    telemetryApi.latest(deviceId).then(rows => {
-      if (!rows?.length) return;
-      const values = {};
-      rows.forEach(r => { values[r.key] = r.value; });
-      setLiveValues(values);
-    }).catch(() => {});
+    let cancelled = false;
 
-    // Load initial history for subscribed keys
-    const keysToLoad = keys || [];
-    if (!keysToLoad.length) {
-      // No specific keys: fetch key list first, then histories
-      telemetryApi.keys(deviceId)
-        .then(res => (res?.keys || []))
-        .then(allKeys => {
-          allKeys.forEach(k => {
-            telemetryApi.history(deviceId, k, MAX_HISTORY).then(pts => {
-              if (!pts?.length) return;
-              historyRef.current = { ...historyRef.current, [k]: pts };
-              setHistoryData(h => ({ ...h, [k]: pts }));
-            }).catch(() => {});
-          });
-        })
-        .catch(() => {});
-    } else {
-      keysToLoad.forEach(k => {
-        telemetryApi.history(deviceId, k, MAX_HISTORY).then(pts => {
-          if (!pts?.length) return;
-          historyRef.current = { ...historyRef.current, [k]: pts };
-          setHistoryData(h => ({ ...h, [k]: pts }));
-        }).catch(() => {});
-      });
+    async function seed() {
+      try {
+        // 1 request: latest values for all keys
+        const latestRows = await telemetryApi.latest(deviceId);
+        if (cancelled) return;
+        if (latestRows?.length) {
+          const values = {};
+          latestRows.forEach(r => { values[r.key] = r.value; });
+          setLiveValues(values);
+        }
+
+        // Determine which keys to fetch history for
+        let keysToLoad = keys && keys.length > 0 ? keys : null;
+        if (!keysToLoad) {
+          // No specific keys requested — fetch all known keys for this device
+          const res = await telemetryApi.keys(deviceId);
+          if (cancelled) return;
+          keysToLoad = res?.keys || [];
+        }
+
+        if (!keysToLoad.length) return;
+
+        // 1 request: bulk history for all keys (replaces N serial requests)
+        const bulkResult = await telemetryApi.bulkHistory(deviceId, keysToLoad, MAX_HISTORY);
+        if (cancelled) return;
+
+        // bulkResult.data = { key: [{ts, value}, ...], ... }
+        const histMap = bulkResult?.data || {};
+        historyRef.current = histMap;
+        setHistoryData(histMap);
+
+      } catch (err) {
+        // Non-fatal — WS will populate live data anyway
+      }
     }
-  }, [deviceId]);   // only on deviceId change, not key changes
 
-  // ── WebSocket subscription ────────────────────────────────────────────────
+    seed();
+
+    return () => { cancelled = true; };
+  }, [deviceId]); // re-seed only when deviceId changes
+
+
+  // ── WebSocket subscription ─────────────────────────────────────────────────
   useEffect(() => {
     if (!deviceId) return;
 
     const unsub = TelemetrySocket.subscribe(deviceId, keys, (values, ts) => {
-      // 1. Update live values (only changed keys — React will shallow-compare)
+      // Update live values
       setLiveValues(prev => ({ ...prev, ...values }));
 
-      // 2. Append to history for each received key
-      const updatedHistory = { ...historyRef.current };
+      // Append to history ring buffer for each received key
+      const updated = { ...historyRef.current };
       let changed = false;
       Object.entries(values).forEach(([k, v]) => {
-        const arr = [...(updatedHistory[k] || [])];
+        const arr = [...(updated[k] || [])];
         arr.push({ ts, value: v });
         if (arr.length > MAX_HISTORY) arr.shift();
-        updatedHistory[k] = arr;
+        updated[k] = arr;
         changed = true;
       });
       if (changed) {
-        historyRef.current = updatedHistory;
-        setHistoryData(updatedHistory);
+        historyRef.current = updated;
+        setHistoryData(updated);
       }
 
-      // 3. Update connection status
+      // Update connection status
       const status = TelemetrySocket.getStatus(deviceId);
       setConnected(status.connected);
       setFallback(status.useFallback);
     });
 
-    // Poll connection status every 2s for the indicator (WS doesn't fire
-    // events for "still connected" state — only open/close)
     const statusInterval = setInterval(() => {
       const s = TelemetrySocket.getStatus(deviceId);
       setConnected(s.connected);
@@ -131,20 +122,17 @@ export function useTelemetry(deviceId, keys = null) {
   }, [deviceId, JSON.stringify(keys)]);
 
   return {
-    liveValues,    // { key: latestValue }
-    historyData,   // { key: [{ts, value}] }
-    connected,     // true if WebSocket is open
-    usingFallback: fallback,  // true if falling back to REST polling
+    liveValues,              // { key: latestValue }
+    historyData,             // { key: [{ts, value}, ...] }
+    connected,               // true if WebSocket is open
+    usingFallback: fallback, // true if falling back to REST polling
   };
 }
 
+
 /**
- * Lightweight hook for the Overview / TelCard components.
- * Subscribes to a single device, no key filtering needed.
- * Replaces the refreshKey-based polling pattern.
- *
- * @param {string} deviceId
- * @returns {{ values: Object, ts: string|null, connected: boolean }}
+ * Lightweight hook for Overview / device cards.
+ * Single device, no history needed.
  */
 export function useDeviceTelemetry(deviceId) {
   const [values,    setValues]    = useState({});
@@ -154,7 +142,6 @@ export function useDeviceTelemetry(deviceId) {
   useEffect(() => {
     if (!deviceId) return;
 
-    // Seed with REST on mount
     telemetryApi.latest(deviceId).then(rows => {
       if (!rows?.length) return;
       const v = {};

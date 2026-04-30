@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -1009,6 +1009,291 @@ function CustomersPage({ onToast, user: currentUser }) {
   );
 }
 
+
+// ── Rule Chains Page (Threshold Rules) ───────────────────────────────────────
+function RuleChainsPage({ onToast, user }) {
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const [rules,    setRules]    = useState([]);
+  const [devices,  setDevices]  = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [devKeys,  setDevKeys]  = useState([]);
+
+  const EMPTY_FORM = {
+    device_id: "", key: "", condition: "gt",
+    threshold: "", severity: "WARNING", alarm_type: "", is_active: true,
+  };
+  const [form, setForm] = useState(EMPTY_FORM);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const SEV_COLORS = {
+    CRITICAL: "bg-red-100 text-red-700",
+    MAJOR:    "bg-orange-100 text-orange-700",
+    MINOR:    "bg-yellow-100 text-yellow-700",
+    WARNING:  "bg-amber-100 text-amber-700",
+    INDETERMINATE: "bg-slate-100 text-slate-600",
+  };
+
+  const COND_LABELS = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
+
+  useEffect(() => {
+    Promise.all([thresholdApi.list(), deviceApi.list()])
+      .then(([r, d]) => { setRules(r || []); setDevices(d || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Dynamically load telemetry keys when device selection changes
+  useEffect(() => {
+    if (!form.device_id) { setDevKeys([]); return; }
+    telemetryApi.keys(form.device_id)
+      .then(res => setDevKeys(res?.keys || []))
+      .catch(() => setDevKeys([]));
+  }, [form.device_id]);
+
+  const handleCreate = async () => {
+    if (!form.key || !form.threshold || !form.alarm_type) {
+      onToast("Key, threshold, and alarm type are required", "error"); return;
+    }
+    setSaving(true);
+    try {
+      const body = {
+        device_id:  form.device_id || null,
+        key:        form.key,
+        condition:  form.condition,
+        threshold:  parseFloat(form.threshold),
+        severity:   form.severity,
+        alarm_type: form.alarm_type,
+        is_active:  form.is_active,
+      };
+      const created = await thresholdApi.create(body);
+      setRules(r => [...r, created]);
+      setShowForm(false); setForm(EMPTY_FORM);
+      onToast("Rule created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleToggle = async (rule) => {
+    try {
+      const updated = await thresholdApi.update(rule.id, { ...rule, is_active: !rule.is_active });
+      setRules(rs => rs.map(r => r.id === rule.id ? updated : r));
+      onToast(updated.is_active ? "Rule enabled" : "Rule disabled");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this rule?")) return;
+    try {
+      await thresholdApi.delete(id);
+      setRules(rs => rs.filter(r => r.id !== id));
+      onToast("Rule deleted");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const deviceName = (id) => devices.find(d => d.id === id)?.name || "All devices";
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Threshold Rules</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Auto-trigger alarms for any telemetry key on any device</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F8CFF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Rule
+          </button>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl p-3.5">
+        <svg className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p className="text-xs text-blue-700 leading-relaxed">
+          Rules are evaluated on every telemetry ingest for <strong>any key</strong> — temperature, glucose, voltage, vibration, or any custom key.
+          When a condition is met, an alarm is raised. When the value recovers, the alarm is <strong>auto-cleared</strong>.
+        </p>
+      </div>
+
+      {/* Rules table */}
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+        <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Active Rules</p>
+          <span className="text-xs text-slate-400">{rules.length} rule{rules.length !== 1 ? "s" : ""}</span>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-10"><Spinner /></div>
+        ) : rules.length === 0 ? (
+          <Empty icon="M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9" title="No rules yet" sub="Create your first threshold rule above" />
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 bg-slate-50">
+              {["Device", "Key", "Condition", "Alarm Type", "Severity", "Status", ""].map(h => (
+                <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rules.map(r => (
+                <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${!r.is_active ? "opacity-50" : ""}`}>
+                  <td className="px-4 py-3 text-xs text-slate-600">{deviceName(r.device_id)}</td>
+                  <td className="px-4 py-3"><span className="font-mono text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{r.key}</span></td>
+                  <td className="px-4 py-3 text-xs font-medium text-slate-700">
+                    <span className="font-mono">{COND_LABELS[r.condition] || r.condition}</span>
+                    <span className="ml-1.5 font-semibold">{r.threshold}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{r.alarm_type}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${SEV_COLORS[r.severity] || "bg-slate-100 text-slate-600"}`}>
+                      {r.severity}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {isAdmin ? (
+                      <button onClick={() => handleToggle(r)}
+                        className={`w-9 h-5 rounded-full transition-colors ${r.is_active ? "bg-emerald-500" : "bg-slate-300"} relative`}>
+                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${r.is_active ? "left-4" : "left-0.5"}`}/>
+                      </button>
+                    ) : (
+                      <span className={`text-[11px] font-medium ${r.is_active ? "text-emerald-600" : "text-slate-400"}`}>
+                        {r.is_active ? "Active" : "Disabled"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {isAdmin && (
+                      <button onClick={() => handleDelete(r.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* New Rule Modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">New Threshold Rule</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Works for any telemetry key</p>
+              </div>
+              <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+
+              {/* Device selector */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Device <span className="text-slate-300">(leave blank for all devices)</span></label>
+                <select className={INP + " cursor-pointer"} value={form.device_id}
+                  onChange={e => { set("device_id", e.target.value); set("key", ""); }}>
+                  <option value="">— All devices in tenant —</option>
+                  {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+
+              {/* Key selector — dynamic from backend */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">
+                  Telemetry Key *
+                  {form.device_id && devKeys.length === 0 && (
+                    <span className="text-slate-400 font-normal ml-1">(no keys yet — type manually)</span>
+                  )}
+                </label>
+                {form.device_id && devKeys.length > 0 ? (
+                  <select className={INP + " cursor-pointer"} value={form.key}
+                    onChange={e => set("key", e.target.value)}>
+                    <option value="">— Select key —</option>
+                    {devKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                ) : (
+                  <input className={INP} placeholder="e.g. temperature, glucose, voltage" value={form.key}
+                    onChange={e => set("key", e.target.value)} />
+                )}
+              </div>
+
+              {/* Condition + threshold */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Condition *</label>
+                  <select className={INP + " cursor-pointer"} value={form.condition}
+                    onChange={e => set("condition", e.target.value)}>
+                    <option value="gt">&gt; greater than</option>
+                    <option value="gte">≥ greater or equal</option>
+                    <option value="lt">&lt; less than</option>
+                    <option value="lte">≤ less or equal</option>
+                    <option value="eq">= equal to</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Threshold *</label>
+                  <input type="number" className={INP} placeholder="e.g. 80" value={form.threshold}
+                    onChange={e => set("threshold", e.target.value)} />
+                </div>
+              </div>
+
+              {/* Severity */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Severity</label>
+                <select className={INP + " cursor-pointer"} value={form.severity}
+                  onChange={e => set("severity", e.target.value)}>
+                  {["CRITICAL","MAJOR","MINOR","WARNING","INDETERMINATE"].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Alarm type */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Alarm Type * <span className="text-slate-400 font-normal">(descriptive name)</span></label>
+                <input className={INP} placeholder="e.g. High Temperature, Low Battery"
+                  value={form.alarm_type} onChange={e => set("alarm_type", e.target.value)} />
+              </div>
+
+              {/* Preview */}
+              {form.key && form.threshold && (
+                <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 border border-slate-200">
+                  <span className="font-medium">Preview: </span>
+                  If <span className="font-mono bg-white px-1 rounded border">{form.key}</span>
+                  {" "}{COND_LABELS[form.condition] || form.condition}{" "}
+                  <span className="font-semibold">{form.threshold}</span>
+                  {" → trigger "}<span className="font-medium text-amber-700">{form.alarm_type || "alarm"}</span>
+                  {" ("}{form.severity}{")"}
+                  {". Auto-clears when condition is no longer met."}
+                </div>
+              )}
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreate} disabled={saving || !form.key || !form.threshold || !form.alarm_type}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create Rule"}
+              </button>
+              <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Login page ────────────────────────────────────────────────────────────────
 // ── Reset Password page ───────────────────────────────────────────────────────
 // Option 1 — simple direct reset: enter email + new password, no email link needed.
@@ -1086,6 +1371,291 @@ function ResetPasswordPage({ onBack }) {
 
 
 // ── RBAC: Users & Roles Page ──────────────────────────────────────────────────
+
+// ── Rule Chains Page (Threshold Rules) ───────────────────────────────────────
+function RuleChainsPage({ onToast, user }) {
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const [rules,    setRules]    = useState([]);
+  const [devices,  setDevices]  = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [devKeys,  setDevKeys]  = useState([]);
+
+  const EMPTY_FORM = {
+    device_id: "", key: "", condition: "gt",
+    threshold: "", severity: "WARNING", alarm_type: "", is_active: true,
+  };
+  const [form, setForm] = useState(EMPTY_FORM);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const SEV_COLORS = {
+    CRITICAL: "bg-red-100 text-red-700",
+    MAJOR:    "bg-orange-100 text-orange-700",
+    MINOR:    "bg-yellow-100 text-yellow-700",
+    WARNING:  "bg-amber-100 text-amber-700",
+    INDETERMINATE: "bg-slate-100 text-slate-600",
+  };
+
+  const COND_LABELS = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
+
+  useEffect(() => {
+    Promise.all([thresholdApi.list(), deviceApi.list()])
+      .then(([r, d]) => { setRules(r || []); setDevices(d || []); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Dynamically load telemetry keys when device selection changes
+  useEffect(() => {
+    if (!form.device_id) { setDevKeys([]); return; }
+    telemetryApi.keys(form.device_id)
+      .then(res => setDevKeys(res?.keys || []))
+      .catch(() => setDevKeys([]));
+  }, [form.device_id]);
+
+  const handleCreate = async () => {
+    if (!form.key || !form.threshold || !form.alarm_type) {
+      onToast("Key, threshold, and alarm type are required", "error"); return;
+    }
+    setSaving(true);
+    try {
+      const body = {
+        device_id:  form.device_id || null,
+        key:        form.key,
+        condition:  form.condition,
+        threshold:  parseFloat(form.threshold),
+        severity:   form.severity,
+        alarm_type: form.alarm_type,
+        is_active:  form.is_active,
+      };
+      const created = await thresholdApi.create(body);
+      setRules(r => [...r, created]);
+      setShowForm(false); setForm(EMPTY_FORM);
+      onToast("Rule created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleToggle = async (rule) => {
+    try {
+      const updated = await thresholdApi.update(rule.id, { ...rule, is_active: !rule.is_active });
+      setRules(rs => rs.map(r => r.id === rule.id ? updated : r));
+      onToast(updated.is_active ? "Rule enabled" : "Rule disabled");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Delete this rule?")) return;
+    try {
+      await thresholdApi.delete(id);
+      setRules(rs => rs.filter(r => r.id !== id));
+      onToast("Rule deleted");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const deviceName = (id) => devices.find(d => d.id === id)?.name || "All devices";
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Threshold Rules</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Auto-trigger alarms for any telemetry key on any device</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F8CFF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Rule
+          </button>
+        )}
+      </div>
+
+      {/* How it works */}
+      <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl p-3.5">
+        <svg className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p className="text-xs text-blue-700 leading-relaxed">
+          Rules are evaluated on every telemetry ingest for <strong>any key</strong> — temperature, glucose, voltage, vibration, or any custom key.
+          When a condition is met, an alarm is raised. When the value recovers, the alarm is <strong>auto-cleared</strong>.
+        </p>
+      </div>
+
+      {/* Rules table */}
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+        <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Active Rules</p>
+          <span className="text-xs text-slate-400">{rules.length} rule{rules.length !== 1 ? "s" : ""}</span>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-10"><Spinner /></div>
+        ) : rules.length === 0 ? (
+          <Empty icon="M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9" title="No rules yet" sub="Create your first threshold rule above" />
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 bg-slate-50">
+              {["Device", "Key", "Condition", "Alarm Type", "Severity", "Status", ""].map(h => (
+                <th key={h} className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {rules.map(r => (
+                <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 ${!r.is_active ? "opacity-50" : ""}`}>
+                  <td className="px-4 py-3 text-xs text-slate-600">{deviceName(r.device_id)}</td>
+                  <td className="px-4 py-3"><span className="font-mono text-[11px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{r.key}</span></td>
+                  <td className="px-4 py-3 text-xs font-medium text-slate-700">
+                    <span className="font-mono">{COND_LABELS[r.condition] || r.condition}</span>
+                    <span className="ml-1.5 font-semibold">{r.threshold}</span>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-600">{r.alarm_type}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${SEV_COLORS[r.severity] || "bg-slate-100 text-slate-600"}`}>
+                      {r.severity}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {isAdmin ? (
+                      <button onClick={() => handleToggle(r)}
+                        className={`w-9 h-5 rounded-full transition-colors ${r.is_active ? "bg-emerald-500" : "bg-slate-300"} relative`}>
+                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${r.is_active ? "left-4" : "left-0.5"}`}/>
+                      </button>
+                    ) : (
+                      <span className={`text-[11px] font-medium ${r.is_active ? "text-emerald-600" : "text-slate-400"}`}>
+                        {r.is_active ? "Active" : "Disabled"}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {isAdmin && (
+                      <button onClick={() => handleDelete(r.id)}
+                        className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500">
+                        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* New Rule Modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">New Threshold Rule</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Works for any telemetry key</p>
+              </div>
+              <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }}
+                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+
+              {/* Device selector */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Device <span className="text-slate-300">(leave blank for all devices)</span></label>
+                <select className={INP + " cursor-pointer"} value={form.device_id}
+                  onChange={e => { set("device_id", e.target.value); set("key", ""); }}>
+                  <option value="">— All devices in tenant —</option>
+                  {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+
+              {/* Key selector — dynamic from backend */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">
+                  Telemetry Key *
+                  {form.device_id && devKeys.length === 0 && (
+                    <span className="text-slate-400 font-normal ml-1">(no keys yet — type manually)</span>
+                  )}
+                </label>
+                {form.device_id && devKeys.length > 0 ? (
+                  <select className={INP + " cursor-pointer"} value={form.key}
+                    onChange={e => set("key", e.target.value)}>
+                    <option value="">— Select key —</option>
+                    {devKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                ) : (
+                  <input className={INP} placeholder="e.g. temperature, glucose, voltage" value={form.key}
+                    onChange={e => set("key", e.target.value)} />
+                )}
+              </div>
+
+              {/* Condition + threshold */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Condition *</label>
+                  <select className={INP + " cursor-pointer"} value={form.condition}
+                    onChange={e => set("condition", e.target.value)}>
+                    <option value="gt">&gt; greater than</option>
+                    <option value="gte">≥ greater or equal</option>
+                    <option value="lt">&lt; less than</option>
+                    <option value="lte">≤ less or equal</option>
+                    <option value="eq">= equal to</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Threshold *</label>
+                  <input type="number" className={INP} placeholder="e.g. 80" value={form.threshold}
+                    onChange={e => set("threshold", e.target.value)} />
+                </div>
+              </div>
+
+              {/* Severity */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Severity</label>
+                <select className={INP + " cursor-pointer"} value={form.severity}
+                  onChange={e => set("severity", e.target.value)}>
+                  {["CRITICAL","MAJOR","MINOR","WARNING","INDETERMINATE"].map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Alarm type */}
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Alarm Type * <span className="text-slate-400 font-normal">(descriptive name)</span></label>
+                <input className={INP} placeholder="e.g. High Temperature, Low Battery"
+                  value={form.alarm_type} onChange={e => set("alarm_type", e.target.value)} />
+              </div>
+
+              {/* Preview */}
+              {form.key && form.threshold && (
+                <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 border border-slate-200">
+                  <span className="font-medium">Preview: </span>
+                  If <span className="font-mono bg-white px-1 rounded border">{form.key}</span>
+                  {" "}{COND_LABELS[form.condition] || form.condition}{" "}
+                  <span className="font-semibold">{form.threshold}</span>
+                  {" → trigger "}<span className="font-medium text-amber-700">{form.alarm_type || "alarm"}</span>
+                  {" ("}{form.severity}{")"}
+                  {". Auto-clears when condition is no longer met."}
+                </div>
+              )}
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreate} disabled={saving || !form.key || !form.threshold || !form.alarm_type}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create Rule"}
+              </button>
+              <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Login page ────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
   const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false); const [showPw,setShowPw]=useState(false);
@@ -1161,7 +1731,7 @@ function LoginPage({ onLogin }) {
 const PAGE_TITLES = {
   overview:"Overview", "user-dashboards":"My Dashboards", "device-dashboards":"Device Dashboards",
   devices:"Devices", alarms:"Alarms",
-  "rule-chains":"Rule Chains", customers:"Customers", users:"Users & Roles", settings:"Settings",
+  "rule-chains":"Rule Chains (Threshold Rules)", customers:"Customers", users:"Users & Roles", settings:"Settings",
 };
 
 export default function App() {
@@ -1213,7 +1783,7 @@ export default function App() {
           {page === "device-dashboards"  && dashDevice  && <DashboardPage device={dashDevice} onBack={() => setDashDevice(null)} user={user} />}
           {page === "devices"            && <DevicesPage onOpenDrawer={setDrawer} onToast={showToast} user={user} />}
           {page === "alarms"             && <AlarmsPage onToast={showToast} user={user} />}
-          {page === "rule-chains"        && <ComingSoon label="Rule Chains"  desc="Define automated workflows triggered by device telemetry." icon="M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9"/>}
+          {page === "rule-chains"        && <RuleChainsPage onToast={showToast} user={user} />}
           {page === "customers"          && <CustomersPage onToast={showToast} user={user} />}
           {page === "users"              && <UsersPage onToast={showToast} user={user} />}
           {page === "settings"           && <SettingsPage user={user} onLogout={handleLogout} />}

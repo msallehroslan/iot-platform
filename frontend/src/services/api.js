@@ -67,10 +67,11 @@ export const deviceApi = {
 
 // ── Telemetry ─────────────────────────────────────────────────────────────────
 export const telemetryApi = {
-  latest:    deviceId                    => apiFetch(`/telemetry/latest/${deviceId}`),
-  history:   (deviceId, key, n)           => apiFetch(`/telemetry/history/${deviceId}?key=${encodeURIComponent(key)}&limit=${n ?? 50}`),
-  keys:      deviceId                    => apiFetch(`/telemetry/keys/${deviceId}`),
-  aggregate: (deviceId, key, window, fn) => apiFetch(`/telemetry/aggregate/${deviceId}?key=${encodeURIComponent(key)}&window=${window}&function=${fn}`),
+  latest:      deviceId                    => apiFetch(`/telemetry/latest/${deviceId}`),
+  history:     (deviceId, key, n)          => apiFetch(`/telemetry/history/${deviceId}?key=${encodeURIComponent(key)}&limit=${n ?? 50}`),
+  bulkHistory: (deviceId, keys, limit=50)  => apiFetch(`/telemetry/history/${deviceId}/bulk`, { method: "POST", body: JSON.stringify({ keys, limit }) }),
+  keys:        deviceId                    => apiFetch(`/telemetry/keys/${deviceId}`),
+  aggregate:   (deviceId, key, window, fn) => apiFetch(`/telemetry/aggregate/${deviceId}?key=${encodeURIComponent(key)}&window=${window}&function=${fn}`),
 };
 
 // ── Alarms ────────────────────────────────────────────────────────────────────
@@ -143,4 +144,12 @@ export const customerApi = {
   delete:            id              => apiFetch(`/customers/${id}`,               { method: "DELETE" }),
   listUsers:         customerId      => apiFetch(`/customers/${customerId}/users`),
   createUser:        (customerId, b) => apiFetch(`/customers/${customerId}/users`, { method: "POST",   body: JSON.stringify(b) }),
+};
+
+// ── Threshold Rules ───────────────────────────────────────────────────────────
+export const thresholdApi = {
+  list:   ()         => apiFetch("/threshold-rules/"),
+  create: body       => apiFetch("/threshold-rules/",    { method: "POST",   body: JSON.stringify(body) }),
+  update: (id, body) => apiFetch(`/threshold-rules/${id}`, { method: "PUT",  body: JSON.stringify(body) }),
+  delete: id         => apiFetch(`/threshold-rules/${id}`, { method: "DELETE" }),
 };

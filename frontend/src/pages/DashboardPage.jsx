@@ -25,7 +25,7 @@ import {
 import {
   persistLayout, applyLayoutToWidgets, getDefaultPositionForType,
 } from "../services/widgetService.js";
-import { dashboardsHttp } from "../services/api.js";       // injected into persistLayout
+import { dashboardsHttp, telemetryApi } from "../services/api.js";       // injected into persistLayout
 import { TelemetrySocket } from "../services/websocket.js";
 import GridLayout from "../components/dashboard/GridLayout.jsx";
 import { WidgetRenderer, WIDGET_REGISTRY } from "../components/widgets/index.jsx";
@@ -310,19 +310,37 @@ export default function DashboardPage({ device, onBack, user }) {
     }
   }, []);
 
-  // ── 3. Telemetry keys + history ───────────────────────────────────────────
+  // ── 3. Telemetry keys + bulk history ─────────────────────────────────────
+  // PHASE 2 FIX: single bulk request replaces N serial history calls
+  // Before: 10 keys → 11 requests. After: 10 keys → 3 requests total.
   useEffect(() => {
     if (!device?.id) return;
-    getTelemetryKeys(device.id).then(ks => {
-      setAvailableKeys(ks);
-      ks.forEach(k => {
-        getTelemetryHistory(device.id, k, 50)
-          .then(pts => setHistoryData(h => ({ ...h, [k]: pts })))
-          .catch(() => {});
-      });
-    }).catch(() => {});
-    getLatestTelemetry(device.id).then(setLiveTelem).catch(() => {});
-    getDeviceAlarms(device.id).then(setAlarms).catch(() => {});
+
+    async function loadTelemetry() {
+      try {
+        // Parallel: keys + latest + alarms
+        const [ks, latest, deviceAlarms] = await Promise.all([
+          getTelemetryKeys(device.id),
+          getLatestTelemetry(device.id),
+          getDeviceAlarms(device.id),
+        ]);
+        setAvailableKeys(ks);
+        setLiveTelem(latest);
+        setAlarms(deviceAlarms);
+
+        if (!ks.length) return;
+
+        // Single bulk request for all keys
+        const bulk = await telemetryApi.bulkHistory(device.id, ks, 50);
+        if (bulk?.data) {
+          setHistoryData(bulk.data);
+        }
+      } catch (e) {
+        // non-fatal
+      }
+    }
+
+    loadTelemetry();
   }, [device?.id]);
 
   // ── 4. WebSocket ──────────────────────────────────────────────────────────
