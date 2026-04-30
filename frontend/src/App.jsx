@@ -574,10 +574,91 @@ function LoginPage({ onLogin }) {
 
   return (
     <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
-      <div className="hidden lg:flex flex-col justify-between w-[420px] p-10 flex-shrink-0" style={{background:"#EAF2FF"}}>
-        <div className="flex flex-col gap-2"><span className="font-bold text-[#0B1426] text-2xl tracking-wide">TriAxis IoT</span></div>
-        <div className="max-w-xs"><h2 className="text-5xl font-bold text-[#0B1426] leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#0B4BB3,#2F8CFF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-[#334866] text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
-        <div className="grid grid-cols-2 gap-3">{[["Live Devices","Fleet status"],["Smart Alerts","Faster response"],["Telemetry","Real-time data"],["TriAxis","IoT control"]].map(([v,l])=><div key={l} className="rounded-xl border p-4 shadow-sm" style={{background:"rgba(255,255,255,0.38)",borderColor:"#D8E3F3"}}><p className="text-sm font-bold text-[#0B1426]">{v}</p><p className="text-xs text-[#6B7F9F] mt-0.5">{l}</p></div>)}</div>
+      <div className="hidden lg:flex flex-col justify-between flex-shrink-0 min-h-screen px-11 py-12" style={{width:470,background:"#EAF3FF"}}>
+        {/* Logo + App Name */}
+        <div className="flex items-center gap-3">
+          <img src="/taat-logo-2.png" alt="TAAT" className="h-10 w-auto object-contain" />
+          <span className="text-2xl font-extrabold tracking-tight text-[#07142F]">TriAxis IoT</span>
+        </div>
+
+        {/* Main Copy + Illustration */}
+        <div>
+          <h1 className="text-6xl font-extrabold leading-tight tracking-tight text-[#07142F]">
+            Connect,<br/>Monitor,<br/><span className="text-[#2F80ED]">Control.</span>
+          </h1>
+          <p className="mt-8 max-w-[360px] text-lg leading-8 text-[#17345E]">
+            Unified IoT platform for real-time visibility, intelligent alerts,
+            and seamless device management — all in one place.
+          </p>
+
+          {/* IoT Illustration */}
+          <div className="mt-10 rounded-2xl border border-[#D8E3F3] p-5 shadow-sm shadow-blue-100/40" style={{background:"rgba(255,255,255,0.6)"}}>
+            <svg viewBox="0 0 520 300" className="h-auto w-full" role="img">
+              <defs>
+                <linearGradient id="cardBlue" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#F8FBFF"/>
+                  <stop offset="100%" stopColor="#DDEBFF"/>
+                </linearGradient>
+                <linearGradient id="primaryBlue" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#3B91FF"/>
+                  <stop offset="100%" stopColor="#0757C8"/>
+                </linearGradient>
+                <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="12" stdDeviation="12" floodColor="#1D4ED8" floodOpacity="0.16"/>
+                </filter>
+              </defs>
+              <rect x="8" y="8" width="504" height="284" rx="28" fill="url(#cardBlue)"/>
+              <path d="M260 150 H120 V88" fill="none" stroke="#9CBCE7" strokeWidth="3" strokeLinecap="round"/>
+              <path d="M260 150 H400 V86" fill="none" stroke="#9CBCE7" strokeWidth="3" strokeLinecap="round"/>
+              <path d="M260 150 V238 H148" fill="none" stroke="#9CBCE7" strokeWidth="3" strokeLinecap="round"/>
+              <path d="M260 150 V238 H380" fill="none" stroke="#9CBCE7" strokeWidth="3" strokeLinecap="round"/>
+              <g filter="url(#softShadow)">
+                <path d="M201 178H330c25 0 45-19 45-43s-20-43-45-43c-5 0-10 1-15 2C304 70 280 54 252 54c-35 0-64 24-70 56-22 3-39 21-39 43 0 14 6 25 16 33 10 8 23-8 42-8Z" fill="#FFFFFF" stroke="#2F80ED" strokeWidth="8" strokeLinejoin="round"/>
+              </g>
+              <circle cx="260" cy="150" r="16" fill="url(#primaryBlue)"/>
+              <circle cx="260" cy="150" r="6" fill="#FFFFFF"/>
+              <g filter="url(#softShadow)">
+                <rect x="82" y="48" width="78" height="62" rx="14" fill="#FFFFFF"/>
+                <rect x="96" y="64" width="50" height="8" rx="4" fill="#0B2F6B"/>
+                <rect x="96" y="82" width="34" height="8" rx="4" fill="#2F80ED"/>
+                <circle cx="142" cy="90" r="9" fill="#B9D7FF"/>
+              </g>
+              <g filter="url(#softShadow)">
+                <rect x="365" y="42" width="76" height="78" rx="16" fill="#FFFFFF"/>
+                <rect x="386" y="56" width="34" height="50" rx="8" fill="#0B2F6B"/>
+                <circle cx="403" cy="82" r="10" fill="#2F80ED"/>
+                <circle cx="403" cy="82" r="4" fill="#FFFFFF"/>
+              </g>
+              <g filter="url(#softShadow)">
+                <rect x="88" y="212" width="118" height="48" rx="14" fill="#FFFFFF"/>
+                <rect x="105" y="228" width="42" height="8" rx="4" fill="#2F80ED"/>
+                <rect x="105" y="244" width="72" height="7" rx="4" fill="#BCD6F6"/>
+                <circle cx="184" cy="236" r="12" fill="#E5F0FF"/>
+              </g>
+              <g filter="url(#softShadow)">
+                <rect x="334" y="210" width="110" height="54" rx="14" fill="#FFFFFF"/>
+                <rect x="350" y="226" width="32" height="24" rx="6" fill="#2F80ED"/>
+                <rect x="392" y="228" width="34" height="7" rx="4" fill="#0B2F6B"/>
+                <rect x="392" y="244" width="25" height="7" rx="4" fill="#BCD6F6"/>
+              </g>
+              <path d="M222 118c20-17 55-17 76 0" fill="none" stroke="#2F80ED" strokeWidth="7" strokeLinecap="round"/>
+              <path d="M237 134c13-10 33-10 46 0" fill="none" stroke="#2F80ED" strokeWidth="7" strokeLinecap="round"/>
+              {[[120,88],[400,86],[148,238],[380,238],[204,150],[316,150]].map(([x,y],i)=>(
+                <circle key={i} cx={x} cy={y} r="6" fill="#FFFFFF" stroke="#2F80ED" strokeWidth="4"/>
+              ))}
+            </svg>
+          </div>
+        </div>
+
+        {/* Feature Cards */}
+        <div className="grid grid-cols-2 gap-3">
+          {[["Live Devices","Fleet status"],["Smart Alerts","Faster response"],["Telemetry","Real-time data"],["TriAxis","IoT control"]].map(([v,l])=>(
+            <div key={l} className="rounded-2xl border border-[#D8E3F3] p-4 shadow-sm shadow-blue-100/40" style={{background:"rgba(255,255,255,0.55)"}}>
+              <p className="font-bold text-[#07142F]">{v}</p>
+              <p className="mt-1 text-sm text-[#64789B]">{l}</p>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="flex-1 flex items-center justify-center p-8 lg:justify-start lg:pl-40" style={{background:"#F4F8FF"}}>
         <div className="w-full max-w-md rounded-2xl border bg-white/70 p-7 shadow-sm" style={{borderColor:"#D8E3F3"}}>
