@@ -123,8 +123,8 @@ function Header({ title, onRefresh, refreshing }) {
   const [time, setTime] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
-    <header className="h-14 flex-shrink-0 border-b flex items-center justify-between px-6" style={{background:"#F4F8FF",borderColor:"#D8E3F3"}}>
-      <div><h1 className="text-[15px] font-semibold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
+    <header className="h-16 flex-shrink-0 border-b flex items-center justify-between px-7 shadow-sm shadow-blue-100/30" style={{background:"#F4F8FF",borderColor:"#D8E3F3"}}>
+      <div><h1 className="text-base font-bold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
       <div className="flex items-center gap-3">
         <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
         <div className="w-px h-4 bg-[#D8E3F3]"/>
@@ -159,16 +159,16 @@ function OverviewPage({ refreshKey, onToast }) {
   const active=devices.filter(d=>d.status==="ACTIVE");
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
-          <div key={label} className="rounded-xl border p-5 flex flex-col gap-3 shadow-sm hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+          <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md hover:shadow-blue-100/70 transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
             <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
             <Sparkline data={sparkRef.current.map(i=>(value||5)+Math.sin(i*.5+label.length)*2)} color={color} height={36}/>
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="col-span-2 rounded-xl border shadow-sm p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="col-span-2 rounded-2xl border shadow-sm shadow-blue-100/40 p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
           <div className="flex items-start justify-between mb-5"><div><h2 className="text-sm font-semibold text-[#0B1426]">Telemetry History</h2><p className="text-xs text-[#6B7F9F] mt-0.5">Last 50 points</p></div>
             <div className="flex items-center gap-2">
               {devices.length>0&&<select value={chartDev?.id||""} onChange={e=>setChartDev(devices.find(d=>d.id===e.target.value))} className="text-xs border rounded-lg px-3 py-1.5 bg-white outline-none cursor-pointer max-w-[140px]" style={{borderColor:"#D8E3F3",color:"#334866"}}>{devices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>}
@@ -178,12 +178,12 @@ function OverviewPage({ refreshKey, onToast }) {
           <LineChart data={chartData} color="#3b82f6"/>
           <div className="flex items-center justify-end gap-2 mt-3"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"/><span className="text-[10px] text-slate-400 font-medium">{chartData.length} pts · LIVE</span></div>
         </div>
-        <div className="rounded-xl border shadow-sm p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+        <div className="rounded-2xl border shadow-sm shadow-blue-100/40 p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
           <div className="flex items-center justify-between mb-4"><h2 className="text-sm font-semibold text-[#0B1426]">Recent Alarms</h2>{alarms.length>0&&<span className="text-[10px] font-semibold bg-red-50 text-red-600 px-2 py-0.5 rounded-full">{alarms.length}</span>}</div>
-          {alarms.length===0?<Empty icon="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" title="No alarms" sub="System healthy"/>:<div className="space-y-2">{alarms.map(a=><div key={a.id} className="flex items-start gap-3 p-3 rounded-lg bg-slate-50"><span className={SEVB[a.severity]||SEVB.INDETERMINATE}>{a.severity}</span><div className="min-w-0"><p className="text-xs font-medium text-slate-700 truncate">{a.alarm_type}</p><p className="text-[10px] text-slate-400 mt-0.5 truncate">{a.device_name||"—"} · {new Date(a.start_ts).toLocaleTimeString()}</p></div></div>)}</div>}
+          {alarms.length===0?<Empty icon="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" title="No alarms" sub="System healthy"/>:<div className="space-y-2">{alarms.map(a=><div key={a.id} className="flex items-start gap-3 p-3 rounded-xl border bg-[#F4F8FF]" style={{borderColor:"#D8E3F3"}}><span className={SEVB[a.severity]||SEVB.INDETERMINATE}>{a.severity}</span><div className="min-w-0"><p className="text-xs font-medium text-slate-700 truncate">{a.alarm_type}</p><p className="text-[10px] text-slate-400 mt-0.5 truncate">{a.device_name||"—"} · {new Date(a.start_ts).toLocaleTimeString()}</p></div></div>)}</div>}
         </div>
       </div>
-      {active.length>0&&<div><h2 className="text-sm font-semibold text-slate-700 mb-3">Latest Telemetry</h2><div className="grid grid-cols-4 gap-4">{active.slice(0,8).map(d=><TelCard key={d.id} device={d}/>)}</div></div>}
+      {active.length>0&&<div><h2 className="text-sm font-semibold text-[#0B1426] mb-3">Latest Telemetry</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">{active.slice(0,8).map(d=><TelCard key={d.id} device={d}/>)}</div></div>}
     </div>
   );
 }
@@ -193,7 +193,7 @@ function TelCard({ device }) {
   const { values, ts, connected } = useDeviceTelemetry(device.id);
   const rows = Object.entries(values).map(([key, value]) => ({ key, value }));
   return (
-    <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}} className="p-4 hover:shadow-md transition-shadow">
+    <div className="rounded-2xl border p-4 shadow-sm shadow-blue-100/40 hover:shadow-md hover:shadow-blue-100/70 transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
       <div className="flex items-start justify-between mb-3">
         <div className="min-w-0"><p className="text-xs font-semibold text-slate-700 truncate">{device.name}</p><p className="text-[10px] text-slate-400 mt-0.5">{device.device_type}</p></div>
         <div className="flex items-center gap-2">
@@ -215,12 +215,12 @@ function DeviceListForDashboards({ onOpen }) {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div><h2 className="text-sm font-semibold text-[#0B1426]">Device Dashboards</h2><p className="text-xs text-[#6B7F9F] mt-0.5">Select a device to build its custom widget dashboard</p></div>
-        <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-56" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border rounded-lg bg-white text-[#334866] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-56" style={{borderColor:"#D8E3F3"}} placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       </div>
       {loading?<div className="flex justify-center py-12"><Spinner/></div>:
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map(d=>(
-            <div key={d.id} onClick={()=>onOpen(d)} className="bg-white rounded-xl border border-slate-100 p-5 cursor-pointer hover:shadow-md hover:-translate-y-0.5 hover:border-blue-200 transition-all shadow-sm relative overflow-hidden">
+            <div key={d.id} onClick={()=>onOpen(d)} className="bg-white rounded-2xl border p-5 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all shadow-sm shadow-blue-100/40 relative overflow-hidden" style={{borderColor:"#D8E3F3"}}>
               <div className="absolute top-0 inset-x-0 h-0.5" style={{background:d.status==="ACTIVE"?"linear-gradient(to right,#10b981,#3b82f6)":"#e2e8f0",borderRadius:"12px 12px 0 0"}}/>
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center"><svg className="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div><div><p className="text-sm font-semibold text-[#0B1426]">{d.name}</p><p className="text-[10px] text-slate-400 mt-0.5">{d.device_type}{d.label?` · ${d.label}`:""}</p></div></div>
@@ -247,10 +247,10 @@ function DevicesPage({ onOpenDrawer, onToast }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-64" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
+        <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border rounded-lg bg-white text-[#334866] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-64" style={{borderColor:"#D8E3F3"}} placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
         <button onClick={()=>{setEditDev(null);setShowM(true);}} className="flex items-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Device</button>
       </div>
-      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}} className="overflow-hidden">
+      <div className="rounded-2xl border shadow-sm shadow-blue-100/40 overflow-hidden" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
         {loading?<div className="flex justify-center py-12"><Spinner/></div>:filtered.length===0?<Empty icon="M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4" title={search?"No match":"No devices"} sub="Add your first device"/>:
         <><table className="w-full text-sm"><thead><tr className="border-b border-slate-100 bg-slate-50">{["Device","Type","Status","Token","Created",""].map(h=><th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>)}</tr></thead>
           <tbody>{filtered.map(d=>(
@@ -303,9 +303,9 @@ function AlarmsPage({ onToast }) {
   const unack=alarms.filter(a=>a.status==="ACTIVE_UNACK").length, crit=alarms.filter(a=>a.severity==="CRITICAL").length;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-4">{[{l:"Unacknowledged",v:unack,c:"text-amber-500",b:"bg-amber-50 border-amber-100"},{l:"Critical",v:crit,c:"text-red-500",b:"bg-red-50 border-red-100"},{l:"Total",v:alarms.length,c:"text-[#2F8CFF]",b:"bg-blue-50 border-blue-100"}].map(x=><div key={x.l} className={`rounded-xl border p-4 flex items-center gap-4 shadow-sm ${x.b}`}><span className={`text-3xl font-bold ${x.c}`}>{x.v}</span><span className="text-xs text-slate-500 font-medium">{x.l}</span></div>)}</div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">{[{l:"Unacknowledged",v:unack,c:"text-amber-500",b:"bg-amber-50 border-amber-100"},{l:"Critical",v:crit,c:"text-red-500",b:"bg-red-50 border-red-100"},{l:"Total",v:alarms.length,c:"text-[#2F8CFF]",b:"bg-blue-50 border-blue-100"}].map(x=><div key={x.l} className={`rounded-xl border p-4 flex items-center gap-4 shadow-sm ${x.b}`}><span className={`text-3xl font-bold ${x.c}`}>{x.v}</span><span className="text-xs text-slate-500 font-medium">{x.l}</span></div>)}</div>
       <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg w-fit">{["ACTIVE","ACK","CLEARED","ALL"].map(f=><button key={f} onClick={()=>setFilter(f)} className={`px-3.5 py-1.5 rounded-md text-xs font-medium transition-all ${filter===f?"bg-white text-slate-800 shadow-sm":"text-slate-500 hover:text-slate-700"}`}>{f==="ACK"?"Acknowledged":f==="ACTIVE"?"Active":f.charAt(0)+f.slice(1).toLowerCase()}</button>)}</div>
-      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}} className="overflow-hidden">
+      <div className="rounded-2xl border shadow-sm shadow-blue-100/40 overflow-hidden" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
         {loading?<div className="flex justify-center py-12"><Spinner/></div>:alarms.length===0?<Empty icon="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" title="No alarms" sub="Nothing for this filter"/>:
           <table className="w-full text-sm"><thead><tr className="border-b border-slate-100 bg-slate-50">{["Severity","Alarm Type","Device","Status","Triggered","Actions"].map(h=><th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>)}</tr></thead>
             <tbody>{alarms.map(a=>{const si=AST[a.status]||AST.ACTIVE_UNACK;return(
@@ -419,11 +419,11 @@ bool provision() {
   return (
     <div className="max-w-2xl space-y-4">
       {[{t:"Profile",f:[["Email",user?.email||"—"],["Role",user?.role||"TENANT_ADMIN"],["Name",user?.first_name?`${user.first_name} ${user.last_name||""}`.trim():"—"]]},{t:"API Configuration",f:[["Backend URL",BASE_URL],["Telemetry Ingest",`${BASE_URL}/api/v1/telemetry/ingest/{token}`],["WebSocket",`${WS_BASE}/api/v1/ws/telemetry/{device_id}`]]}].map(s=>(
-        <div key={s.t} className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}} className="overflow-hidden"><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
+        <div key={s.t} className="rounded-2xl border shadow-sm shadow-blue-100/40 overflow-hidden" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}><div className="px-5 py-3.5 border-b border-slate-50"><h3 className="text-sm font-semibold text-slate-700">{s.t}</h3></div><div className="p-5 grid grid-cols-2 gap-4">{s.f.map(([k,v])=><div key={k}><label className="block text-xs font-medium text-slate-400 mb-1.5">{k}</label><input readOnly value={v} className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-600 outline-none font-mono"/></div>)}</div></div>
       ))}
 
       {/* ── Device Provisioning Key ── */}
-      <div className="rounded-xl border shadow-sm" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}} className="overflow-hidden">
+      <div className="rounded-2xl border shadow-sm shadow-blue-100/40 overflow-hidden" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
         <div className="px-5 py-3.5 border-b border-slate-50 flex items-center gap-2">
           <svg className="w-4 h-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
           <h3 className="text-sm font-semibold text-slate-700">Device Provisioning</h3>
@@ -516,7 +516,7 @@ function ResetPasswordPage({ onBack }) {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-8">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-md rounded-2xl border bg-white/70 p-7 shadow-sm" style={{borderColor:"#D8E3F3"}}>
         <button onClick={onBack} className="flex items-center gap-2 text-sm text-slate-400 hover:text-slate-600 mb-8">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
           Back to login
@@ -565,7 +565,7 @@ function ResetPasswordPage({ onBack }) {
 
 // ── Login page ────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false);
+  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false); const [showPw,setShowPw]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   const submit=async()=>{setLoading(true);setError("");try{let d;if(tab==="signin"){d=await authApi.login(email,pw);}else{await authApi.register({email,password:pw,first_name:fname,last_name:lname});d=await authApi.login(email,pw);}localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError(e.message);}finally{setLoading(false);}};
   const demo=async()=>{setLoading(true);setError("");try{await authApi.seedDemo();const d=await authApi.login("demo@triaxisai.com","demo1234");localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError("Backend not reachable. Start it first.");}finally{setLoading(false);}};
@@ -574,27 +574,25 @@ function LoginPage({ onLogin }) {
 
   return (
     <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
-      <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"#EAF2FF"}}>
+      <div className="hidden lg:flex flex-col justify-between w-[420px] p-10 flex-shrink-0" style={{background:"#EAF2FF"}}>
         <div className="flex flex-col gap-2"><span className="font-bold text-[#0B1426] text-2xl tracking-wide">TriAxis IoT</span></div>
-        <div><h2 className="text-5xl font-bold text-[#0B1426] leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#0B4BB3,#2F8CFF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-[#334866] text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
-        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="rounded-xl p-4" style={{background:"rgba(255,255,255,0.07)"}}><p className="text-sm font-bold text-[#0B1426]">{v}</p><p className="text-xs text-[#6B7F9F] mt-0.5">{l}</p></div>)}</div>
+        <div className="max-w-xs"><h2 className="text-5xl font-bold text-[#0B1426] leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#0B4BB3,#2F8CFF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-[#334866] text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
+        <div className="grid grid-cols-2 gap-3">{[["Live Devices","Fleet status"],["Smart Alerts","Faster response"],["Telemetry","Real-time data"],["TriAxis","IoT control"]].map(([v,l])=><div key={l} className="rounded-xl border p-4 shadow-sm" style={{background:"rgba(255,255,255,0.38)",borderColor:"#D8E3F3"}}><p className="text-sm font-bold text-[#0B1426]">{v}</p><p className="text-xs text-[#6B7F9F] mt-0.5">{l}</p></div>)}</div>
       </div>
-      <div className="flex-1 flex items-center justify-center p-8" style={{background:"#F4F8FF"}}>
-        <div className="w-full max-w-sm">
-          <h1 className="text-2xl font-bold text-slate-800 mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
-          <p className="text-sm text-slate-400 mb-6">{tab==="signin"?"Sign in":"Register a new account"}</p>
-          <div className="flex gap-1 p-1 bg-slate-100 rounded-lg mb-6">{[["signin","Sign In"],["register","Register"]].map(([id,lbl])=><button key={id} onClick={()=>setTab(id)} className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all ${tab===id?"bg-white text-slate-800 shadow-sm":"text-slate-500"}`}>{lbl}</button>)}</div>
+      <div className="flex-1 flex items-center justify-center p-8 lg:justify-start lg:pl-40" style={{background:"#F4F8FF"}}>
+        <div className="w-full max-w-md rounded-2xl border bg-white/70 p-7 shadow-sm" style={{borderColor:"#D8E3F3"}}>
+          <h1 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
+          <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis IoT":"Register a new account"}</p>
+          <div className="flex gap-1 p-1 rounded-lg mb-6" style={{background:"#EAF2FF"}}>{[["signin","Sign In"],["register","Register"]].map(([id,lbl])=><button key={id} onClick={()=>setTab(id)} className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all ${tab===id?"bg-white text-[#0B1426] shadow-sm":"text-[#334866] hover:text-[#0B1426]"}`}>{lbl}</button>)}</div>
           <div className="space-y-3">
-            {tab==="register"&&<div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-slate-500 mb-1.5">First Name</label><input className={INP} value={fname} onChange={e=>setFname(e.target.value)}/></div><div><label className="block text-xs font-medium text-slate-500 mb-1.5">Last Name</label><input className={INP} value={lname} onChange={e=>setLname(e.target.value)}/></div></div>}
-            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP}/></div>
-            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Password</label><input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP}/></div>
+            {tab==="register"&&<div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-[#334866] mb-1.5">First Name</label><input className={INP} value={fname} onChange={e=>setFname(e.target.value)}/></div><div><label className="block text-xs font-medium text-[#334866] mb-1.5">Last Name</label><input className={INP} value={lname} onChange={e=>setLname(e.target.value)}/></div></div>}
+            <div><label className="block text-xs font-medium text-[#334866] mb-1.5">Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP}/></div>
+            <div><div className="flex items-center justify-between mb-1.5"><label className="block text-xs font-medium text-[#334866]">Password</label>{tab==="signin"&&<button onClick={()=>setShowReset(true)} className="text-xs font-medium text-[#2F8CFF] hover:underline">Forgot password?</button>}</div><input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP}/></div>
           </div>
           {error&&<p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
-          {tab==="signin"&&<div className="text-right mt-2"><button onClick={()=>setShowReset(true)} className="text-xs text-blue-500 hover:underline">Forgot password?</button></div>}
-          <div className="flex items-center gap-3 my-4"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-slate-400">or</span><div className="flex-1 border-t border-slate-200"/></div>
-          <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-60 font-medium text-sm py-2.5 rounded-lg">{loading&&<Spinner/>}🚀 Try Demo Account</button>
-          <p className="text-[10px] text-slate-400 text-center mt-2">Requires backend at {BASE_URL}</p>
+          <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-3 rounded-lg shadow-sm shadow-blue-500/20">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
+          <div className="flex items-center gap-3 my-5"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-[#6B7F9F]">or</span><div className="flex-1 border-t border-slate-200"/></div>
+          <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-[#D8E3F3] text-[#334866] hover:bg-[#EAF2FF] disabled:opacity-60 font-medium text-sm py-3 rounded-lg transition-colors">{loading&&<Spinner/>}🚀 Try Demo Account</button>
         </div>
       </div>
     </div>
@@ -642,11 +640,11 @@ export default function App() {
   const pageTitle = (page === "device-dashboards" && dashDevice) ? dashDevice.name : PAGE_TITLES[page] || page;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden" style={{background:"#F4F8FF"}}>
       <Sidebar page={page} setPage={p => { setPage(p); setDrawer(null); if (p !== "device-dashboards") setDashDevice(null); }} user={user} onLogout={handleLogout} alarmCount={alarmCount} />
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
         <Header title={pageTitle} onRefresh={handleRefresh} refreshing={refreshing} />
-        <main className={`flex-1 ${page === "user-dashboards" ? "overflow-hidden" : "overflow-y-auto p-6"}`}>
+        <main className={`flex-1 ${page === "user-dashboards" ? "overflow-hidden" : "overflow-y-auto p-6"}`} style={{background:"#F4F8FF"}}>
           {page === "overview"           && <OverviewPage refreshKey={refreshKey} onToast={showToast} />}
           {page === "user-dashboards"     && <UserDashboardPage onToast={showToast} />}
           {page === "device-dashboards"  && !dashDevice && <DeviceListForDashboards onOpen={d => setDashDevice(d)} />}
