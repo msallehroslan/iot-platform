@@ -601,6 +601,12 @@ function LoginPage({ onLogin }) {
 
       {/* RIGHT — illustration + sign-in form */}
       <div className="relative flex-1 flex items-center justify-center p-8 overflow-hidden" style={{background:"#F4F8FF"}}>
+        {/* Industrial illustration as backdrop */}
+        <img
+          src="/industrial_iot_illustration.png"
+          alt="Industrial IoT control system"
+          className="hidden lg:block pointer-events-none select-none absolute right-[-40px] top-1/2 -translate-y-1/2 w-[640px] max-w-[60%] opacity-90 drop-shadow-2xl"
+        />
         {/* soft fade so form stays readable */}
         <div className="hidden lg:block absolute inset-0 bg-gradient-to-r from-[#F4F8FF] via-[#F4F8FF]/85 to-transparent" />
         <div className="relative w-full max-w-md rounded-2xl border bg-white/85 backdrop-blur p-7 shadow-xl shadow-blue-200/40" style={{borderColor:"#D8E3F3"}}>
