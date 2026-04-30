@@ -127,9 +127,10 @@ class DeviceUpdate(BaseModel):
     additional_info: Optional[Dict[str, Any]] = None
 
 
-# FIX 6: token is NOT in DeviceOut — never leaks on list/get
+# token included — all read routes require JWT + tenant ownership check
 class DeviceOut(DeviceBase):
     id: UUID
+    token: str
     status: DeviceStatus
     last_seen_at: Optional[datetime] = None
     created_at: datetime
@@ -140,9 +141,7 @@ class DeviceOut(DeviceBase):
         from_attributes = True
 
 
-# Token only returned on create and explicit regenerate
 class DeviceWithToken(DeviceOut):
-    token: str
     class Config:
         from_attributes = True
 

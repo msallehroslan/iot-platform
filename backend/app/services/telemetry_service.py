@@ -53,43 +53,46 @@ def _check_alarm_rules(db: Session, device: Device, key: str, value_num: Optiona
     if value_num is None:
         return
 
-    rules = db.query(ThresholdRule).filter(
-        ThresholdRule.tenant_id == device.tenant_id,
-        ThresholdRule.key == key,
-        ThresholdRule.is_active == True,
-        (ThresholdRule.device_id == device.id) | (ThresholdRule.device_id == None),
-    ).order_by(ThresholdRule.device_id.desc()).all()  # device-specific rules first
+    try:
+        rules = db.query(ThresholdRule).filter(
+            ThresholdRule.tenant_id == device.tenant_id,
+            ThresholdRule.key == key,
+            ThresholdRule.is_active == True,
+            (ThresholdRule.device_id == device.id) | (ThresholdRule.device_id == None),
+        ).order_by(ThresholdRule.device_id.desc()).all()
 
-    for rule in rules:
-        triggered = False
-        v, t = value_num, rule.threshold
-        if rule.condition == "gt":  triggered = v >  t
-        elif rule.condition == "gte": triggered = v >= t
-        elif rule.condition == "lt":  triggered = v <  t
-        elif rule.condition == "lte": triggered = v <= t
-        elif rule.condition == "eq":  triggered = v == t
+        for rule in rules:
+            triggered = False
+            v, t = value_num, rule.threshold
+            if rule.condition == "gt":   triggered = v >  t
+            elif rule.condition == "gte": triggered = v >= t
+            elif rule.condition == "lt":  triggered = v <  t
+            elif rule.condition == "lte": triggered = v <= t
+            elif rule.condition == "eq":  triggered = v == t
 
-        if triggered:
-            exists = db.query(Alarm).filter(
-                and_(
-                    Alarm.device_id == device.id,
-                    Alarm.alarm_type == rule.alarm_type,
-                    Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
-                )
-            ).first()
-            if not exists:
-                db.add(Alarm(
-                    device_id=device.id,
-                    alarm_type=rule.alarm_type,
-                    severity=rule.severity,
-                    status=AlarmStatus.ACTIVE_UNACK,
-                    details={
-                        "key": key, "value": value_num,
-                        "threshold": rule.threshold, "condition": rule.condition,
-                        "message": f"{key} {rule.condition} {rule.threshold} (value={value_num})",
-                    },
-                ))
-            break  # highest-priority matching rule wins
+            if triggered:
+                exists = db.query(Alarm).filter(
+                    and_(
+                        Alarm.device_id == device.id,
+                        Alarm.alarm_type == rule.alarm_type,
+                        Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
+                    )
+                ).first()
+                if not exists:
+                    db.add(Alarm(
+                        device_id=device.id,
+                        alarm_type=rule.alarm_type,
+                        severity=rule.severity,
+                        status=AlarmStatus.ACTIVE_UNACK,
+                        details={
+                            "key": key, "value": value_num,
+                            "threshold": rule.threshold, "condition": rule.condition,
+                            "message": f"{key} {rule.condition} {rule.threshold} (value={value_num})",
+                        },
+                    ))
+                break
+    except Exception as exc:
+        logger.warning("Alarm rule check skipped (migration pending?): %s", exc)
 
 
 def purge_old_telemetry(db: Session) -> int:

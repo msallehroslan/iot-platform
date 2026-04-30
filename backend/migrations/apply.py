@@ -177,3 +177,44 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "008_add_last_seen_at_to_devices",
+        "desc": "Add last_seen_at column to devices table",
+        "sql":  """
+            ALTER TABLE devices
+            ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+        """,
+    },
+    {
+        "id":   "009_create_threshold_rules_table",
+        "desc": "Create threshold_rules table for DB-backed alarm rules",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS threshold_rules (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                device_id   UUID REFERENCES devices(id) ON DELETE CASCADE,
+                key         VARCHAR(255) NOT NULL,
+                condition   VARCHAR(10)  NOT NULL DEFAULT 'gt',
+                threshold   FLOAT        NOT NULL,
+                severity    VARCHAR(20)  NOT NULL DEFAULT 'WARNING',
+                alarm_type  VARCHAR(255) NOT NULL,
+                is_active   BOOLEAN      NOT NULL DEFAULT true,
+                created_at  TIMESTAMPTZ DEFAULT now(),
+                updated_at  TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS ix_threshold_rules_tenant_device
+                ON threshold_rules (tenant_id, device_id);
+        """,
+    },
+    {
+        "id":   "010_composite_index_telemetry_data",
+        "desc": "Add composite index on telemetry_data (device_id, key, ts) for fast aggregates",
+        "sql":  """
+            CREATE INDEX IF NOT EXISTS ix_telemetry_device_key_ts
+                ON telemetry_data (device_id, key, ts DESC);
+        """,
+    },
+]
