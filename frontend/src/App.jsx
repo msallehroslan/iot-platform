@@ -577,10 +577,10 @@ function LoginPage({ onLogin }) {
 
   return (
     <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
-      <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"#0B1426"}}>
-        <div className="flex flex-col gap-4"><img src="/taat-logo-white.png" alt="TAAT" style={{height:64, width:"auto"}} /><span className="font-bold text-white text-lg tracking-wide">TriAxis IoT</span></div>
-        <div><h2 className="text-5xl font-bold text-white leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#2F8CFF,#16B8E8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-blue-200/80 text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
-        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="rounded-xl p-4" style={{background:"rgba(255,255,255,0.07)"}}><p className="text-sm font-bold text-white">{v}</p><p className="text-xs text-slate-500 mt-0.5">{l}</p></div>)}</div>
+      <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"#EAF2FF"}}>
+        <div className="flex flex-col gap-3"><img src="/taat-logo.png" alt="TAAT" style={{height:80, width:"auto"}} /><span className="font-bold text-[#0B1426] text-xl tracking-wide">TriAxis IoT</span></div>
+        <div><h2 className="text-5xl font-bold text-[#0B1426] leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#0B4BB3,#2F8CFF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-[#334866] text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
+        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="rounded-xl p-4" style={{background:"rgba(255,255,255,0.07)"}}><p className="text-sm font-bold text-[#0B1426]">{v}</p><p className="text-xs text-[#6B7F9F] mt-0.5">{l}</p></div>)}</div>
       </div>
       <div className="flex-1 flex items-center justify-center p-8" style={{background:"#F4F8FF"}}>
         <div className="w-full max-w-sm">
