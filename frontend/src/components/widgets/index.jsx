@@ -4,7 +4,7 @@
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
 import { useState, useEffect } from "react";
-import { telemetryApi } from "../services/api.js";
+import { telemetryApi } from "../../services/api.js";
 
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
