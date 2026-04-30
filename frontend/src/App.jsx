@@ -96,9 +96,6 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   return (
     <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
       <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
-        <div className="flex items-center justify-center flex-shrink-0" style={{width:col?32:28}}>
-          <img src="/taat-logo.png" alt="TAAT" style={{height:32, width:"auto", flexShrink:0}} />
-        </div>
         {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis IoT</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
@@ -578,7 +575,7 @@ function LoginPage({ onLogin }) {
   return (
     <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
       <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"#EAF2FF"}}>
-        <div className="flex flex-col gap-3"><img src="/taat-logo.png" alt="TAAT" style={{height:80, width:"auto"}} /><span className="font-bold text-[#0B1426] text-xl tracking-wide">TriAxis IoT</span></div>
+        <div className="flex flex-col gap-2"><span className="font-bold text-[#0B1426] text-2xl tracking-wide">TriAxis IoT</span></div>
         <div><h2 className="text-5xl font-bold text-[#0B1426] leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#0B4BB3,#2F8CFF)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-[#334866] text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
         <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="rounded-xl p-4" style={{background:"rgba(255,255,255,0.07)"}}><p className="text-sm font-bold text-[#0B1426]">{v}</p><p className="text-xs text-[#6B7F9F] mt-0.5">{l}</p></div>)}</div>
       </div>
