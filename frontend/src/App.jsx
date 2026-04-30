@@ -279,9 +279,21 @@ function DevicesPage({ onOpenDrawer, onToast }) {
 }
 
 function DeviceModal({ device, onSaved, onClose, onToast }) {
-  const isEdit=!!device; const [form,setForm]=useState({name:device?.name||"",device_type:device?.device_type||"DEFAULT",label:device?.label||"",description:device?.description||"",status:device?.status||"INACTIVE"}); const [saving,setSaving]=useState(false); const [err,setErr]=useState("");
+  const isEdit=!!device;
+  const [form,setForm]=useState({name:device?.name||"",device_type:device?.device_type||"DEFAULT",label:device?.label||"",description:device?.description||"",status:device?.status||"INACTIVE",customer_id:device?.customer_id||""});
+  const [saving,setSaving]=useState(false); const [err,setErr]=useState("");
+  const [customers,setCustomers]=useState([]);
+  useEffect(()=>{ customerApi.list().then(setCustomers).catch(()=>{}); },[]);
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
-  const submit=async()=>{if(!form.name.trim()){setErr("Name required");return;}setSaving(true);setErr("");try{const s=isEdit?await deviceApi.update(device.id,form):await deviceApi.create({name:form.name,device_type:form.device_type,label:form.label,description:form.description});onSaved(s);}catch(e){setErr(e.message);}finally{setSaving(false);}};
+  const submit=async()=>{
+    if(!form.name.trim()){setErr("Name required");return;}
+    setSaving(true);setErr("");
+    try{
+      const payload={name:form.name,device_type:form.device_type,label:form.label,description:form.description,customer_id:form.customer_id||null};
+      const s=isEdit?await deviceApi.update(device.id,{...payload,status:form.status}):await deviceApi.create(payload);
+      onSaved(s);
+    }catch(e){setErr(e.message);}finally{setSaving(false);}
+  };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md border border-slate-100">
@@ -289,6 +301,7 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
         <div className="p-6 space-y-4">
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Name *</label><input className={INP} placeholder="My Sensor" value={form.name} onChange={e=>set("name",e.target.value)}/></div>
           <div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-slate-500 mb-1.5">Type</label><select className={INP+" cursor-pointer"} value={form.device_type} onChange={e=>set("device_type",e.target.value)}>{["DEFAULT","GATEWAY","SENSOR","ACTUATOR","METER","CAMERA"].map(t=><option key={t}>{t}</option>)}</select></div>{isEdit&&<div><label className="block text-xs font-medium text-slate-500 mb-1.5">Status</label><select className={INP+" cursor-pointer"} value={form.status} onChange={e=>set("status",e.target.value)}>{["ACTIVE","INACTIVE","DISABLED"].map(s=><option key={s}>{s}</option>)}</select></div>}</div>
+          <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Assign to Customer <span className="text-slate-300 font-normal">(optional)</span></label><select className={INP+" cursor-pointer"} value={form.customer_id||""} onChange={e=>set("customer_id",e.target.value)}><option value="">— No customer (tenant-wide) —</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Label</label><input className={INP} placeholder="Building A" value={form.label} onChange={e=>set("label",e.target.value)}/></div>
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Description</label><textarea className={INP+" resize-none"} rows={2} value={form.description} onChange={e=>set("description",e.target.value)}/></div>
           {err&&<p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
