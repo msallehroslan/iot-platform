@@ -1,634 +1,740 @@
-# IoT Platform
-
-A production-ready, multi-tenant IoT management platform built with FastAPI and React.
-Connect physical devices, visualise live sensor data, manage alarms, and analyse trends —
-all from a single dashboard. Deployable on Render in under 15 minutes.
-
----
-
-## Live Demo
-
-| Service | URL |
-|---|---|
-| Frontend | https://iot-platform-1-hqnz.onrender.com |
-| Backend API | https://iot-platform-k198.onrender.com |
-| API Docs (Swagger) | https://iot-platform-k198.onrender.com/docs |
-
-Demo credentials: `demo@iotplatform.com` / `demo1234`
-
----
-
-## Features
-
-### Device Management
-- Add, edit, and delete devices
-- Auto-generated device tokens for secure telemetry ingestion
-- Token regeneration on demand
-- Device status tracking (ACTIVE / INACTIVE)
-- **Device Provisioning** — ESP32 / firmware can self-register on first boot using a provisioning key, no user JWT required
-
-### Telemetry Ingestion
-- **HTTP POST** — send data from any device or script
-- **MQTT publish** — connect any MQTT-capable device
-- Both paths share identical processing: alarm checks, DB writes, WebSocket broadcast
-- Supports any key name (`glucose`, `temperature`, `voltage`, or anything custom)
-- Numeric, boolean, string, and JSON value types all supported
-
-### Telemetry Metadata
-- Auto-created when a new key is ingested for the first time
-- Stores `label`, `unit`, and `data_type` per key per device
-- Updatable via API (e.g. set label = "Blood Glucose", unit = "mg/dL")
-
-### Telemetry Aggregation
-- Time-windowed aggregation over any numeric key
-- Windows: 1m, 5m, 15m, 30m, 1h, 6h, 12h, 24h, 7d
-- Functions: avg, min, max, sum, count
-- Computed entirely in PostgreSQL — no data loaded into memory
-
-### Real-time Dashboards
-- **WebSocket push** — widgets update the moment data arrives
-- REST fallback polling (5s) when WebSocket is unavailable
-- Auto-reconnect with exponential backoff
-- **Drag and drop** widget repositioning
-- **Resize** widgets by dragging the corner handle
-- Layout positions persist to PostgreSQL — survive page reload
-
-### Two Dashboard Systems
-| | Device Dashboard | My Dashboards |
-|---|---|---|
-| Scope | One device per dashboard | Mix any devices on one dashboard |
-| Access | Via Device Dashboards menu | Via My Dashboards sidebar |
-| Tabs | Multiple dashboards per device | Multiple dashboards per user |
-| Use case | Deep-dive on one device | Cross-device overview |
-
-### 11 Widget Types
-| Widget | Description |
-|---|---|
-| Value Card | Large number with optional alert threshold colouring and sparkline |
-| Line Chart | Time-series history graph |
-| Bar Chart | Time-series bars over time (same data as line chart, different visual) |
-| Gauge | Circular dial with configurable min / max |
-| Status Light | Green = online, Grey = offline indicator |
-| Pie / Donut | Proportion distribution across multiple keys |
-| Alarm List | Active alarms for the bound device |
-| History Table | Raw telemetry rows in reverse chronological order |
-| Entity Table | All latest key-value pairs for the device |
-| Text / Markdown | Free-text notes with basic formatting |
-| HTML Card | Custom HTML with `${key}` live value substitution |
-
-### Alarm Engine
-Auto-triggered rules on every telemetry ingest:
-
-| Key | Threshold | Severity |
-|---|---|---|
-| temperature | ≥ 80 | CRITICAL |
-| temperature | ≥ 60 | WARNING |
-| humidity | ≥ 90 | WARNING |
-| voltage | ≥ 250 | CRITICAL |
-| voltage | ≥ 230 | WARNING |
-
-Alarms can be acknowledged, cleared, and deleted from the UI.
-
-### Multi-tenant Security
-- Every registered account creates an isolated tenant
-- All data scoped by tenant — devices, telemetry, dashboards, alarms
-- JWT-protected endpoints on every read and write route
-- WebSocket connections validated with JWT query parameter
-- Cross-tenant access returns 403 Forbidden
-
-### Password Reset
-- "Forgot password?" link on the login page
-- Enter email + new password — instant reset, no email required
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Backend framework | FastAPI 0.111, Python 3.11 |
-| Database | PostgreSQL 15 (SQLAlchemy 2.0) |
-| Authentication | JWT (python-jose) + bcrypt |
-| Real-time | WebSocket (FastAPI native) |
-| MQTT | paho-mqtt 1.6.1 |
-| Frontend framework | React 18, Vite 5 |
-| Styling | Tailwind CSS |
-| Drag & drop grid | react-grid-layout |
-| Charts | Pure SVG (no external chart library) |
-| Hosting | Render (Web Service + PostgreSQL + Static Site) |
-
----
-
-## Project Structure
-
-```
-iot-platform/
-├── backend/
-│   ├── app/
-│   │   ├── core/
-│   │   │   ├── auth_deps.py          # get_current_user / get_current_user_id
-│   │   │   ├── config.py             # Settings from env vars (pydantic-settings)
-│   │   │   ├── database.py           # SQLAlchemy engine + session
-│   │   │   ├── security.py           # JWT encode/decode, bcrypt hash/verify
-│   │   │   └── websocket_manager.py  # In-memory WS connection registry (single worker)
-│   │   ├── models/
-│   │   │   └── models.py             # 12 ORM models
-│   │   ├── routers/
-│   │   │   ├── auth.py               # /register /login /seed-demo /reset-password
-│   │   │   ├── alarms.py             # CRUD + ack/clear — JWT + tenant-scoped
-│   │   │   ├── customers.py          # CRUD — JWT + tenant-scoped
-│   │   │   ├── dashboard.py          # GET /stats — JWT + tenant-scoped
-│   │   │   ├── dashboards.py         # Device dashboards + widgets — JWT + tenant
-│   │   │   ├── devices.py            # CRUD + provisioning — JWT + tenant
-│   │   │   ├── telemetry.py          # Ingest (open) + read + metadata + aggregate
-│   │   │   ├── user_dashboards.py    # User multi-dashboards — JWT + user
-│   │   │   └── ws.py                 # WebSocket endpoint
-│   │   ├── services/
-│   │   │   ├── dashboard_service.py
-│   │   │   ├── mqtt_client.py        # paho-mqtt → asyncio bridge
-│   │   │   ├── telemetry_service.py  # Shared ingest pipeline (HTTP + MQTT)
-│   │   │   └── user_dashboard_service.py
-│   │   ├── schemas/
-│   │   │   └── schemas.py            # All Pydantic request/response models
-│   │   └── main.py                   # FastAPI app, CORS, router registration
-│   ├── migrations/
-│   │   └── apply.py                  # Idempotent migrations 001–007
-│   ├── Dockerfile                    # Python 3.11-slim, non-root, --workers 1
-│   ├── render.yaml
-│   ├── requirements.txt
-│   └── .env.example
-│
-└── frontend/
-    ├── src/
-    │   ├── components/
-    │   │   ├── dashboard/GridLayout.jsx
-    │   │   ├── sidebar/DashboardSidebar.jsx
-    │   │   └── widgets/index.jsx      # All 11 widget types + WidgetRenderer
-    │   ├── hooks/
-    │   │   └── useTelemetry.js
-    │   ├── pages/
-    │   │   ├── DashboardPage.jsx      # Device-scoped dashboard
-    │   │   └── UserDashboardPage.jsx  # User multi-dashboard
-    │   ├── services/
-    │   │   ├── api.js                 # All HTTP API calls
-    │   │   ├── dashboardService.js
-    │   │   ├── userDashboardService.js
-    │   │   ├── websocket.js           # TelemetrySocket singleton
-    │   │   └── widgetService.js       # Layout converters + persistLayout
-    │   └── App.jsx
-    ├── package.json
-    └── vite.config.js
-```
-
----
-
-## Database Schema
-
-```
-tenants
-  id, name, provisioning_key (unique), created_at
-
-users
-  id, tenant_id, email, hashed_password, first_name, last_name, role, is_active
-
-customers
-  id, tenant_id, name, email, phone, city, country
-
-devices
-  id, tenant_id, customer_id, name, device_type, label, description,
-  token (unique), status, created_at
-
-telemetry_data              ← append-only time-series
-  id, device_id, key, value_num, value_str, value_bool, value_json, ts
-
-latest_telemetry            ← one row per (device, key), atomic upsert
-  id, device_id, key, value_num, value_str, value_bool, value_json, ts
-  UNIQUE (device_id, key)
-
-telemetry_keys              ← metadata per (device, key)
-  id, device_id, key, label, unit, data_type, created_at, updated_at
-  UNIQUE (device_id, key)
-
-alarms
-  id, device_id, alarm_type, severity, status,
-  start_ts, end_ts, ack_ts, clear_ts, ack_by, cleared_by
-
-dashboards                  ← device-scoped
-  id, device_id, name, description, is_default
-
-widgets
-  id, dashboard_id, widget_type, title, config (JSON), position (JSON)
-
-user_dashboards             ← user-scoped multi-dashboards
-  id, user_id, name, description, is_default
-
-user_widgets
-  id, dashboard_id, widget_type, title, config (JSON), position (JSON)
-```
-
----
-
-## Deploy to Render
-
-### Step 1 — Push to GitHub
-
-```bash
-git init
-git add .
-git commit -m "initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/iot-platform.git
-git push -u origin main
-```
-
-### Step 2 — Create PostgreSQL database
-
-1. Render dashboard → **New + → PostgreSQL**
-2. Name: `iot-platform-db` · Plan: Free · Region: Singapore
-3. Wait ~2 min → copy **Internal Database URL**
-
-### Step 3 — Deploy backend (Web Service)
-
-1. **New + → Web Service** → connect repo
-2. Settings:
-
-| Field | Value |
-|---|---|
-| Root Directory | `backend` |
-| Runtime | Docker |
-| Dockerfile Path | `./Dockerfile` |
-| Plan | Free |
-
-3. Environment variables:
-
-| Key | Value |
-|---|---|
-| `DATABASE_URL` | Paste Internal Database URL |
-| `SECRET_KEY` | Click **Generate** |
-| `CORS_ORIGINS` | `https://YOUR-FRONTEND.onrender.com` |
-| `MQTT_ENABLED` | `true` |
-| `MQTT_BROKER_HOST` | `broker.hivemq.com` |
-| `MQTT_BROKER_PORT` | `1883` |
-| `MQTT_TOPIC_PREFIX` | `iot` |
-| `MQTT_KEEPALIVE` | `60` |
-
-4. Create → wait for build → test:
-```bash
-curl https://YOUR-BACKEND.onrender.com/health
-# {"status":"healthy"}
-```
-
-5. Seed demo user:
-```bash
-curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/auth/seed-demo
-```
-
-### Step 4 — Deploy frontend (Static Site)
-
-1. **New + → Static Site** → same repo
-2. Settings:
-
-| Field | Value |
-|---|---|
-| Root Directory | `frontend` |
-| Build Command | `npm install && npm run build` |
-| Publish Directory | `dist` |
-| `VITE_API_URL` (env var) | `https://YOUR-BACKEND.onrender.com` |
-
-### Step 5 — Update CORS
-
-Backend → Environment → set `CORS_ORIGINS` to your exact frontend URL → Save.
-
-### Step 6 — Run database migrations
-
-In DBeaver or Render PSQL, run each block separately:
-
-```sql
--- 004: provisioning key column
-ALTER TABLE tenants ADD COLUMN IF NOT EXISTS provisioning_key VARCHAR(64) UNIQUE;
-
--- 005: backfill provisioning keys
-UPDATE tenants SET provisioning_key = REPLACE(gen_random_uuid()::text, '-', '')
-WHERE provisioning_key IS NULL;
-
--- 006: telemetry metadata table
-CREATE TABLE IF NOT EXISTS telemetry_keys (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    device_id  UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    key        VARCHAR(255) NOT NULL,
-    label      VARCHAR(255),
-    unit       VARCHAR(50),
-    data_type  VARCHAR(20) NOT NULL DEFAULT 'number',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ,
-    CONSTRAINT uq_telemetry_keys_device_key UNIQUE (device_id, key)
-);
-CREATE INDEX IF NOT EXISTS ix_telemetry_keys_device_id ON telemetry_keys (device_id);
-
--- 007: backfill metadata from existing telemetry
-INSERT INTO telemetry_keys (id, device_id, key, data_type)
-SELECT gen_random_uuid(), device_id, key,
-    CASE WHEN value_num IS NOT NULL THEN 'number'
-         WHEN value_bool IS NOT NULL THEN 'boolean'
-         ELSE 'string' END
-FROM latest_telemetry
-ON CONFLICT (device_id, key) DO NOTHING;
-```
-
----
-
-## Local Development
-
-### Backend
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-docker run -d -p 5432:5432 \
-  -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=iotdb \
-  postgres:15
-
-cp .env.example .env
-# Edit DATABASE_URL=postgresql://postgres:postgres@localhost:5432/iotdb
-
-uvicorn app.main:app --reload --port 8000
-```
-
-API docs: http://localhost:8000/docs
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.example .env
-# VITE_API_URL=http://localhost:8000
-npm run dev
-```
-
-Frontend: http://localhost:5173
-
----
-
-## Device Provisioning
-
-Devices can self-register without a user JWT using the provisioning key from **Settings → Device Provisioning**.
-
-### ESP32 Arduino Example
-
-```cpp
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <Preferences.h>
-
-#define WIFI_SSID      "your-wifi"
-#define WIFI_PASSWORD  "your-password"
-#define IOT_HOST       "https://YOUR-BACKEND.onrender.com"
-#define PROVISION_KEY  "your-provisioning-key"   // from Settings page
-
-Preferences prefs;
-String deviceToken = "";
-
-String extractToken(String response) {
-  int start = response.indexOf("\"token\":\"") + 9;
-  int end   = response.indexOf("\"", start);
-  return response.substring(start, end);
+/**
+ * widgets/index.jsx
+ * Rendering components for each widget type.
+ * Props: { config, liveTelem, historyData, alarms, deviceId }
+ */
+import { useState, useEffect } from "react";
+import { telemetryApi } from "../services/api.js";
+
+// ── Shared chart primitives ───────────────────────────────────────────────────
+
+export function Sparkline({ data = [], color = "#3b82f6", height = 36 }) {
+  if (data.length < 2) return <div style={{ height, background: "#f8fafc", borderRadius: 6 }} />;
+  const W = 300, H = height;
+  const mn = Math.min(...data), mx = Math.max(...data), rng = mx - mn || 1;
+  const px = i => (i / (data.length - 1)) * W;
+  const py = v => H - 2 - ((v - mn) / rng) * (H - 6);
+  const d  = data.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+  const area = `${d} L${px(data.length - 1)},${H} L0,${H} Z`;
+  const gid = `sk${color.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height, display: "block" }}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor={color} stopOpacity="0.2" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gid})`} />
+      <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={px(data.length - 1)} cy={py(data[data.length - 1])} r="3" fill={color} />
+    </svg>
+  );
 }
 
-void provisionDevice() {
-  HTTPClient http;
-  http.begin(String(IOT_HOST) + "/api/v1/devices/provision");
-  http.addHeader("Content-Type", "application/json");
+export function LineChartSVG({ data = [], color = "#3b82f6" }) {
+  if (data.length < 2) return (
+    <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
+    </div>
+  );
+  const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
+  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const px = i => pad.l + (i / (vals.length - 1)) * w;
+  const py = v => pad.t + h - ((v - mn) / rng) * h;
+  const path = vals.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+  const area = `${path} L${px(vals.length - 1)},${pad.t + h} L${pad.l},${pad.t + h} Z`;
+  const gid = `lc${color.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor={color} stopOpacity="0.14" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {[0, 0.25, 0.5, 0.75, 1].map(t => {
+        const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
+        return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
+      })}
+      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map(p => {
+        const idx = data.indexOf(p);
+        return <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>;
+      })}
+      <path d={area} fill={`url(#${gid})`} />
+      <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={px(vals.length - 1)} cy={py(vals[vals.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
+    </svg>
+  );
+}
 
-  uint64_t chipid    = ESP.getEfuseMac();
-  String   devName   = "ESP32-" + String((uint32_t)(chipid >> 32), HEX);
-  String   payload   = "{\"provision_key\":\"" + String(PROVISION_KEY) +
-                       "\",\"device_name\":\""  + devName +
-                       "\",\"device_type\":\"SENSOR\"}";
+export function GaugeSVG({ value, min = 0, max = 100, color = "#3b82f6" }) {
+  const pct = Math.max(0, Math.min(1, ((value ?? min) - min) / ((max - min) || 1)));
+  const r2d = d => d * Math.PI / 180;
+  const cx = 60, cy = 65, R = 50, start = -210, total = 240;
+  const arcPt = a => ({ x: cx + R * Math.cos(r2d(a)), y: cy + R * Math.sin(r2d(a)) });
+  const arc = (a1, a2) => {
+    const s = arcPt(a1), e = arcPt(a2), lg = Math.abs(a2 - a1) > 180 ? 1 : 0;
+    return `M${s.x.toFixed(1)},${s.y.toFixed(1)} A${R},${R} 0 ${lg} 1 ${e.x.toFixed(1)},${e.y.toFixed(1)}`;
+  };
+  const needleAngle = start + pct * total;
+  const nx = cx + (R - 14) * Math.cos(r2d(needleAngle));
+  const ny = cy + (R - 14) * Math.sin(r2d(needleAngle));
+  return (
+    <svg viewBox="0 0 120 90" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto" }}>
+      <path d={arc(start, start + total)} fill="none" stroke="#e2e8f0" strokeWidth="9" strokeLinecap="round" />
+      {pct > 0 && <path d={arc(start, needleAngle)} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" />}
+      <line x1={cx} y1={cy} x2={nx.toFixed(1)} y2={ny.toFixed(1)} stroke={color} strokeWidth="3" strokeLinecap="round" />
+      <circle cx={cx} cy={cy} r="5" fill={color} />
+      <text x={cx} y={cy + 18} textAnchor="middle" fontSize="12" fontWeight="700" fill="#1e293b" fontFamily="monospace">
+        {typeof value === "number" ? value.toFixed(1) : "—"}
+      </text>
+    </svg>
+  );
+}
 
-  int code = http.POST(payload);
-  if (code == 200 || code == 201) {          // 201=new device, 200=existing
-    deviceToken = extractToken(http.getString());
-    prefs.begin("iot", false);
-    prefs.putString("token", deviceToken);
-    prefs.end();
+export function BarChartSVG({ data = [], color = "#3b82f6" }) {
+  // data = [{ts, value}, ...] — time-series array, same shape as LineChartSVG
+  if (!data.length) return (
+    <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
+      <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
+    </div>
+  );
+  const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
+  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const bw = Math.max(1, w / vals.length - 1);
+  const px = i => pad.l + (i / vals.length) * w + bw / 2;
+  const bh = v => Math.max(1, ((v - mn) / rng) * h);
+  const gid = `bc${color.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stopColor={color} stopOpacity="0.9" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.4" />
+        </linearGradient>
+      </defs>
+      {[0, 0.25, 0.5, 0.75, 1].map(t => {
+        const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
+        return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
+      })}
+      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map(p => {
+        const idx = data.indexOf(p);
+        return <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>;
+      })}
+      {vals.map((v, i) => (
+        <rect key={i}
+          x={pad.l + (i / vals.length) * w}
+          y={pad.t + h - bh(v)}
+          width={bw}
+          height={bh(v)}
+          fill={`url(#${gid})`}
+          rx="2"
+        />
+      ))}
+      {/* Latest value dot */}
+      <circle cx={px(vals.length - 1)} cy={pad.t + h - bh(vals[vals.length - 1])} r="3" fill={color} stroke="white" strokeWidth="2" />
+    </svg>
+  );
+}
+
+const PIE_COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#84cc16"];
+
+export function PieChartSVG({ data = [] }) {
+  const total = data.reduce((s, d) => s + Math.abs(d.value || 0), 0);
+  if (!total) return null;
+  const cx = 60, cy = 60, R = 52, inner = 28;
+  let angle = -Math.PI / 2;
+  const slices = data.map((d, i) => {
+    const sweep = (Math.abs(d.value) / total) * 2 * Math.PI;
+    const x1 = cx + R * Math.cos(angle),       y1 = cy + R * Math.sin(angle);
+    const x2 = cx + R * Math.cos(angle + sweep), y2 = cy + R * Math.sin(angle + sweep);
+    const ix1 = cx + inner * Math.cos(angle),    iy1 = cy + inner * Math.sin(angle);
+    const ix2 = cx + inner * Math.cos(angle + sweep), iy2 = cy + inner * Math.sin(angle + sweep);
+    const lg = sweep > Math.PI ? 1 : 0;
+    const path = `M${ix1.toFixed(1)},${iy1.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg} 1 ${x2.toFixed(1)},${y2.toFixed(1)} L${ix2.toFixed(1)},${iy2.toFixed(1)} A${inner},${inner} 0 ${lg} 0 ${ix1.toFixed(1)},${iy1.toFixed(1)} Z`;
+    angle += sweep;
+    return { path, color: PIE_COLORS[i % PIE_COLORS.length] };
+  });
+  return (
+    <svg viewBox="0 0 120 120" style={{ width: "100%", maxWidth: 140, display: "block", margin: "0 auto" }}>
+      {slices.map((s, i) => <path key={i} d={s.path} fill={s.color} />)}
+      <text x={cx} y={cy + 4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#334155" fontFamily="monospace">
+        {data.length}
+      </text>
+    </svg>
+  );
+}
+
+// ── Widget type components ────────────────────────────────────────────────────
+
+export function ValueCard({ config, liveTelem, historyData, deviceId }) {
+  const raw  = liveTelem?.[config.key];
+  const num  = typeof raw === "number" ? raw : parseFloat(raw);
+  const isN  = !isNaN(num);
+  const alert = config.threshold_high && isN && num > config.threshold_high;
+  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
+  const devId = deviceId || config.device_id;
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null });
+  const [window, setWindow] = useState("1h");
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+    ]).then(([a, mn, mx]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
+  const WINDOWS = ["15m","30m","1h","6h","24h"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 4 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, justifyContent: "center", flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 6px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Current value */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
+        <p style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", color: "#94a3b8" }}>
+          {config.label || config.key || "—"}
+        </p>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
+          <span style={{ fontSize: 42, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
+            color: alert ? "#ef4444" : (config.color || "#1e293b"), transition: "color .3s" }}>
+            {isN ? num.toFixed(config.decimals ?? 1) : (raw ?? "—")}
+          </span>
+          {config.unit && <span style={{ fontSize: 15, color: "#94a3b8", fontWeight: 500, paddingBottom: 5 }}>{config.unit}</span>}
+        </div>
+        {alert && <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", background: "#fef2f2", padding: "2px 8px", borderRadius: 20 }}>⚠ Threshold exceeded</span>}
+      </div>
+      {/* AVG / MIN / MAX */}
+      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+          </div>
+        ))}
+      </div>
+      {history.length > 1 && <Sparkline data={history} color={config.color || "#3b82f6"} height={28} />}
+    </div>
+  );
+}
+
+export function LineChartWidget({ config, historyData, deviceId }) {
+  const history = historyData?.[config.key] || [];
+  const [window, setWindow] = useState("1h");
+  const [aggData, setAggData] = useState({ avg: null, min: null, max: null, count: 0 });
+  const [aggLoading, setAggLoading] = useState(false);
+
+  const devId = deviceId || config.device_id;
+  const key   = config.key;
+
+  // Fetch all three aggregates when window or key changes
+  useEffect(() => {
+    if (!devId || !key) return;
+    setAggLoading(true);
+    Promise.all([
+      telemetryApi.aggregate(devId, key, window, "avg"),
+      telemetryApi.aggregate(devId, key, window, "min"),
+      telemetryApi.aggregate(devId, key, window, "max"),
+      telemetryApi.aggregate(devId, key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => {
+      setAggData({
+        avg:   a?.result  ?? null,
+        min:   mn?.result ?? null,
+        max:   mx?.result ?? null,
+        count: ct?.count  ?? 0,
+      });
+    }).catch(() => {}).finally(() => setAggLoading(false));
+  }, [devId, key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(2);
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+
+      {/* Window selector + stats row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        {/* Time window pills */}
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+          {WINDOWS.map(w => (
+            <button key={w} onClick={() => setWindow(w)} style={{
+              padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600,
+              cursor: "pointer", border: "1px solid",
+              borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+              background: window === w ? "#2F8CFF" : "#F4F8FF",
+              color: window === w ? "white" : "#6B7F9F",
+              transition: "all 0.15s",
+            }}>{w}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* AVG / MIN / MAX cards */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        {[["AVG", aggData.avg, "#2F8CFF"], ["MIN", aggData.min, "#10b981"], ["MAX", aggData.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{
+            flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
+            transition: "opacity 0.2s",
+          }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>{label}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>
+              {aggLoading ? "…" : fmt(val)}
+            </span>
+          </div>
+        ))}
+        <div style={{
+          flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+          border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
+        }}>
+          <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>PTS</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#8b5cf6", fontFamily: "monospace" }}>
+            {aggLoading ? "…" : aggData.count}
+          </span>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <LineChartSVG data={history} color={config.color || "#3b82f6"} />
+      </div>
+
+      {/* Footer */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function GaugeWidget({ config, liveTelem, deviceId }) {
+  const raw = liveTelem?.[config.key];
+  const num = typeof raw === "number" ? raw : parseFloat(raw);
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("24h");
+  const [agg, setAgg] = useState({ min: null, max: null, avg: null });
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+    ]).then(([mn, mx, av]) => setAgg({ min: mn?.result ?? null, max: mx?.result ?? null, avg: av?.result ?? null }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(1);
+  const WINDOWS = ["1h","6h","24h","7d"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", gap: 4 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Gauge dial */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <GaugeSVG value={isNaN(num) ? config.min : num} min={config.min ?? 0} max={config.max ?? 100} color={config.color || "#3b82f6"} />
+      </div>
+      {/* Label row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "0 8px", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.min ?? 0}{config.unit}</span>
+        <span style={{ fontSize: 10, fontWeight: 600, color: config.color || "#3b82f6" }}>{config.label || config.key}</span>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.max ?? 100}{config.unit}</span>
+      </div>
+      {/* AVG / MIN / MAX for selected window */}
+      <div style={{ display: "flex", gap: 4, width: "100%", flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function StatusLight({ config, liveTelem }) {
+  const raw      = liveTelem?.[config.key];
+  const isOnline = raw !== undefined;
+  const c        = isOnline ? "#10b981" : "#94a3b8";
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" }}>
+      <div style={{
+        width: 52, height: 52, borderRadius: "50%", background: c,
+        boxShadow: isOnline ? `0 0 20px ${c}66` : "none",
+        transition: "all .5s",
+      }} />
+      <div style={{ textAlign: "center" }}>
+        <p style={{ fontSize: 15, fontWeight: 700, color: c }}>{isOnline ? "ONLINE" : "OFFLINE"}</p>
+        <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{config.label || config.key || "Status"}</p>
+      </div>
+      {raw !== undefined && (
+        <p style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
+          {config.key}: {String(raw)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function BarChartWidget({ config, historyData, deviceId }) {
+  const key = config.key || (config.keys || [])[0] || "";
+  const history = historyData?.[key] || [];
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("1h");
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
+  const [aggLoading, setAggLoading] = useState(false);
+
+  useEffect(() => {
+    if (!devId || !key) return;
+    setAggLoading(true);
+    Promise.all([
+      telemetryApi.aggregate(devId, key, window, "avg"),
+      telemetryApi.aggregate(devId, key, window, "min"),
+      telemetryApi.aggregate(devId, key, window, "max"),
+      telemetryApi.aggregate(devId, key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
+      .catch(() => {}).finally(() => setAggLoading(false));
+  }, [devId, key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(2);
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+      {/* Window selector */}
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"], ["PTS", agg.count, "#8b5cf6"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "4px 8px",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1 }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: "monospace" }}>{aggLoading ? "…" : (label === "PTS" ? val : fmt(val))}</span>
+          </div>
+        ))}
+      </div>
+      {/* Chart */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <BarChartSVG data={history} color={config.color || "#3b82f6"} />
+      </div>
+      {/* Footer */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function AlarmListWidget({ alarms = [] }) {
+  const SEV_COLOR = { CRITICAL: "#ef4444", MAJOR: "#f97316", WARNING: "#f59e0b", MINOR: "#eab308" };
+  const active = alarms.filter(a => a.status?.startsWith("ACTIVE")).slice(0, 6);
+  if (!active.length) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "#94a3b8" }}>
+      <svg style={{ width: 22, height: 22 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      <p style={{ fontSize: 12 }}>No active alarms</p>
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, height: "100%", overflowY: "auto" }}>
+      {active.map(a => (
+        <div key={a.id} style={{
+          padding: "6px 10px", borderRadius: 8, background: "#fafafa",
+          borderLeft: `3px solid ${SEV_COLOR[a.severity] || "#94a3b8"}`,
+          border: `1px solid #f1f5f9`,
+        }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "#334155" }}>{a.alarm_type}</p>
+          <p style={{ fontSize: 9, color: "#94a3b8", marginTop: 2 }}>
+            {a.severity} · {new Date(a.start_ts).toLocaleTimeString()}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function TimeseriesTable({ config, historyData, deviceId }) {
+  const history = [...(historyData?.[config.key] || [])].reverse().slice(0, 25);
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("1h");
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+      telemetryApi.aggregate(devId, config.key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 2);
+  const WINDOWS = ["15m","30m","1h","6h","24h"];
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Table */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse" }}>
+          <thead style={{ position: "sticky", top: 0, background: "white" }}>
+            <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+              <th style={{ textAlign: "left", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>Time</th>
+              <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>{config.key}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {history.map((p, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f8fafc" }}>
+                <td style={{ padding: "3px 0", color: "#94a3b8", fontFamily: "monospace" }}>{new Date(p.ts).toLocaleTimeString()}</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>
+                  {typeof p.value === "number" ? p.value.toFixed(config.decimals ?? 2) : String(p.value)}{config.unit}
+                </td>
+              </tr>
+            ))}
+            {!history.length && (
+              <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8" }}>No history yet</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {/* Summary footer */}
+      <div style={{ display: "flex", gap: 4, borderTop: "1px solid #D8E3F3", paddingTop: 6, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"], ["PTS", agg.count, "#8b5cf6"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{label === "PTS" ? val : fmt(val)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function PieChartWidget({ config, liveTelem }) {
+  // Use config.keys if any match liveTelem; otherwise fall back to all available numeric keys
+  const configuredKeys = (config.keys || []).filter(k => liveTelem?.[k] !== undefined);
+  const fallbackKeys   = configuredKeys.length ? configuredKeys
+    : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
+  const keys = fallbackKeys;
+  const data = keys.map(k => ({ key: k, value: Math.abs(parseFloat(liveTelem[k])) || 0 }));
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, height: "100%" }}>
+      <PieChartSVG data={data} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {data.map((d, i) => (
+          <div key={d.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+            <span style={{ fontSize: 10, color: "#64748b" }}>
+              {d.key}: <strong style={{ fontFamily: "monospace", color: "#1e293b" }}>{d.value.toFixed(1)}</strong>
+            </span>
+          </div>
+        ))}
+        {!data.length && <p style={{ fontSize: 10, color: "#94a3b8" }}>No keys configured</p>}
+      </div>
+    </div>
+  );
+}
+
+export function MarkdownWidget({ config }) {
+  const html = (config.content || "_Empty — click Edit_")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/`(.+?)`/g, `<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-family:monospace;font-size:11px">$1</code>`)
+    .replace(/\n/g, "<br/>");
+  return (
+    <div
+      style={{ height: "100%", overflowY: "auto", fontSize: 13, lineHeight: 1.6, color: "#334155" }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+export function EntityTable({ liveTelem }) {
+  const entries = Object.entries(liveTelem || {});
+  return (
+    <div style={{ height: "100%", overflowY: "auto" }}>
+      <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+        <thead><tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+          <th style={{ textAlign: "left", padding: "4px 0", fontWeight: 600, color: "#94a3b8" }}>Key</th>
+          <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8" }}>Value</th>
+        </tr></thead>
+        <tbody>
+          {entries.map(([k, v]) => (
+            <tr key={k} style={{ borderBottom: "1px solid #f8fafc" }}>
+              <td style={{ padding: "4px 0", color: "#475569" }}>{k}</td>
+              <td style={{ padding: "4px 0", textAlign: "right", fontFamily: "monospace", fontWeight: 600, color: "#1e293b" }}>
+                {typeof v === "number" ? v.toFixed(2) : String(v)}
+              </td>
+            </tr>
+          ))}
+          {!entries.length && (
+            <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8" }}>No telemetry received</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function HtmlCard({ config, liveTelem }) {
+  const rendered = (config.content || "<p>Configure HTML template in Edit</p>")
+    .replace(/\$\{([^}]+)\}/g, (_, k) => {
+      const v = liveTelem?.[k.trim()];
+      if (v === undefined) return `\${${k}}`;
+      return typeof v === "number" ? v.toFixed(config.decimals ?? 1) : String(v);
+    });
+  return (
+    <div
+      style={{ height: "100%", overflowY: "auto", fontSize: 13, color: "#334155" }}
+      dangerouslySetInnerHTML={{ __html: rendered }}
+    />
+  );
+}
+
+// ── Master registry + dispatcher ──────────────────────────────────────────────
+
+export const WIDGET_REGISTRY = [
+  { id: "value_card",       label: "Value Card",      icon: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8",             desc: "Large number + sparkline" },
+  { id: "line_chart",       label: "Line Chart",      icon: "M22 12h-4l-3 9L9 3l-3 9H2",                                            desc: "Time-series history" },
+  { id: "gauge",            label: "Gauge",           icon: "M12 22a10 10 0 0 0 7.07-17.07M5 19.07A10 10 0 0 1 12 2",              desc: "Circular gauge with min/max" },
+  { id: "status_light",     label: "Status Light",    icon: "M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z",                           desc: "Online / offline indicator" },
+  { id: "bar_chart",        label: "Bar Chart",       icon: "M12 20V10M6 20V4M18 20v-4",                                           desc: "Multi-key comparison bars" },
+  { id: "alarm_list",       label: "Alarm List",      icon: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0", desc: "Active alarms" },
+  { id: "timeseries_table", label: "History Table",   icon: "M3 10h18M3 6h18M3 14h18M3 18h18",                                     desc: "Raw telemetry rows" },
+  { id: "pie_chart",        label: "Pie / Donut",     icon: "M21.21 15.89A10 10 0 1 1 8 2.83",                                     desc: "Distribution of keys" },
+  { id: "markdown",         label: "Text / Markdown", icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",         desc: "Free-text notes" },
+  { id: "entity_table",     label: "Entity Table",    icon: "M4 6h16M4 10h16M4 14h16M4 18h16",                                     desc: "All keys + live values" },
+  { id: "html_card",        label: "HTML Card",       icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",        desc: "Custom HTML with ${key}" },
+];
+
+/**
+ * WidgetRenderer — dispatches to the correct component based on widget.widget_type
+ */
+/**
+ * WidgetRenderer
+ *
+ * Dispatches to the correct widget component.
+ *
+ * For UserDashboard widgets the caller (UserDashboardPage) pre-slices
+ * liveTelem and historyData to only the relevant device:
+ *   liveTelem  = liveTelem[widget.config.device_id]  || {}
+ *   historyData = historyData[widget.config.device_id] || {}
+ *
+ * The `missingDevice` flag is set when a widget has no config.device_id
+ * (backward compat for widgets saved before Critical Fix 1).
+ * These widgets show a warning prompt instead of empty/broken UI.
+ *
+ * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
+ * directly — no change needed there.
+ */
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false }) {
+  // Backward-compat: old widgets that have no device_id show a non-crashing prompt
+  if (missingDevice) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", height: "100%", gap: 8, padding: 12,
+        textAlign: "center",
+      }}>
+        <svg style={{ width: 20, height: 20, color: "#f59e0b" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <p style={{ fontSize: 12, color: "#92400e", margin: 0, lineHeight: 1.4 }}>
+          No device linked.<br/>
+          <span style={{ color: "#64748b" }}>Click <strong>Edit</strong> and select a device.</span>
+        </p>
+      </div>
+    );
   }
-  http.end();
+
+  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id };
+
+  switch (widget.widget_type) {
+    case "value_card":       return <ValueCard       {...props} />;
+    case "line_chart":       return <LineChartWidget {...props} />;
+    case "gauge":            return <GaugeWidget     {...props} />;
+    case "status_light":     return <StatusLight     {...props} />;
+    case "bar_chart":        return <BarChartWidget  {...props} />;
+    case "alarm_list":       return <AlarmListWidget {...props} />;
+    case "timeseries_table": return <TimeseriesTable {...props} />;
+    case "pie_chart":        return <PieChartWidget  {...props} />;
+    case "markdown":         return <MarkdownWidget  {...props} />;
+    case "entity_table":     return <EntityTable     {...props} />;
+    case "html_card":        return <HtmlCard        {...props} />;
+    default:
+      return (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 12, color: "#94a3b8" }}>
+          Unknown type: {widget.widget_type}
+        </div>
+      );
+  }
 }
-
-void setup() {
-  Serial.begin(115200);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (!WiFi.isConnected()) delay(500);
-
-  prefs.begin("iot", true);
-  deviceToken = prefs.getString("token", "");
-  prefs.end();
-
-  if (deviceToken == "") provisionDevice();
-}
-
-void loop() {
-  if (deviceToken == "") return;
-
-  String payload = "{\"values\":{\"temperature\":25.5}}";
-  HTTPClient http;
-  http.begin(String(IOT_HOST) + "/api/v1/telemetry/ingest/" + deviceToken);
-  http.addHeader("Content-Type", "application/json");
-  http.POST(payload);
-  http.end();
-  delay(5000);
-}
-```
-
----
-
-## Sending Telemetry
-
-### HTTP curl
-
-```bash
-curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/telemetry/ingest/DEVICE_TOKEN \
-  -H "Content-Type: application/json" \
-  -d '{"values": {"glucose": 87, "temperature": 36.5}}'
-```
-
-### MQTT
-
-```bash
-mosquitto_pub \
-  -h broker.hivemq.com \
-  -t "iot/DEVICE_TOKEN/telemetry" \
-  -m '{"glucose": 87}'
-```
-
----
-
-## API Reference
-
-### Authentication
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/v1/auth/register` | — | Register + create tenant |
-| POST | `/api/v1/auth/login` | — | Login, returns JWT |
-| POST | `/api/v1/auth/seed-demo` | — | Create demo account |
-| POST | `/api/v1/auth/reset-password` | — | Reset password by email |
-
-### Devices
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/v1/devices/` | JWT | List tenant devices |
-| POST | `/api/v1/devices/` | JWT | Create device |
-| GET | `/api/v1/devices/provisioning-key` | JWT | Get tenant provisioning key |
-| POST | `/api/v1/devices/provision` | — | Self-register device (firmware) |
-| GET | `/api/v1/devices/{id}` | JWT | Get device |
-| PUT | `/api/v1/devices/{id}` | JWT | Update device |
-| DELETE | `/api/v1/devices/{id}` | JWT | Delete device |
-| POST | `/api/v1/devices/{id}/token/regenerate` | JWT | Regenerate token |
-
-### Telemetry
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| POST | `/api/v1/telemetry/ingest/{token}` | Device token | Ingest data |
-| GET | `/api/v1/telemetry/latest/{device_id}` | JWT | Latest key-value pairs |
-| GET | `/api/v1/telemetry/history/{device_id}?key=&limit=` | JWT | Time-series history |
-| GET | `/api/v1/telemetry/keys/{device_id}` | JWT | List available keys |
-| GET | `/api/v1/telemetry/metadata/{device_id}` | JWT | Key metadata (label, unit) |
-| PUT | `/api/v1/telemetry/metadata/{device_id}/{key}` | JWT | Update key metadata |
-| GET | `/api/v1/telemetry/aggregate/{device_id}?key=&window=&function=` | JWT | Time-windowed aggregation |
-
-### Aggregation Parameters
-
-| Param | Values | Default |
-|---|---|---|
-| `key` | any telemetry key | required |
-| `window` | `1m` `5m` `15m` `30m` `1h` `6h` `12h` `24h` `7d` | `1h` |
-| `function` | `avg` `min` `max` `sum` `count` | `avg` |
-
-### Alarms
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/v1/alarms/` | JWT | List alarms |
-| POST | `/api/v1/alarms/` | JWT | Create alarm |
-| POST | `/api/v1/alarms/{id}/ack` | JWT | Acknowledge |
-| POST | `/api/v1/alarms/{id}/clear` | JWT | Clear |
-| DELETE | `/api/v1/alarms/{id}` | JWT | Delete |
-
-### Device Dashboards
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/v1/dashboards/?device_id=` | JWT | List dashboards |
-| POST | `/api/v1/dashboards/` | JWT | Create dashboard |
-| GET | `/api/v1/dashboards/{id}` | JWT | Get with widgets |
-| PUT | `/api/v1/dashboards/{id}` | JWT | Update |
-| DELETE | `/api/v1/dashboards/{id}` | JWT | Delete |
-| POST | `/api/v1/dashboards/{id}/widgets/` | JWT | Add widget |
-| PUT | `/api/v1/dashboards/{id}/widgets/{wid}` | JWT | Update widget |
-| DELETE | `/api/v1/dashboards/{id}/widgets/{wid}` | JWT | Delete widget |
-| PUT | `/api/v1/dashboards/{id}/layout` | JWT | Save layout |
-
-### User Dashboards
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/api/v1/user-dashboards/` | JWT | List all |
-| GET | `/api/v1/user-dashboards/default` | JWT | Get default |
-| POST | `/api/v1/user-dashboards/` | JWT | Create |
-| DELETE | `/api/v1/user-dashboards/{id}` | JWT | Delete |
-| POST | `/api/v1/user-dashboards/{id}/widgets/` | JWT | Add widget |
-| PUT | `/api/v1/user-dashboards/{id}/widgets/{wid}` | JWT | Update widget |
-| DELETE | `/api/v1/user-dashboards/{id}/widgets/{wid}` | JWT | Delete widget |
-| PUT | `/api/v1/user-dashboards/{id}/layout` | JWT | Save layout |
-
-### System
-
-| Method | Endpoint | Auth | Description |
-|---|---|---|---|
-| GET | `/health` | — | Liveness probe |
-| GET | `/status` | JWT | MQTT + WS state |
-| GET | `/docs` | — | Swagger UI |
-| WS | `/api/v1/ws/telemetry/{device_id}?token=` | JWT | Live stream |
-
----
-
-## Environment Variables
-
-### Backend
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
-| `SECRET_KEY` | ✅ | dev key | JWT signing secret |
-| `CORS_ORIGINS` | ✅ | localhost | Comma-separated allowed origins |
-| `MQTT_ENABLED` | — | `true` | Set `false` to disable MQTT |
-| `MQTT_BROKER_HOST` | — | `broker.hivemq.com` | Broker hostname |
-| `MQTT_BROKER_PORT` | — | `1883` | Broker port (`8883` for TLS) |
-| `MQTT_USE_TLS` | — | `false` | `true` for HiveMQ Cloud / AWS IoT |
-| `MQTT_USERNAME` | — | — | Broker username |
-| `MQTT_PASSWORD` | — | — | Broker password |
-| `MQTT_TOPIC_PREFIX` | — | `iot` | Topic root: `{prefix}/{token}/telemetry` |
-
-### Frontend
-
-| Variable | Required | Description |
-|---|---|---|
-| `VITE_API_URL` | ✅ | Backend base URL |
-
----
-
-## Security Architecture
-
-```
-Registration  →  creates Tenant (with provisioning_key) + User
-Login         →  JWT { sub: user_id, tenant_id, role }
-
-Every API request:
-  JWT validated → user.tenant_id extracted
-  All queries:  WHERE tenant_id = user.tenant_id
-  Cross-tenant: → 403 Forbidden
-
-WebSocket:
-  ?token=<jwt> required before connection accepted
-
-Telemetry ingest (device → platform):
-  POST /telemetry/ingest/{device_token}   ← no JWT, device token only
-
-Device provisioning (firmware → platform):
-  POST /devices/provision { provision_key, device_name }
-  provision_key maps to exactly one tenant → device created there
-```
-
----
-
-## Troubleshooting
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| Provisioning key empty in Settings | Column not in DB | Run migration 004 + 005 in DBeaver |
-| `❌ Provision failed HTTP 201` | ESP32 code only checks `== 200` | Change to `code == 200 \|\| code == 201` |
-| Login returns 401 | Account registered before bcrypt fix | Re-register or use reset-password |
-| Build fails: `Could not resolve ./websocket.js` | Wrong import path | Import from `../services/websocket.js` |
-| Bar chart blank | liveTelem empty on first render | Shows "Waiting for data…" — updates when first telemetry arrives |
-| Duplicate Default Dashboards | Race condition on first login | Auto-deduplicated on every page load |
-| 401 after redeploy | JWT signed with old SECRET_KEY | `localStorage.clear(); location.reload()` |
-| WebSocket shows Static | Free tier cold start (30s) | Upgrade to paid Render instance |
-
----
-
-## Production Checklist
-
-- [ ] `SECRET_KEY` is a strong random value (Render `generateValue: true`)
-- [ ] `CORS_ORIGINS` matches exact frontend URL — no trailing slash
-- [ ] `DATABASE_URL` uses Render **Internal** URL
-- [ ] All 7 database migrations applied
-- [ ] For real devices: switch to private MQTT broker with TLS (`MQTT_USE_TLS=true`, port `8883`)
-- [ ] Disable or restrict `/api/v1/auth/seed-demo` before production
-- [ ] `--workers 1` in Dockerfile CMD (already enforced — required for WebSocket)
