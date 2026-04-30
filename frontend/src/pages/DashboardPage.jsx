@@ -244,7 +244,7 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
 }
 
 // ── Main Dashboard Page ───────────────────────────────────────────────────────
-export default function DashboardPage({ device, onBack }) {
+export default function DashboardPage({ device, onBack, user }) {
 
   // ── Remote state (from API — no mock data) ───────────────────────────────
   const [dashboards,    setDashboards]    = useState([]);
@@ -257,6 +257,7 @@ export default function DashboardPage({ device, onBack }) {
   // ── UI state ─────────────────────────────────────────────────────────────
   const [loadingList,   setLoadingList]   = useState(true);
   const [loadingDash,   setLoadingDash]   = useState(false);
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const [editMode,      setEditMode]      = useState(false);
   const [showModal,     setShowModal]     = useState(false);
   const [editingWidget, setEditingWidget] = useState(null);
@@ -485,11 +486,11 @@ export default function DashboardPage({ device, onBack }) {
               {wsConnected ? "Live (WebSocket)" : "Polling"}
             </span>
           </div>
-          <button onClick={() => setEditMode(e => !e)}
+          {isAdmin && <button onClick={() => setEditMode(e => !e)}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: editMode ? "2px solid #3b82f6" : "1px solid #e2e8f0", background: editMode ? "#eff6ff" : "white", cursor: "pointer", fontSize: 13, fontWeight: 500, color: editMode ? "#1d4ed8" : "#475569" }}>
             <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             {editMode ? "Done Editing" : "Edit Layout"}
-          </button>
+          </button>}
           {editMode && activeDash && (
             <button onClick={() => { setEditingWidget(null); setShowModal(true); }}
               style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: "none", background: "#3b82f6", color: "white", cursor: "pointer", fontSize: 13, fontWeight: 500 }}>

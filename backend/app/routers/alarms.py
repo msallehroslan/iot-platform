@@ -60,6 +60,9 @@ def list_alarms(
         .options(joinedload(Alarm.device))
         .filter(Device.tenant_id == current_user.tenant_id)
     )
+    # CUSTOMER_USER: only see alarms for their customer's devices
+    if current_user.role == "CUSTOMER_USER":
+        query = query.filter(Device.customer_id == current_user.customer_id)
     if status:
         query = query.filter(Alarm.status == status)
     if severity:

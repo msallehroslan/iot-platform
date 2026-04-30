@@ -424,7 +424,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
 }
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
-export default function UserDashboardPage({ onToast }) {
+export default function UserDashboardPage({ onToast, user }) {
 
   // ── Remote state — ALL from API ───────────────────────────────────────────
   const [dashboardList, setDashboardList] = useState([]);
@@ -446,6 +446,7 @@ export default function UserDashboardPage({ onToast }) {
   const [loadingDash,  setLoadingDash]  = useState(false);
   const [listError,    setListError]    = useState("");
   const [dashError,    setDashError]    = useState("");
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const [editMode,     setEditMode]     = useState(false);
   const [showModal,    setShowModal]    = useState(false);
   const [editingWidget,setEditingWidget]= useState(null);

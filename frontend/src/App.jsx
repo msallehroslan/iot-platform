@@ -243,7 +243,8 @@ function DeviceListForDashboards({ onOpen }) {
 // ── Devices page ─────────────────────────────────────────────────────────────
 const INP = "w-full px-3 py-2 border border-slate-200 rounded-lg text-sm text-slate-700 bg-slate-50 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 focus:bg-white";
 
-function DevicesPage({ onOpenDrawer, onToast }) {
+function DevicesPage({ onOpenDrawer, onToast, user }) {
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const [devices,setDevices]=useState([]); const [loading,setLoading]=useState(true); const [search,setSearch]=useState(""); const [showM,setShowM]=useState(false); const [editDev,setEditDev]=useState(null); const [delId,setDelId]=useState(null);
   const fetch=useCallback(async()=>{try{setDevices(await deviceApi.list());}catch(e){onToast(e.message,"error");}finally{setLoading(false);}}, []);
   useEffect(()=>{fetch();},[]);
@@ -254,7 +255,7 @@ function DevicesPage({ onOpenDrawer, onToast }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div className="relative"><svg className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><input className="pl-9 pr-4 py-2 text-sm border rounded-lg bg-white text-[#334866] outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-64" style={{borderColor:"#D8E3F3"}} placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
-        <button onClick={()=>{setEditDev(null);setShowM(true);}} className="flex items-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Device</button>
+        {isAdmin && <button onClick={()=>{setEditDev(null);setShowM(true);}} className="flex items-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Device</button>}
       </div>
       <div className="rounded-2xl border shadow-sm shadow-blue-100/40 overflow-hidden" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
         {loading?<div className="flex justify-center py-12"><Spinner/></div>:filtered.length===0?<Empty icon="M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4" title={search?"No match":"No devices"} sub="Add your first device"/>:
@@ -267,8 +268,8 @@ function DevicesPage({ onOpenDrawer, onToast }) {
               <td className="px-5 py-3.5 font-mono text-[11px] text-slate-400">{d.token.slice(0,8)}…</td>
               <td className="px-5 py-3.5 text-[12px] text-slate-400">{new Date(d.created_at).toLocaleDateString()}</td>
               <td className="px-5 py-3.5" onClick={e=>e.stopPropagation()}><div className="flex items-center gap-1 justify-end">
-                <button onClick={()=>{setEditDev(d);setShowM(true);}} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-                <button onClick={()=>handleDel(d.id)} className={`p-1.5 rounded-lg transition-colors ${delId===d.id?"bg-red-50 text-red-500":"hover:bg-red-50 text-slate-400 hover:text-red-500"}`}><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
+                {isAdmin && <button onClick={()=>{setEditDev(d);setShowM(true);}} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>}
+                {isAdmin && <button onClick={()=>handleDel(d.id)} className={`p-1.5 rounded-lg transition-colors ${delId===d.id?"bg-red-50 text-red-500":"hover:bg-red-50 text-slate-400 hover:text-red-500"}`}><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>}
               </div></td>
             </tr>))}</tbody>
           </table><div className="px-5 py-2.5 bg-slate-50 border-t border-slate-100 text-[11px] text-slate-400">Showing {filtered.length} of {devices.length} devices</div></>}
@@ -312,7 +313,8 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
   );
 }
 // ── Alarms page ───────────────────────────────────────────────────────────────
-function AlarmsPage({ onToast }) {
+function AlarmsPage({ onToast, user }) {
+  const canAck = user?.role === "TENANT_ADMIN" || user?.role === "TENANT_USER";
   const [alarms,setAlarms]=useState([]); const [loading,setLoading]=useState(true); const [filter,setFilter]=useState("ACTIVE");
   const fetchAlarms=useCallback(async()=>{try{const p={};if(filter==="ACTIVE")p.status="ACTIVE_UNACK";else if(filter==="ACK")p.status="ACTIVE_ACK";else if(filter==="CLEARED")p.status="CLEARED_ACK";const data=await alarmApi.list(p);const ord={CRITICAL:0,MAJOR:1,MINOR:2,WARNING:3,INDETERMINATE:4};data.sort((a,b)=>(ord[a.severity]??5)-(ord[b.severity]??5));setAlarms(data);}catch(e){onToast(e.message,"error");}finally{setLoading(false);}}, [filter]);
   useEffect(()=>{setLoading(true);fetchAlarms();},[filter]);
@@ -335,8 +337,8 @@ function AlarmsPage({ onToast }) {
                 <td className="px-5 py-3.5"><span className={si.cls}>{si.label}</span></td>
                 <td className="px-5 py-3.5 text-[12px] text-slate-400">{new Date(a.start_ts).toLocaleString()}</td>
                 <td className="px-5 py-3.5"><div className="flex items-center gap-1">
-                  {(a.status==="ACTIVE_UNACK"||a.status==="CLEARED_UNACK")&&<button onClick={()=>handleAck(a.id)} className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-400 hover:text-emerald-600"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>}
-                  {!a.status.startsWith("CLEARED")&&<button onClick={()=>handleClear(a.id)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-500"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></button>}
+                  {canAck&&(a.status==="ACTIVE_UNACK"||a.status==="CLEARED_UNACK")&&<button onClick={()=>handleAck(a.id)} className="p-1.5 rounded-lg hover:bg-emerald-50 text-slate-400 hover:text-emerald-600"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></button>}
+                  {canAck&&!a.status.startsWith("CLEARED")&&<button onClick={()=>handleClear(a.id)} className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-500"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></button>}
                   <button onClick={()=>handleDel(a.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"><svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg></button>
                 </div></td>
               </tr>);})}</tbody>
@@ -370,7 +372,7 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
         </div>
         <div className="p-5 border-b border-slate-50">
           <div className="grid grid-cols-2 gap-3 mb-4">{[["Type",device.device_type],["Created",new Date(device.created_at).toLocaleDateString()],["Label",device.label||"—"],["ID",device.id.slice(0,8)+"…"]].map(([k,v])=><div key={k}><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-0.5">{k}</p><p className="text-sm text-slate-700 font-medium">{v}</p></div>)}</div>
-          <div><div className="flex items-center justify-between mb-1.5"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Token</p><button onClick={handleRegen} disabled={regen} className="flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100"><svg className={`w-3 h-3 ${regen?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg>Regenerate</button></div>
+          <div><div className="flex items-center justify-between mb-1.5"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Token</p>{isAdmin && <button onClick={handleRegen} disabled={regen} className="flex items-center gap-1 text-[10px] font-medium text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100"><svg className={`w-3 h-3 ${regen?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/></svg>Regenerate</button>}</div>
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"><code className="text-[11px] text-slate-600 font-mono flex-1 truncate">{device.token}</code><button onClick={()=>copy(device.token)} className="flex-shrink-0 flex items-center gap-1 text-[10px] font-medium">{copied?<span className="text-emerald-500 flex items-center gap-1"><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>Copied!</span>:<span className="text-blue-500 flex items-center gap-1"><svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</span>}</button></div></div>
           <div className="mt-4"><p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mb-1.5">Ingest Example</p><pre className="bg-slate-800 text-slate-300 text-[10px] rounded-lg p-3 overflow-x-auto leading-relaxed font-mono whitespace-pre">{curl}</pre></div>
         </div>
@@ -1202,18 +1204,18 @@ export default function App() {
         <Header title={pageTitle} onRefresh={handleRefresh} refreshing={refreshing} />
         <main className={`flex-1 ${page === "user-dashboards" ? "overflow-hidden" : "overflow-y-auto p-6"}`} style={{background:"#F4F8FF"}}>
           {page === "overview"           && <OverviewPage refreshKey={refreshKey} onToast={showToast} />}
-          {page === "user-dashboards"     && <UserDashboardPage onToast={showToast} />}
+          {page === "user-dashboards"     && <UserDashboardPage onToast={showToast} user={user} />}
           {page === "device-dashboards"  && !dashDevice && <DeviceListForDashboards onOpen={d => setDashDevice(d)} />}
-          {page === "device-dashboards"  && dashDevice  && <DashboardPage device={dashDevice} onBack={() => setDashDevice(null)} />}
-          {page === "devices"            && <DevicesPage onOpenDrawer={setDrawer} onToast={showToast} />}
-          {page === "alarms"             && <AlarmsPage onToast={showToast} />}
+          {page === "device-dashboards"  && dashDevice  && <DashboardPage device={dashDevice} onBack={() => setDashDevice(null)} user={user} />}
+          {page === "devices"            && <DevicesPage onOpenDrawer={setDrawer} onToast={showToast} user={user} />}
+          {page === "alarms"             && <AlarmsPage onToast={showToast} user={user} />}
           {page === "rule-chains"        && <ComingSoon label="Rule Chains"  desc="Define automated workflows triggered by device telemetry." icon="M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9"/>}
           {page === "customers"          && <CustomersPage onToast={showToast} user={user} />}
           {page === "users"              && <UsersPage onToast={showToast} user={user} />}
           {page === "settings"           && <SettingsPage user={user} onLogout={handleLogout} />}
         </main>
       </div>
-      {drawer && <DeviceDrawer device={drawer} onClose={() => setDrawer(null)} refreshKey={refreshKey} onToast={showToast} />}
+      {drawer && <DeviceDrawer device={drawer} onClose={() => setDrawer(null)} refreshKey={refreshKey} onToast={showToast} user={user} />}
       {toast  && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
     </div>
   );

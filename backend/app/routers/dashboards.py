@@ -108,7 +108,7 @@ def list_dashboards(
 def create_dashboard(
     body: DashboardCreateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     return dashboard_service.create_dashboard(
         device_id=body.device_id,
@@ -138,7 +138,7 @@ def update_dashboard(
     dashboard_id: UUID,
     body: DashboardUpdateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     return dashboard_service.update_dashboard(
         dashboard_id=dashboard_id,
@@ -154,7 +154,7 @@ def update_dashboard(
 def delete_dashboard(
     dashboard_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     dashboard_service.delete_dashboard(
         dashboard_id=dashboard_id,
@@ -183,7 +183,7 @@ def add_widget(
     dashboard_id: UUID,
     body: WidgetCreateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     return dashboard_service.add_widget(
         dashboard_id=dashboard_id,
@@ -202,7 +202,7 @@ def update_widget(
     widget_id: UUID,
     body: WidgetUpdateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     return dashboard_service.update_widget(
         dashboard_id=dashboard_id,
@@ -224,7 +224,7 @@ def delete_widget(
     dashboard_id: UUID,
     widget_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     dashboard_service.delete_widget(
         dashboard_id=dashboard_id,
@@ -239,7 +239,7 @@ def save_layout(
     dashboard_id: UUID,
     body: LayoutBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Bulk-save widget grid positions after drag-and-drop or resize."""
     return dashboard_service.save_layout(
