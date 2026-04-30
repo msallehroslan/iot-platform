@@ -513,35 +513,50 @@ function UsersPage({ onToast, user: currentUser }) {
   const isAdmin = currentUser?.role === "TENANT_ADMIN";
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [inviteForm, setInviteForm] = useState({ email: "", password: "", first_name: "", last_name: "", role: "TENANT_USER" });
   const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
 
-  const fetch = useCallback(async () => {
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
     try { setUsers(await userApi.list()); }
     catch (e) { onToast(e.message, "error"); }
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetch(); }, []);
+  useEffect(() => { fetchUsers(); }, []);
+
+  const handleInvite = async () => {
+    if (!inviteForm.email || !inviteForm.password) return;
+    setSaving(true);
+    try {
+      await userApi.invite(inviteForm);
+      await fetchUsers();
+      setShowInvite(false);
+      setInviteForm({ email: "", password: "", first_name: "", last_name: "", role: "TENANT_USER" });
+      onToast("User invited successfully");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleSaveRole = async (data) => {
+    setSaving(true);
+    try {
+      await userApi.updateRole(data.id, { role: data.role, is_active: data.is_active });
+      await fetchUsers();
+      setShowEdit(false); setEditUser(null);
+      onToast("Role updated");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
 
   const handleDelete = async (u) => {
     if (!window.confirm(`Remove ${u.email} from this tenant?`)) return;
     try { await userApi.delete(u.id); setUsers(us => us.filter(x => x.id !== u.id)); onToast("User removed"); }
     catch (e) { onToast(e.message, "error"); }
-  };
-
-  const handleSave = async (data) => {
-    setSaving(true);
-    try {
-      await userApi.updateRole(data.id, { role: data.role, is_active: data.is_active });
-      await fetch();
-      setShowModal(false); setEditUser(null);
-      onToast("Role updated");
-    } catch (e) { onToast(e.message, "error"); }
-    finally { setSaving(false); }
   };
 
   const ROLE_BADGE = {
@@ -555,17 +570,23 @@ function UsersPage({ onToast, user: currentUser }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-slate-800">Users & Roles</h2>
-          <p className="text-xs text-slate-400 mt-0.5">Manage who can access your tenant and what they can do</p>
+          <p className="text-xs text-slate-400 mt-0.5">Invite staff and manage their access level</p>
         </div>
-        {!isAdmin && <span className="text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">Read-only — admin access required to make changes</span>}
+        {isAdmin && (
+          <button onClick={() => setShowInvite(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F8CFF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Invite User
+          </button>
+        )}
       </div>
 
-      {/* Role explanation */}
+      {/* Role cards */}
       <div className="grid grid-cols-3 gap-3">
         {[
           { role: "TENANT_ADMIN", color: "purple", desc: "Full access — create devices, manage users, configure rules" },
-          { role: "TENANT_USER", color: "blue", desc: "Read-only access to all devices and telemetry in the tenant" },
-          { role: "CUSTOMER_USER", color: "amber", desc: "Scoped to a single customer — sees only their assigned devices" },
+          { role: "TENANT_USER",  color: "blue",   desc: "Read-only — view devices and telemetry, cannot create or delete" },
+          { role: "CUSTOMER_USER",color: "amber",  desc: "Scoped to one customer — only sees their assigned devices" },
         ].map(({ role, color, desc }) => (
           <div key={role} className={`rounded-xl border p-3.5 bg-${color}-50 border-${color}-200`}>
             <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-${color}-100 text-${color}-700`}>{role}</span>
@@ -574,6 +595,13 @@ function UsersPage({ onToast, user: currentUser }) {
         ))}
       </div>
 
+      {/* Info box — no self registration */}
+      <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-100 rounded-xl p-3.5">
+        <svg className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p className="text-xs text-blue-700">Staff users must be <strong>invited by an admin</strong> — they cannot self-register. Use <strong>Invite User</strong> above to add TENANT_ADMIN or TENANT_USER accounts. Customer-scoped users are created from the <strong>Customers</strong> page.</p>
+      </div>
+
+      {/* User table */}
       <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
         <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
           <p className="text-sm font-semibold text-slate-700">Tenant Users</p>
@@ -619,7 +647,7 @@ function UsersPage({ onToast, user: currentUser }) {
                   <td className="px-5 py-3.5">
                     {isAdmin && String(u.id) !== String(currentUser?.id) && (
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => { setEditUser(u); setShowModal(true); }}
+                        <button onClick={() => { setEditUser({...u}); setShowEdit(true); }}
                           className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-500">
                           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </button>
@@ -633,20 +661,80 @@ function UsersPage({ onToast, user: currentUser }) {
                 </tr>
               ))}
               {!users.length && (
-                <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">No users found</td></tr>
+                <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">No users yet — invite your first team member above</td></tr>
               )}
             </tbody>
           </table>
         )}
       </div>
 
+      {/* Invite User Modal */}
+      {showInvite && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Invite Team Member</h3>
+                <p className="text-xs text-slate-400 mt-0.5">They'll join your tenant with the selected role</p>
+              </div>
+              <button onClick={() => setShowInvite(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">First Name</label>
+                  <input className={INP} placeholder="Ali" value={inviteForm.first_name}
+                    onChange={e => setInviteForm(f => ({ ...f, first_name: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Last Name</label>
+                  <input className={INP} placeholder="Hassan" value={inviteForm.last_name}
+                    onChange={e => setInviteForm(f => ({ ...f, last_name: e.target.value }))} />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Email *</label>
+                <input type="email" className={INP} placeholder="ali@company.com" value={inviteForm.email}
+                  onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Password *</label>
+                <input type="password" className={INP} placeholder="Min 8 characters" value={inviteForm.password}
+                  onChange={e => setInviteForm(f => ({ ...f, password: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Role</label>
+                <select className={INP + " cursor-pointer"} value={inviteForm.role}
+                  onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}>
+                  <option value="TENANT_USER">TENANT_USER — Read only (recommended)</option>
+                  <option value="TENANT_ADMIN">TENANT_ADMIN — Full access</option>
+                </select>
+              </div>
+              <div className="bg-amber-50 rounded-lg p-2.5 text-xs text-amber-700">
+                Note: CUSTOMER_USER accounts are created from the <strong>Customers</strong> page, not here.
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleInvite} disabled={saving || !inviteForm.email || !inviteForm.password}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create User"}
+              </button>
+              <button onClick={() => setShowInvite(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Edit Role Modal */}
-      {showModal && editUser && (
+      {showEdit && editUser && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
               <h3 className="text-sm font-semibold text-slate-800">Edit Role</h3>
-              <button onClick={() => { setShowModal(false); setEditUser(null); }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+              <button onClick={() => { setShowEdit(false); setEditUser(null); }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
@@ -673,14 +761,12 @@ function UsersPage({ onToast, user: currentUser }) {
               </div>
             </div>
             <div className="px-5 pb-5 flex gap-2">
-              <button onClick={() => handleSave(editUser)} disabled={saving}
+              <button onClick={() => handleSaveRole(editUser)} disabled={saving}
                 className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
                 {saving ? "Saving…" : "Save Changes"}
               </button>
-              <button onClick={() => { setShowModal(false); setEditUser(null); }}
-                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">
-                Cancel
-              </button>
+              <button onClick={() => { setShowEdit(false); setEditUser(null); }}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">Cancel</button>
             </div>
           </div>
         </div>
@@ -688,6 +774,7 @@ function UsersPage({ onToast, user: currentUser }) {
     </div>
   );
 }
+
 
 // ── RBAC: Customers Page ──────────────────────────────────────────────────────
 function CustomersPage({ onToast, user: currentUser }) {
@@ -1046,12 +1133,13 @@ function LoginPage({ onLogin }) {
         {/* Form card — shifted left so illustration is visible on the right */}
         <div className="relative w-full max-w-md rounded-2xl border bg-white/90 backdrop-blur p-7 shadow-xl shadow-blue-200/40 mr-auto ml-8 lg:ml-16" style={{borderColor:"#D8E3F3"}}>
           <h1 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
-          <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis IoT":"Register a new account"}</p>
+          <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis IoT":"Create a new organization account"}</p>
           <div className="flex gap-1 p-1 rounded-lg mb-6" style={{background:"#EAF2FF"}}>
-            {[["signin","Sign In"],["register","Register"]].map(([id,lbl])=>(
+            {[["signin","Sign In"],["register","New Organization"]].map(([id,lbl])=>(
               <button key={id} onClick={()=>setTab(id)} className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all ${tab===id?"bg-white text-[#0B1426] shadow-sm":"text-[#334866] hover:text-[#0B1426]"}`}>{lbl}</button>
             ))}
           </div>
+          {tab==="register"&&<div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 mb-1"><svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p className="text-xs text-blue-700">This creates a <strong>new organization</strong> with you as admin. To add staff to an existing org, ask your admin to invite you from <strong>Users &amp; Roles</strong>.</p></div>}
           <div className="space-y-3">
             {tab==="register"&&<div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-[#334866] mb-1.5">First Name</label><input className={INP} value={fname} onChange={e=>setFname(e.target.value)}/></div><div><label className="block text-xs font-medium text-[#334866] mb-1.5">Last Name</label><input className={INP} value={lname} onChange={e=>setLname(e.target.value)}/></div></div>}
             <div><label className="block text-xs font-medium text-[#334866] mb-1.5">Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP}/></div>

@@ -130,7 +130,8 @@ export const userDashboardsHttp = {
 // ── User management (TENANT_ADMIN only) ──────────────────────────────────────
 export const userApi = {
   list:       ()             => apiFetch("/auth/users"),
-  updateRole: (id, body)     => apiFetch(`/auth/users/${id}/role`, { method: "PUT", body: JSON.stringify(body) }),
+  invite:     body           => apiFetch("/auth/users/invite",      { method: "POST",   body: JSON.stringify(body) }),
+  updateRole: (id, body)     => apiFetch(`/auth/users/${id}/role`, { method: "PUT",    body: JSON.stringify(body) }),
   delete:     id             => apiFetch(`/auth/users/${id}`,      { method: "DELETE" }),
 };
 

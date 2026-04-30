@@ -127,6 +127,7 @@ class DeviceUpdate(BaseModel):
     description: Optional[str] = None
     status: Optional[DeviceStatus] = None
     additional_info: Optional[Dict[str, Any]] = None
+    customer_id: Optional[UUID] = None
 
 
 # token included — all read routes require JWT + tenant ownership check

@@ -208,3 +208,35 @@ def delete_user(user_id, db: Session = Depends(get_db), current_user=Depends(req
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     db.delete(user)
     db.commit()
+
+@router.post("/users/invite", response_model=UserOut, status_code=201, tags=["Users"])
+def invite_user(
+    body: UserCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """
+    TENANT_ADMIN creates a new user directly inside their tenant.
+    The new user gets TENANT_USER role by default (never TENANT_ADMIN unless specified).
+    No new tenant is created — the user joins the admin's tenant.
+    """
+    existing = db.query(User).filter(User.email == body.email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Force role to TENANT_USER unless admin explicitly sets it
+    role = body.role if body.role in ("TENANT_ADMIN", "TENANT_USER") else "TENANT_USER"
+
+    user = User(
+        email=body.email,
+        hashed_password=get_password_hash(body.password),
+        first_name=body.first_name,
+        last_name=body.last_name,
+        role=role,
+        tenant_id=current_user.tenant_id,  # same tenant as admin
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
