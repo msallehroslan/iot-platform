@@ -157,3 +157,53 @@ def seed_demo(db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     return {"message": "Demo user created", "email": "demo@triaxisai.com", "password": "demo1234"}
+
+
+# ── User management (TENANT_ADMIN only) ──────────────────────────────────────
+
+from app.core.auth_deps import require_admin, get_current_user
+from app.models.models import Device as DeviceModel
+from typing import List
+from pydantic import BaseModel as _BaseModel
+
+class UserUpdateRole(_BaseModel):
+    role: str
+    is_active: bool = True
+
+@router.get("/users", response_model=List[UserOut], tags=["Users"])
+def list_users(db: Session = Depends(get_db), current_user=Depends(require_admin)):
+    """List all users in the tenant."""
+    return db.query(User).filter(User.tenant_id == current_user.tenant_id).all()
+
+@router.put("/users/{user_id}/role", response_model=UserOut, tags=["Users"])
+def update_user_role(
+    user_id: UUID,
+    body: UserUpdateRole,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """Change a user's role. TENANT_ADMIN only."""
+    from uuid import UUID as _UUID
+    if body.role not in ("TENANT_ADMIN", "TENANT_USER", "CUSTOMER_USER"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    user = db.query(User).filter(User.id == user_id, User.tenant_id == current_user.tenant_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if str(user.id) == str(current_user.id):
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    user.role = body.role
+    user.is_active = body.is_active
+    db.commit()
+    db.refresh(user)
+    return user
+
+@router.delete("/users/{user_id}", status_code=204, tags=["Users"])
+def delete_user(user_id, db: Session = Depends(get_db), current_user=Depends(require_admin)):
+    """Remove a user from the tenant. TENANT_ADMIN only."""
+    user = db.query(User).filter(User.id == user_id, User.tenant_id == current_user.tenant_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if str(user.id) == str(current_user.id):
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    db.delete(user)
+    db.commit()

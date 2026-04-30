@@ -218,3 +218,15 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "011_add_customer_id_to_users",
+        "desc": "Add customer_id to users table for CUSTOMER_USER role scoping",
+        "sql":  """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
+        """,
+    },
+]

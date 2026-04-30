@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 
 from app.core.database import get_db
-from app.core.auth_deps import get_current_user
+from app.core.auth_deps import get_current_user, assert_device_access
 from app.models.models import Device, TelemetryData, LatestTelemetry, TelemetryKey, User
 from app.schemas.schemas import (
     TelemetryIngest, LatestTelemetryOut, TelemetryDataPoint,
@@ -45,11 +45,7 @@ def _check_rate_limit(token: str):
 
 def _get_device_owned(device_id: UUID, current_user: User, db: Session) -> Device:
     device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    if device.tenant_id != current_user.tenant_id:
-        raise HTTPException(status_code=403, detail="You do not have access to this device")
-    return device
+    return assert_device_access(device, current_user)
 
 
 @router.post("/ingest/{token}", status_code=200)

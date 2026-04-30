@@ -86,6 +86,8 @@ class UserOut(BaseModel):
     last_name: Optional[str] = None
     role: str
     is_active: bool
+    tenant_id: Optional[UUID] = None
+    customer_id: Optional[UUID] = None
     created_at: datetime
     class Config:
         from_attributes = True
