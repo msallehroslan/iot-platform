@@ -13,15 +13,15 @@ GET  /telemetry/keys/{device_id}
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from app.core.database import get_db
 from app.core.auth_deps import get_current_user
-from app.models.models import Device, TelemetryData, LatestTelemetry, User
-from app.schemas.schemas import TelemetryIngest, LatestTelemetryOut, TelemetryDataPoint
+from app.models.models import Device, TelemetryData, LatestTelemetry, TelemetryKey, User
+from app.schemas.schemas import TelemetryIngest, LatestTelemetryOut, TelemetryDataPoint, TelemetryKeyOut, TelemetryKeyUpdate
 from app.services.telemetry_service import ingest_telemetry, DeviceNotFoundError
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
@@ -138,3 +138,190 @@ def get_telemetry_keys(
         LatestTelemetry.device_id == device_id
     ).distinct().all()
     return {"keys": [k[0] for k in keys]}
+
+
+# ── Telemetry Key Metadata ────────────────────────────────────────────────────
+
+@router.get("/metadata/{device_id}", response_model=List[TelemetryKeyOut])
+def get_telemetry_metadata(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Return metadata (label, unit, data_type) for every telemetry key
+    seen on this device. Auto-populated on first ingest; editable via PUT.
+    """
+    _get_device_owned(device_id, current_user, db)
+
+    rows = (
+        db.query(TelemetryKey)
+        .filter(TelemetryKey.device_id == device_id)
+        .order_by(TelemetryKey.key)
+        .all()
+    )
+    return [
+        TelemetryKeyOut(
+            key=r.key,
+            label=r.label,
+            unit=r.unit,
+            data_type=r.data_type or "number",
+        )
+        for r in rows
+    ]
+
+
+@router.put("/metadata/{device_id}/{key}", response_model=TelemetryKeyOut)
+def update_telemetry_metadata(
+    device_id: UUID,
+    key: str,
+    body: TelemetryKeyUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Update the label, unit, or data_type for a specific telemetry key.
+    Creates the metadata row if it doesn't exist yet.
+    """
+    _get_device_owned(device_id, current_user, db)
+
+    row = db.query(TelemetryKey).filter(
+        TelemetryKey.device_id == device_id,
+        TelemetryKey.key == key,
+    ).first()
+
+    if not row:
+        # Create it if missing (e.g. key not yet ingested)
+        row = TelemetryKey(device_id=device_id, key=key, data_type="number")
+        db.add(row)
+
+    if body.label     is not None: row.label     = body.label
+    if body.unit      is not None: row.unit       = body.unit
+    if body.data_type is not None:
+        if body.data_type not in ("number", "string", "boolean"):
+            raise HTTPException(status_code=400, detail="data_type must be number, string, or boolean")
+        row.data_type = body.data_type
+
+    db.commit()
+    db.refresh(row)
+    return TelemetryKeyOut(key=row.key, label=row.label, unit=row.unit, data_type=row.data_type)
+
+
+# ── Telemetry Aggregation ────────────────────────────────────────────────────
+
+# Map window string → timedelta
+_WINDOWS = {
+    "1m":  timedelta(minutes=1),
+    "5m":  timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
+    "30m": timedelta(minutes=30),
+    "1h":  timedelta(hours=1),
+    "6h":  timedelta(hours=6),
+    "12h": timedelta(hours=12),
+    "24h": timedelta(hours=24),
+    "7d":  timedelta(days=7),
+}
+
+# Map function string → SQLAlchemy aggregate function
+_AGG_FUNCS = {
+    "avg":   func.avg,
+    "min":   func.min,
+    "max":   func.max,
+    "sum":   func.sum,
+    "count": func.count,
+}
+
+
+@router.get("/aggregate/{device_id}")
+def aggregate_telemetry(
+    device_id: UUID,
+    key:      str   = Query(..., description="Telemetry key to aggregate"),
+    window:   str   = Query("1h",  description="Time window: 1m 5m 15m 30m 1h 6h 12h 24h 7d"),
+    function: str   = Query("avg", description="Aggregation: avg min max sum count"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Compute a time-windowed aggregation over numeric telemetry.
+
+    Examples:
+      GET /aggregate/{id}?key=glucose&window=1h&function=avg
+      GET /aggregate/{id}?key=glucose&window=24h&function=min
+      GET /aggregate/{id}?key=glucose&window=5m&function=max
+
+    Only keys with numeric values (stored in value_num) are supported.
+    Non-numeric keys will return result: null.
+
+    Returns:
+      {
+        "device_id": "...",
+        "key":       "glucose",
+        "window":    "1h",
+        "function":  "avg",
+        "result":    142.3,
+        "count":     12,
+        "from_ts":   "2026-04-29T19:00:00Z",
+        "to_ts":     "2026-04-29T20:00:00Z"
+      }
+    """
+    # Validate device ownership
+    _get_device_owned(device_id, current_user, db)
+
+    # Validate window
+    if window not in _WINDOWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid window '{window}'. Valid: {', '.join(_WINDOWS.keys())}",
+        )
+
+    # Validate function
+    fn_name = function.lower()
+    if fn_name not in _AGG_FUNCS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid function '{function}'. Valid: {', '.join(_AGG_FUNCS.keys())}",
+        )
+
+    # Compute time range
+    to_ts   = datetime.now(timezone.utc)
+    from_ts = to_ts - _WINDOWS[window]
+
+    # Build base filter
+    base_filter = and_(
+        TelemetryData.device_id == device_id,
+        TelemetryData.key       == key,
+        TelemetryData.ts        >= from_ts,
+        TelemetryData.ts        <= to_ts,
+        TelemetryData.value_num.isnot(None),  # numeric only
+    )
+
+    # Always fetch count regardless of function
+    count_result = (
+        db.query(func.count(TelemetryData.id))
+        .filter(base_filter)
+        .scalar()
+    ) or 0
+
+    # Compute the requested aggregation
+    agg_fn  = _AGG_FUNCS[fn_name]
+    target  = TelemetryData.id if fn_name == "count" else TelemetryData.value_num
+    result  = (
+        db.query(agg_fn(target))
+        .filter(base_filter)
+        .scalar()
+    )
+
+    # Round floats to 4 decimal places for clean output
+    if result is not None and isinstance(result, float):
+        result = round(result, 4)
+
+    return {
+        "device_id": str(device_id),
+        "key":       key,
+        "window":    window,
+        "function":  fn_name,
+        "result":    result,
+        "count":     count_result,
+        "from_ts":   from_ts.isoformat(),
+        "to_ts":     to_ts.isoformat(),
+    }

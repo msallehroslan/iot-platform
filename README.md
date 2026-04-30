@@ -1,8 +1,8 @@
 # IoT Platform
 
 A production-ready, multi-tenant IoT management platform built with FastAPI and React.
-Connect physical devices, visualise live sensor data, and manage alarms — all from a
-single dashboard. Deployable on Render in under 15 minutes.
+Connect physical devices, visualise live sensor data, manage alarms, and analyse trends —
+all from a single dashboard. Deployable on Render in under 15 minutes.
 
 ---
 
@@ -25,18 +25,30 @@ Demo credentials: `demo@iotplatform.com` / `demo1234`
 - Auto-generated device tokens for secure telemetry ingestion
 - Token regeneration on demand
 - Device status tracking (ACTIVE / INACTIVE)
+- **Device Provisioning** — ESP32 / firmware can self-register on first boot using a provisioning key, no user JWT required
 
 ### Telemetry Ingestion
-- **HTTP POST** — send data directly from any device or script
+- **HTTP POST** — send data from any device or script
 - **MQTT publish** — connect any MQTT-capable device
-- Both paths share identical processing logic — alarm checks, DB writes, WS broadcast
-- Supports any key name (`temperature`, `glucose`, `voltage`, or anything custom)
+- Both paths share identical processing: alarm checks, DB writes, WebSocket broadcast
+- Supports any key name (`glucose`, `temperature`, `voltage`, or anything custom)
 - Numeric, boolean, string, and JSON value types all supported
+
+### Telemetry Metadata
+- Auto-created when a new key is ingested for the first time
+- Stores `label`, `unit`, and `data_type` per key per device
+- Updatable via API (e.g. set label = "Blood Glucose", unit = "mg/dL")
+
+### Telemetry Aggregation
+- Time-windowed aggregation over any numeric key
+- Windows: 1m, 5m, 15m, 30m, 1h, 6h, 12h, 24h, 7d
+- Functions: avg, min, max, sum, count
+- Computed entirely in PostgreSQL — no data loaded into memory
 
 ### Real-time Dashboards
 - **WebSocket push** — widgets update the moment data arrives
-- REST fallback polling (5 s) when WebSocket is unavailable
-- Automatic reconnect with exponential backoff
+- REST fallback polling (5s) when WebSocket is unavailable
+- Auto-reconnect with exponential backoff
 - **Drag and drop** widget repositioning
 - **Resize** widgets by dragging the corner handle
 - Layout positions persist to PostgreSQL — survive page reload
@@ -44,19 +56,19 @@ Demo credentials: `demo@iotplatform.com` / `demo1234`
 ### Two Dashboard Systems
 | | Device Dashboard | My Dashboards |
 |---|---|---|
-| Scope | One device per dashboard | Mix devices on one dashboard |
-| Access | Via Device Dashboards menu | Via My Dashboards menu |
-| Tabs | Multiple dashboards per device | Sidebar with multiple dashboards |
+| Scope | One device per dashboard | Mix any devices on one dashboard |
+| Access | Via Device Dashboards menu | Via My Dashboards sidebar |
+| Tabs | Multiple dashboards per device | Multiple dashboards per user |
 | Use case | Deep-dive on one device | Cross-device overview |
 
 ### 11 Widget Types
 | Widget | Description |
 |---|---|
-| Value Card | Large number display with optional alert threshold colouring |
+| Value Card | Large number with optional alert threshold colouring and sparkline |
 | Line Chart | Time-series history graph |
+| Bar Chart | Time-series bars over time (same data as line chart, different visual) |
 | Gauge | Circular dial with configurable min / max |
 | Status Light | Green = online, Grey = offline indicator |
-| Bar Chart | Compare multiple telemetry keys side by side |
 | Pie / Donut | Proportion distribution across multiple keys |
 | Alarm List | Active alarms for the bound device |
 | History Table | Raw telemetry rows in reverse chronological order |
@@ -79,7 +91,7 @@ Alarms can be acknowledged, cleared, and deleted from the UI.
 
 ### Multi-tenant Security
 - Every registered account creates an isolated tenant
-- All data (devices, telemetry, dashboards, alarms) is scoped to the tenant
+- All data scoped by tenant — devices, telemetry, dashboards, alarms
 - JWT-protected endpoints on every read and write route
 - WebSocket connections validated with JWT query parameter
 - Cross-tenant access returns 403 Forbidden
@@ -114,62 +126,58 @@ iot-platform/
 ├── backend/
 │   ├── app/
 │   │   ├── core/
-│   │   │   ├── auth_deps.py          # get_current_user / get_current_user_id deps
+│   │   │   ├── auth_deps.py          # get_current_user / get_current_user_id
 │   │   │   ├── config.py             # Settings from env vars (pydantic-settings)
 │   │   │   ├── database.py           # SQLAlchemy engine + session
 │   │   │   ├── security.py           # JWT encode/decode, bcrypt hash/verify
-│   │   │   └── websocket_manager.py  # In-memory WS connection registry
+│   │   │   └── websocket_manager.py  # In-memory WS connection registry (single worker)
 │   │   ├── models/
-│   │   │   └── models.py             # 11 ORM models
+│   │   │   └── models.py             # 12 ORM models
 │   │   ├── routers/
 │   │   │   ├── auth.py               # /register /login /seed-demo /reset-password
 │   │   │   ├── alarms.py             # CRUD + ack/clear — JWT + tenant-scoped
 │   │   │   ├── customers.py          # CRUD — JWT + tenant-scoped
 │   │   │   ├── dashboard.py          # GET /stats — JWT + tenant-scoped
 │   │   │   ├── dashboards.py         # Device dashboards + widgets — JWT + tenant
-│   │   │   ├── devices.py            # Device CRUD — JWT + tenant-scoped
-│   │   │   ├── telemetry.py          # Ingest (open) + read (JWT + tenant)
+│   │   │   ├── devices.py            # CRUD + provisioning — JWT + tenant
+│   │   │   ├── telemetry.py          # Ingest (open) + read + metadata + aggregate
 │   │   │   ├── user_dashboards.py    # User multi-dashboards — JWT + user
-│   │   │   └── ws.py                 # WebSocket endpoint — JWT token param
+│   │   │   └── ws.py                 # WebSocket endpoint
 │   │   ├── services/
-│   │   │   ├── dashboard_service.py      # Device dashboard business logic
-│   │   │   ├── mqtt_client.py            # paho-mqtt → asyncio bridge
-│   │   │   ├── telemetry_service.py      # Shared ingest pipeline (HTTP + MQTT)
-│   │   │   └── user_dashboard_service.py # User dashboard business logic
+│   │   │   ├── dashboard_service.py
+│   │   │   ├── mqtt_client.py        # paho-mqtt → asyncio bridge
+│   │   │   ├── telemetry_service.py  # Shared ingest pipeline (HTTP + MQTT)
+│   │   │   └── user_dashboard_service.py
 │   │   ├── schemas/
 │   │   │   └── schemas.py            # All Pydantic request/response models
 │   │   └── main.py                   # FastAPI app, CORS, router registration
 │   ├── migrations/
-│   │   └── apply.py                  # Idempotent SQL migrations for existing DBs
-│   ├── Dockerfile                    # Python 3.11-slim, non-root user, --workers 1
-│   ├── render.yaml                   # Render deployment config
+│   │   └── apply.py                  # Idempotent migrations 001–007
+│   ├── Dockerfile                    # Python 3.11-slim, non-root, --workers 1
+│   ├── render.yaml
 │   ├── requirements.txt
 │   └── .env.example
 │
 └── frontend/
     ├── src/
     │   ├── components/
-    │   │   ├── dashboard/
-    │   │   │   └── GridLayout.jsx        # react-grid-layout wrapper
-    │   │   ├── sidebar/
-    │   │   │   └── DashboardSidebar.jsx  # User dashboard sidebar
-    │   │   └── widgets/
-    │   │       └── index.jsx             # All 11 widget types + WidgetRenderer
+    │   │   ├── dashboard/GridLayout.jsx
+    │   │   ├── sidebar/DashboardSidebar.jsx
+    │   │   └── widgets/index.jsx      # All 11 widget types + WidgetRenderer
     │   ├── hooks/
-    │   │   └── useTelemetry.js           # useDeviceTelemetry hook
+    │   │   └── useTelemetry.js
     │   ├── pages/
-    │   │   ├── DashboardPage.jsx         # Device-scoped dashboard
-    │   │   └── UserDashboardPage.jsx     # User multi-dashboard
+    │   │   ├── DashboardPage.jsx      # Device-scoped dashboard
+    │   │   └── UserDashboardPage.jsx  # User multi-dashboard
     │   ├── services/
-    │   │   ├── api.js                    # All HTTP API calls + apiFetch
-    │   │   ├── dashboardService.js       # Device dashboard helpers
-    │   │   ├── userDashboardService.js   # User dashboard helpers
-    │   │   ├── websocket.js              # TelemetrySocket singleton
-    │   │   └── widgetService.js          # Layout converters + persistLayout
-    │   └── App.jsx                       # App shell, routing, all pages
+    │   │   ├── api.js                 # All HTTP API calls
+    │   │   ├── dashboardService.js
+    │   │   ├── userDashboardService.js
+    │   │   ├── websocket.js           # TelemetrySocket singleton
+    │   │   └── widgetService.js       # Layout converters + persistLayout
+    │   └── App.jsx
     ├── package.json
-    ├── vite.config.js
-    └── .env.example
+    └── vite.config.js
 ```
 
 ---
@@ -178,7 +186,7 @@ iot-platform/
 
 ```
 tenants
-  id, name, created_at
+  id, name, provisioning_key (unique), created_at
 
 users
   id, tenant_id, email, hashed_password, first_name, last_name, role, is_active
@@ -190,27 +198,31 @@ devices
   id, tenant_id, customer_id, name, device_type, label, description,
   token (unique), status, created_at
 
-telemetry_data           ← time-series, never updated
+telemetry_data              ← append-only time-series
   id, device_id, key, value_num, value_str, value_bool, value_json, ts
 
-latest_telemetry         ← one row per (device, key), upserted atomically
+latest_telemetry            ← one row per (device, key), atomic upsert
   id, device_id, key, value_num, value_str, value_bool, value_json, ts
+  UNIQUE (device_id, key)
+
+telemetry_keys              ← metadata per (device, key)
+  id, device_id, key, label, unit, data_type, created_at, updated_at
   UNIQUE (device_id, key)
 
 alarms
   id, device_id, alarm_type, severity, status,
   start_ts, end_ts, ack_ts, clear_ts, ack_by, cleared_by
 
-dashboards               ← device-scoped dashboards
+dashboards                  ← device-scoped
   id, device_id, name, description, is_default
 
-widgets                  ← belongs to a device dashboard
+widgets
   id, dashboard_id, widget_type, title, config (JSON), position (JSON)
 
-user_dashboards          ← user-scoped multi-dashboards
+user_dashboards             ← user-scoped multi-dashboards
   id, user_id, name, description, is_default
 
-user_widgets             ← belongs to a user dashboard
+user_widgets
   id, dashboard_id, widget_type, title, config (JSON), position (JSON)
 ```
 
@@ -231,13 +243,12 @@ git push -u origin main
 ### Step 2 — Create PostgreSQL database
 
 1. Render dashboard → **New + → PostgreSQL**
-2. Name: `iot-platform-db` · Plan: Free · Region: Singapore (or closest)
-3. Click **Create Database**, wait ~2 min
-4. Copy the **Internal Database URL**
+2. Name: `iot-platform-db` · Plan: Free · Region: Singapore
+3. Wait ~2 min → copy **Internal Database URL**
 
 ### Step 3 — Deploy backend (Web Service)
 
-1. **New + → Web Service** → connect GitHub repo
+1. **New + → Web Service** → connect repo
 2. Settings:
 
 | Field | Value |
@@ -260,19 +271,20 @@ git push -u origin main
 | `MQTT_TOPIC_PREFIX` | `iot` |
 | `MQTT_KEEPALIVE` | `60` |
 
-4. Click **Create Web Service**, wait for build
-5. Test: open `https://YOUR-BACKEND.onrender.com/health` → should return `{"status":"healthy"}`
-
-### Step 4 — Seed demo user
-
+4. Create → wait for build → test:
 ```bash
-curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/auth/seed-demo
-# Returns: {"email":"demo@iotplatform.com","password":"demo1234"}
+curl https://YOUR-BACKEND.onrender.com/health
+# {"status":"healthy"}
 ```
 
-### Step 5 — Deploy frontend (Static Site)
+5. Seed demo user:
+```bash
+curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/auth/seed-demo
+```
 
-1. **New + → Static Site** → same GitHub repo
+### Step 4 — Deploy frontend (Static Site)
+
+1. **New + → Static Site** → same repo
 2. Settings:
 
 | Field | Value |
@@ -280,35 +292,47 @@ curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/auth/seed-demo
 | Root Directory | `frontend` |
 | Build Command | `npm install && npm run build` |
 | Publish Directory | `dist` |
+| `VITE_API_URL` (env var) | `https://YOUR-BACKEND.onrender.com` |
 
-3. Environment variable:
+### Step 5 — Update CORS
 
-| Key | Value |
-|---|---|
-| `VITE_API_URL` | `https://YOUR-BACKEND.onrender.com` |
+Backend → Environment → set `CORS_ORIGINS` to your exact frontend URL → Save.
 
-4. Click **Create Static Site**, wait for build
-5. Copy your frontend URL
+### Step 6 — Run database migrations
 
-### Step 6 — Update CORS
+In DBeaver or Render PSQL, run each block separately:
 
-1. Backend Web Service → **Environment**
-2. Update `CORS_ORIGINS` to your exact frontend URL
-3. Save — backend redeploys automatically
+```sql
+-- 004: provisioning key column
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS provisioning_key VARCHAR(64) UNIQUE;
 
-### Step 7 — Run database migration (existing DB only)
+-- 005: backfill provisioning keys
+UPDATE tenants SET provisioning_key = REPLACE(gen_random_uuid()::text, '-', '')
+WHERE provisioning_key IS NULL;
 
-If upgrading an existing database, run the migration script once to apply any schema changes that `create_all()` cannot handle:
+-- 006: telemetry metadata table
+CREATE TABLE IF NOT EXISTS telemetry_keys (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id  UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    key        VARCHAR(255) NOT NULL,
+    label      VARCHAR(255),
+    unit       VARCHAR(50),
+    data_type  VARCHAR(20) NOT NULL DEFAULT 'number',
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ,
+    CONSTRAINT uq_telemetry_keys_device_key UNIQUE (device_id, key)
+);
+CREATE INDEX IF NOT EXISTS ix_telemetry_keys_device_id ON telemetry_keys (device_id);
 
-```bash
-cd backend
-pip install psycopg2-binary
-
-DATABASE_URL="postgresql://iotuser:PASSWORD@HOST/DB" \
-  python migrations/apply.py
+-- 007: backfill metadata from existing telemetry
+INSERT INTO telemetry_keys (id, device_id, key, data_type)
+SELECT gen_random_uuid(), device_id, key,
+    CASE WHEN value_num IS NOT NULL THEN 'number'
+         WHEN value_bool IS NOT NULL THEN 'boolean'
+         ELSE 'string' END
+FROM latest_telemetry
+ON CONFLICT (device_id, key) DO NOTHING;
 ```
-
-New deployments do not need this — `create_all()` handles everything at startup.
 
 ---
 
@@ -319,23 +343,21 @@ New deployments do not need this — `create_all()` handles everything at startu
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install -r requirements.txt
 
-# Start PostgreSQL
 docker run -d -p 5432:5432 \
   -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=iotdb \
   postgres:15
 
-# Configure
 cp .env.example .env
 # Edit DATABASE_URL=postgresql://postgres:postgres@localhost:5432/iotdb
 
 uvicorn app.main:app --reload --port 8000
 ```
 
-Swagger UI: http://localhost:8000/docs
+API docs: http://localhost:8000/docs
 
 ### Frontend
 
@@ -343,7 +365,7 @@ Swagger UI: http://localhost:8000/docs
 cd frontend
 npm install
 cp .env.example .env
-# .env already has VITE_API_URL=http://localhost:8000
+# VITE_API_URL=http://localhost:8000
 npm run dev
 ```
 
@@ -351,108 +373,96 @@ Frontend: http://localhost:5173
 
 ---
 
-## Sending Telemetry
+## Device Provisioning
 
-### HTTP (curl)
+Devices can self-register without a user JWT using the provisioning key from **Settings → Device Provisioning**.
 
-```bash
-curl -X POST http://localhost:8000/api/v1/telemetry/ingest/YOUR_DEVICE_TOKEN \
-  -H "Content-Type: application/json" \
-  -d '{"values": {"temperature": 28.5, "humidity": 65, "voltage": 220}}'
-```
-
-### Continuous simulation (bash)
-
-```bash
-while true; do
-  TEMP=$(python3 -c "import random; print(round(random.uniform(20,90),1))")
-  curl -s -X POST https://YOUR-BACKEND.onrender.com/api/v1/telemetry/ingest/YOUR_TOKEN \
-    -H "Content-Type: application/json" \
-    -d "{\"values\": {\"temperature\": $TEMP}}"
-  echo "Sent $TEMP"
-  sleep 5
-done
-```
-
-### MQTT (mosquitto)
-
-```bash
-# macOS
-brew install mosquitto
-
-# Ubuntu
-sudo apt install mosquitto-clients
-
-mosquitto_pub \
-  -h broker.hivemq.com \
-  -t "iot/YOUR_DEVICE_TOKEN/telemetry" \
-  -m '{"temperature": 42.0, "humidity": 80}'
-```
-
-### ESP32 (Arduino)
+### ESP32 Arduino Example
 
 ```cpp
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <Preferences.h>
 
-#define WIFI_SSID     "your-wifi"
-#define WIFI_PASSWORD "your-password"
-#define IOT_HOST      "https://YOUR-BACKEND.onrender.com"
-#define DEVICE_TOKEN  "your-device-token"
+#define WIFI_SSID      "your-wifi"
+#define WIFI_PASSWORD  "your-password"
+#define IOT_HOST       "https://YOUR-BACKEND.onrender.com"
+#define PROVISION_KEY  "your-provisioning-key"   // from Settings page
+
+Preferences prefs;
+String deviceToken = "";
+
+String extractToken(String response) {
+  int start = response.indexOf("\"token\":\"") + 9;
+  int end   = response.indexOf("\"", start);
+  return response.substring(start, end);
+}
+
+void provisionDevice() {
+  HTTPClient http;
+  http.begin(String(IOT_HOST) + "/api/v1/devices/provision");
+  http.addHeader("Content-Type", "application/json");
+
+  uint64_t chipid    = ESP.getEfuseMac();
+  String   devName   = "ESP32-" + String((uint32_t)(chipid >> 32), HEX);
+  String   payload   = "{\"provision_key\":\"" + String(PROVISION_KEY) +
+                       "\",\"device_name\":\""  + devName +
+                       "\",\"device_type\":\"SENSOR\"}";
+
+  int code = http.POST(payload);
+  if (code == 200 || code == 201) {          // 201=new device, 200=existing
+    deviceToken = extractToken(http.getString());
+    prefs.begin("iot", false);
+    prefs.putString("token", deviceToken);
+    prefs.end();
+  }
+  http.end();
+}
 
 void setup() {
   Serial.begin(115200);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   while (!WiFi.isConnected()) delay(500);
-  Serial.println("WiFi connected");
-}
 
-void sendTelemetry(float value) {
-  HTTPClient http;
-  String url = String(IOT_HOST) + "/api/v1/telemetry/ingest/" + DEVICE_TOKEN;
-  String payload = "{\"values\":{\"temperature\":" + String(value, 1) + "}}";
+  prefs.begin("iot", true);
+  deviceToken = prefs.getString("token", "");
+  prefs.end();
 
-  http.begin(url);
-  http.addHeader("Content-Type", "application/json");
-  int code = http.POST(payload);
-  Serial.printf("Sent %.1f → HTTP %d\n", value, code);
-  http.end();
+  if (deviceToken == "") provisionDevice();
 }
 
 void loop() {
-  sendTelemetry(20.0 + random(700) / 10.0);
+  if (deviceToken == "") return;
+
+  String payload = "{\"values\":{\"temperature\":25.5}}";
+  HTTPClient http;
+  http.begin(String(IOT_HOST) + "/api/v1/telemetry/ingest/" + deviceToken);
+  http.addHeader("Content-Type", "application/json");
+  http.POST(payload);
+  http.end();
   delay(5000);
 }
 ```
 
-### ESP32 via MQTT
+---
 
-```cpp
-#include <WiFi.h>
-#include <PubSubClient.h>
+## Sending Telemetry
 
-const char* BROKER = "broker.hivemq.com";
-const char* TOKEN  = "your-device-token";
+### HTTP curl
 
-WiFiClient   wifiClient;
-PubSubClient mqtt(wifiClient);
+```bash
+curl -X POST https://YOUR-BACKEND.onrender.com/api/v1/telemetry/ingest/DEVICE_TOKEN \
+  -H "Content-Type: application/json" \
+  -d '{"values": {"glucose": 87, "temperature": 36.5}}'
+```
 
-void setup() {
-  WiFi.begin("SSID", "PASSWORD");
-  while (!WiFi.isConnected()) delay(500);
-  mqtt.setServer(BROKER, 1883);
-}
+### MQTT
 
-void loop() {
-  if (!mqtt.connected()) mqtt.connect("esp32-device");
-  mqtt.loop();
-
-  char topic[128], payload[64];
-  snprintf(topic,   sizeof(topic),   "iot/%s/telemetry", TOKEN);
-  snprintf(payload, sizeof(payload), "{\"temperature\": %.1f}", 20.0 + random(70));
-  mqtt.publish(topic, payload);
-  delay(5000);
-}
+```bash
+mosquitto_pub \
+  -h broker.hivemq.com \
+  -t "iot/DEVICE_TOKEN/telemetry" \
+  -m '{"glucose": 87}'
 ```
 
 ---
@@ -463,7 +473,7 @@ void loop() {
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/api/v1/auth/register` | — | Register new account + tenant |
+| POST | `/api/v1/auth/register` | — | Register + create tenant |
 | POST | `/api/v1/auth/login` | — | Login, returns JWT |
 | POST | `/api/v1/auth/seed-demo` | — | Create demo account |
 | POST | `/api/v1/auth/reset-password` | — | Reset password by email |
@@ -474,6 +484,8 @@ void loop() {
 |---|---|---|---|
 | GET | `/api/v1/devices/` | JWT | List tenant devices |
 | POST | `/api/v1/devices/` | JWT | Create device |
+| GET | `/api/v1/devices/provisioning-key` | JWT | Get tenant provisioning key |
+| POST | `/api/v1/devices/provision` | — | Self-register device (firmware) |
 | GET | `/api/v1/devices/{id}` | JWT | Get device |
 | PUT | `/api/v1/devices/{id}` | JWT | Update device |
 | DELETE | `/api/v1/devices/{id}` | JWT | Delete device |
@@ -483,60 +495,67 @@ void loop() {
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| POST | `/api/v1/telemetry/ingest/{token}` | Device token | Ingest telemetry data |
+| POST | `/api/v1/telemetry/ingest/{token}` | Device token | Ingest data |
 | GET | `/api/v1/telemetry/latest/{device_id}` | JWT | Latest key-value pairs |
 | GET | `/api/v1/telemetry/history/{device_id}?key=&limit=` | JWT | Time-series history |
-| GET | `/api/v1/telemetry/keys/{device_id}` | JWT | Available telemetry keys |
+| GET | `/api/v1/telemetry/keys/{device_id}` | JWT | List available keys |
+| GET | `/api/v1/telemetry/metadata/{device_id}` | JWT | Key metadata (label, unit) |
+| PUT | `/api/v1/telemetry/metadata/{device_id}/{key}` | JWT | Update key metadata |
+| GET | `/api/v1/telemetry/aggregate/{device_id}?key=&window=&function=` | JWT | Time-windowed aggregation |
+
+### Aggregation Parameters
+
+| Param | Values | Default |
+|---|---|---|
+| `key` | any telemetry key | required |
+| `window` | `1m` `5m` `15m` `30m` `1h` `6h` `12h` `24h` `7d` | `1h` |
+| `function` | `avg` `min` `max` `sum` `count` | `avg` |
 
 ### Alarms
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/api/v1/alarms/` | JWT | List alarms (filterable) |
-| POST | `/api/v1/alarms/` | JWT | Create alarm manually |
-| GET | `/api/v1/alarms/{id}` | JWT | Get alarm |
-| POST | `/api/v1/alarms/{id}/ack` | JWT | Acknowledge alarm |
-| POST | `/api/v1/alarms/{id}/clear` | JWT | Clear alarm |
-| DELETE | `/api/v1/alarms/{id}` | JWT | Delete alarm |
+| GET | `/api/v1/alarms/` | JWT | List alarms |
+| POST | `/api/v1/alarms/` | JWT | Create alarm |
+| POST | `/api/v1/alarms/{id}/ack` | JWT | Acknowledge |
+| POST | `/api/v1/alarms/{id}/clear` | JWT | Clear |
+| DELETE | `/api/v1/alarms/{id}` | JWT | Delete |
 
 ### Device Dashboards
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/api/v1/dashboards/?device_id=` | JWT | List dashboards for device |
+| GET | `/api/v1/dashboards/?device_id=` | JWT | List dashboards |
 | POST | `/api/v1/dashboards/` | JWT | Create dashboard |
-| GET | `/api/v1/dashboards/{id}` | JWT | Get dashboard with widgets |
-| PUT | `/api/v1/dashboards/{id}` | JWT | Rename / update dashboard |
-| DELETE | `/api/v1/dashboards/{id}` | JWT | Delete dashboard |
+| GET | `/api/v1/dashboards/{id}` | JWT | Get with widgets |
+| PUT | `/api/v1/dashboards/{id}` | JWT | Update |
+| DELETE | `/api/v1/dashboards/{id}` | JWT | Delete |
 | POST | `/api/v1/dashboards/{id}/widgets/` | JWT | Add widget |
 | PUT | `/api/v1/dashboards/{id}/widgets/{wid}` | JWT | Update widget |
 | DELETE | `/api/v1/dashboards/{id}/widgets/{wid}` | JWT | Delete widget |
-| PUT | `/api/v1/dashboards/{id}/layout` | JWT | Save drag-drop layout |
+| PUT | `/api/v1/dashboards/{id}/layout` | JWT | Save layout |
 
 ### User Dashboards
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/api/v1/user-dashboards/` | JWT | List all user dashboards |
-| GET | `/api/v1/user-dashboards/default` | JWT | Get default dashboard |
-| POST | `/api/v1/user-dashboards/` | JWT | Create dashboard |
-| POST | `/api/v1/user-dashboards/{id}/set-default` | JWT | Set as default |
-| PUT | `/api/v1/user-dashboards/{id}/rename` | JWT | Rename dashboard |
-| DELETE | `/api/v1/user-dashboards/{id}` | JWT | Delete dashboard |
+| GET | `/api/v1/user-dashboards/` | JWT | List all |
+| GET | `/api/v1/user-dashboards/default` | JWT | Get default |
+| POST | `/api/v1/user-dashboards/` | JWT | Create |
+| DELETE | `/api/v1/user-dashboards/{id}` | JWT | Delete |
 | POST | `/api/v1/user-dashboards/{id}/widgets/` | JWT | Add widget |
 | PUT | `/api/v1/user-dashboards/{id}/widgets/{wid}` | JWT | Update widget |
 | DELETE | `/api/v1/user-dashboards/{id}/widgets/{wid}` | JWT | Delete widget |
-| PUT | `/api/v1/user-dashboards/{id}/layout` | JWT | Save drag-drop layout |
-| POST | `/api/v1/user-dashboards/deduplicate` | JWT | Remove duplicate dashboards |
+| PUT | `/api/v1/user-dashboards/{id}/layout` | JWT | Save layout |
 
 ### System
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | — | Liveness probe |
-| GET | `/status` | JWT | MQTT + WS connection state |
+| GET | `/status` | JWT | MQTT + WS state |
 | GET | `/docs` | — | Swagger UI |
-| WS | `/api/v1/ws/telemetry/{device_id}?token=` | JWT token | Live telemetry stream |
+| WS | `/api/v1/ws/telemetry/{device_id}?token=` | JWT | Live stream |
 
 ---
 
@@ -547,96 +566,69 @@ void loop() {
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | ✅ | — | PostgreSQL connection string |
-| `SECRET_KEY` | ✅ | dev key | JWT signing secret — must be random in production |
+| `SECRET_KEY` | ✅ | dev key | JWT signing secret |
 | `CORS_ORIGINS` | ✅ | localhost | Comma-separated allowed origins |
-| `MQTT_ENABLED` | — | `true` | Set `false` to disable MQTT client |
-| `MQTT_BROKER_HOST` | — | `broker.hivemq.com` | MQTT broker hostname |
-| `MQTT_BROKER_PORT` | — | `1883` | Broker port (use `8883` with TLS) |
-| `MQTT_USE_TLS` | — | `false` | Set `true` for HiveMQ Cloud / AWS IoT |
-| `MQTT_USERNAME` | — | — | Broker username (private brokers) |
+| `MQTT_ENABLED` | — | `true` | Set `false` to disable MQTT |
+| `MQTT_BROKER_HOST` | — | `broker.hivemq.com` | Broker hostname |
+| `MQTT_BROKER_PORT` | — | `1883` | Broker port (`8883` for TLS) |
+| `MQTT_USE_TLS` | — | `false` | `true` for HiveMQ Cloud / AWS IoT |
+| `MQTT_USERNAME` | — | — | Broker username |
 | `MQTT_PASSWORD` | — | — | Broker password |
 | `MQTT_TOPIC_PREFIX` | — | `iot` | Topic root: `{prefix}/{token}/telemetry` |
-| `MQTT_KEEPALIVE` | — | `60` | Keepalive seconds |
 
 ### Frontend
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_URL` | ✅ | Backend base URL e.g. `https://api.onrender.com` |
+| `VITE_API_URL` | ✅ | Backend base URL |
 
 ---
 
 ## Security Architecture
 
 ```
-Registration → creates Tenant + User (tenant_id assigned to user)
-Login       → JWT { sub: user_id, tenant_id, role }
+Registration  →  creates Tenant (with provisioning_key) + User
+Login         →  JWT { sub: user_id, tenant_id, role }
 
 Every API request:
   JWT validated → user.tenant_id extracted
-  All queries filtered: WHERE tenant_id = user.tenant_id
-  Cross-tenant access → 403 Forbidden
+  All queries:  WHERE tenant_id = user.tenant_id
+  Cross-tenant: → 403 Forbidden
 
 WebSocket:
-  ?token=<jwt> query parameter required
-  Validated before accepting connection
-  Cross-device subscription → no access to other tenants' data
+  ?token=<jwt> required before connection accepted
 
-Telemetry ingest:
-  POST /telemetry/ingest/{device_token}
-  No JWT required — device authenticates by token
-  device.tenant_id written at ingest time
-```
+Telemetry ingest (device → platform):
+  POST /telemetry/ingest/{device_token}   ← no JWT, device token only
 
----
-
-## Architecture Notes
-
-### Why --workers 1
-
-The WebSocket `ConnectionManager` and the MQTT paho loop both live in process memory. Running multiple uvicorn workers would create separate registries per worker — a telemetry ingest on worker A would never broadcast to WebSocket clients connected to worker B. The `Dockerfile` CMD enforces `--workers 1`. Scale vertically (larger Render instance) not horizontally.
-
-### Why PostgreSQL atomic upsert
-
-`latest_telemetry` uses `INSERT ... ON CONFLICT DO UPDATE` (PostgreSQL upsert) rather than a read-then-write pattern. This prevents duplicate rows under concurrent HTTP + MQTT ingestion for the same device/key pair, which would cause incorrect widget values.
-
-### MQTT topic format
-
-```
-{MQTT_TOPIC_PREFIX}/{device_token}/telemetry
-
-Example:
-iot/7989c86b-xxxx-xxxx-xxxx-xxxxxxxxxxxx/telemetry
-```
-
-Payload must be a JSON object with a `values` key:
-```json
-{"values": {"temperature": 28.5, "humidity": 65}}
+Device provisioning (firmware → platform):
+  POST /devices/provision { provision_key, device_name }
+  provision_key maps to exactly one tenant → device created there
 ```
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Likely cause | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
-| Login returns 401 Invalid credentials | Account registered before bcrypt fix deployed | Re-register or reset password |
-| Build fails: `Could not resolve ./websocket.js` | Wrong import path in useTelemetry.js | Import from `../services/websocket.js` |
-| Dashboard shows `[object Object]` error | FastAPI 422 array detail | Deploy latest code — apiFetch now handles array detail |
-| Widgets show no data (line chart empty) | UserDashboardPage not seeding history | Deploy latest code — history now seeded on mount |
-| WebSocket shows Static not Live | Free tier cold start | Wait 30 s after first request; upgrades to paid removes cold start |
-| 401 after redeploy | Old JWT signed with previous SECRET_KEY | Clear localStorage: `localStorage.clear(); location.reload()` |
-| Duplicate Default Dashboards | Race condition on first login | Dashboard deduplication runs automatically on every page load |
-| Device dashboard blank page | Device had null tenant_id from before auth fix | Run DB migration: `UPDATE devices SET tenant_id = ... WHERE tenant_id IS NULL` |
+| Provisioning key empty in Settings | Column not in DB | Run migration 004 + 005 in DBeaver |
+| `❌ Provision failed HTTP 201` | ESP32 code only checks `== 200` | Change to `code == 200 \|\| code == 201` |
+| Login returns 401 | Account registered before bcrypt fix | Re-register or use reset-password |
+| Build fails: `Could not resolve ./websocket.js` | Wrong import path | Import from `../services/websocket.js` |
+| Bar chart blank | liveTelem empty on first render | Shows "Waiting for data…" — updates when first telemetry arrives |
+| Duplicate Default Dashboards | Race condition on first login | Auto-deduplicated on every page load |
+| 401 after redeploy | JWT signed with old SECRET_KEY | `localStorage.clear(); location.reload()` |
+| WebSocket shows Static | Free tier cold start (30s) | Upgrade to paid Render instance |
 
 ---
 
 ## Production Checklist
 
-- [ ] `SECRET_KEY` set to a cryptographically random value (Render generates with `generateValue: true`)
+- [ ] `SECRET_KEY` is a strong random value (Render `generateValue: true`)
 - [ ] `CORS_ORIGINS` matches exact frontend URL — no trailing slash
-- [ ] `DATABASE_URL` uses Render **Internal** URL (not External)
-- [ ] `--workers 1` in Dockerfile CMD (already enforced)
-- [ ] For real devices: switch to private MQTT broker with `MQTT_USE_TLS=true` and `MQTT_BROKER_PORT=8883`
-- [ ] Run `python migrations/apply.py` if upgrading an existing database
-- [ ] Delete or disable the `/auth/seed-demo` endpoint before going to production
+- [ ] `DATABASE_URL` uses Render **Internal** URL
+- [ ] All 7 database migrations applied
+- [ ] For real devices: switch to private MQTT broker with TLS (`MQTT_USE_TLS=true`, port `8883`)
+- [ ] Disable or restrict `/api/v1/auth/seed-demo` before production
+- [ ] `--workers 1` in Dockerfile CMD (already enforced — required for WebSocket)

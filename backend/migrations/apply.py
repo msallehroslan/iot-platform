@@ -136,3 +136,44 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "006_create_telemetry_keys_table",
+        "desc": "Create telemetry_keys metadata table",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS telemetry_keys (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                device_id   UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                key         VARCHAR(255) NOT NULL,
+                label       VARCHAR(255),
+                unit        VARCHAR(50),
+                data_type   VARCHAR(20) NOT NULL DEFAULT 'number',
+                created_at  TIMESTAMPTZ DEFAULT now(),
+                updated_at  TIMESTAMPTZ,
+                CONSTRAINT uq_telemetry_keys_device_key UNIQUE (device_id, key)
+            );
+            CREATE INDEX IF NOT EXISTS ix_telemetry_keys_device_id
+                ON telemetry_keys (device_id);
+        """,
+    },
+    {
+        "id":   "007_backfill_telemetry_keys_from_latest",
+        "desc": "Populate telemetry_keys from existing latest_telemetry rows",
+        "sql":  """
+            INSERT INTO telemetry_keys (id, device_id, key, data_type)
+            SELECT
+                gen_random_uuid(),
+                device_id,
+                key,
+                CASE
+                    WHEN value_num  IS NOT NULL THEN 'number'
+                    WHEN value_bool IS NOT NULL THEN 'boolean'
+                    ELSE 'string'
+                END
+            FROM latest_telemetry
+            ON CONFLICT (device_id, key) DO NOTHING;
+        """,
+    },
+]

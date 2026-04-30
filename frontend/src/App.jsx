@@ -96,10 +96,12 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   return (
     <aside className={`${col?"w-14":"w-56"} flex-shrink-0 bg-slate-900 flex flex-col h-screen transition-all duration-200 border-r border-slate-800`}>
       <div className="flex items-center gap-3 px-4 py-5 border-b border-slate-800 overflow-hidden">
-        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center flex-shrink-0">
-          <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <div className="flex items-center justify-center flex-shrink-0 w-8 h-8">
+          <svg viewBox="0 0 100 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-8 h-auto">
+            <text x="0" y="34" fontFamily="Inter,sans-serif" fontWeight="800" fontSize="38" fill="white" letterSpacing="-1">TAT</text>
+          </svg>
         </div>
-        {!col && <span className="font-semibold text-white text-sm tracking-wide truncate">IoT Platform</span>}
+        {!col && <span className="font-bold text-white text-sm tracking-wide truncate">TriAxis IoT</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Menu</p>}
@@ -568,19 +570,19 @@ function ResetPasswordPage({ onBack }) {
 
 // ── Login page ────────────────────────────────────────────────────────────────
 function LoginPage({ onLogin }) {
-  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@iotplatform.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false);
+  const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   const submit=async()=>{setLoading(true);setError("");try{let d;if(tab==="signin"){d=await authApi.login(email,pw);}else{await authApi.register({email,password:pw,first_name:fname,last_name:lname});d=await authApi.login(email,pw);}localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError(e.message);}finally{setLoading(false);}};
-  const demo=async()=>{setLoading(true);setError("");try{await authApi.seedDemo();const d=await authApi.login("demo@iotplatform.com","demo1234");localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError("Backend not reachable. Start it first.");}finally{setLoading(false);}};
+  const demo=async()=>{setLoading(true);setError("");try{await authApi.seedDemo();const d=await authApi.login("demo@triaxisai.com","demo1234");localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError("Backend not reachable. Start it first.");}finally{setLoading(false);}};
 
   if (showReset) return <ResetPasswordPage onBack={() => setShowReset(false)} />;
 
   return (
     <div className="min-h-screen flex bg-slate-50">
       <div className="hidden lg:flex flex-col justify-between w-96 bg-slate-900 p-10 flex-shrink-0">
-        <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center"><svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><span className="font-bold text-white text-base">IoT Platform</span></div>
-        <div><h2 className="text-4xl font-bold text-white leading-tight mb-4">Connect,<br/>Monitor,<br/><span className="text-blue-400">Control.</span></h2><p className="text-slate-400 text-sm leading-relaxed">Production-ready IoT management. Widget dashboards persist to PostgreSQL. WebSocket real-time push. 11 widget types.</p></div>
-        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["11 Widgets","Dashboards"]].map(([v,l])=><div key={l} className="bg-slate-800 rounded-xl p-4"><p className="text-sm font-bold text-white">{v}</p><p className="text-xs text-slate-500 mt-0.5">{l}</p></div>)}</div>
+        <div className="flex items-center gap-3"><svg viewBox="0 0 120 40" fill="none" xmlns="http://www.w3.org/2000/svg" style={{height:32}}><text x="0" y="32" fontFamily="Inter,sans-serif" fontWeight="800" fontSize="36" fill="white" letterSpacing="-1">TAT</text></svg><span className="font-bold text-white text-base tracking-wide">TriAxis IoT</span></div>
+        <div><h2 className="text-4xl font-bold text-white leading-tight mb-4">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#3b82f6,#06b6d4)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-slate-400 text-sm leading-relaxed">TriAxis AI Technologies — Next-generation IoT management platform. Real-time dashboards, smart alarms, and device provisioning.</p></div>
+        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="bg-slate-800 rounded-xl p-4"><p className="text-sm font-bold text-white">{v}</p><p className="text-xs text-slate-500 mt-0.5">{l}</p></div>)}</div>
       </div>
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-sm">

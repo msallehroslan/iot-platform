@@ -77,23 +77,23 @@ def login(credentials: LoginRequest, db: Session = Depends(get_db)):
 
 @router.post("/seed-demo")
 def seed_demo(db: Session = Depends(get_db)):
-    existing = db.query(User).filter(User.email == "demo@iotplatform.com").first()
+    existing = db.query(User).filter(User.email == "demo@triaxisai.com").first()
     if existing:
         return {
             "message":  "Demo user already exists",
-            "email":    "demo@iotplatform.com",
+            "email":    "demo@triaxisai.com",
             "password": "demo1234",
         }
 
     tenant = Tenant(
-        name="Demo Organization",
+        name="TriAxis Demo",
         provisioning_key=secrets.token_hex(16),
     )
     db.add(tenant)
     db.flush()
 
     user = User(
-        email="demo@iotplatform.com",
+        email="demo@triaxisai.com",
         hashed_password=get_password_hash("demo1234"),
         first_name="Demo",
         last_name="User",
@@ -104,7 +104,7 @@ def seed_demo(db: Session = Depends(get_db)):
     db.commit()
     return {
         "message":  "Demo user created",
-        "email":    "demo@iotplatform.com",
+        "email":    "demo@triaxisai.com",
         "password": "demo1234",
     }
 

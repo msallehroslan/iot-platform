@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.models.models import (
     Alarm, AlarmSeverity, AlarmStatus,
     Device, DeviceStatus,
-    LatestTelemetry, TelemetryData,
+    LatestTelemetry, TelemetryData, TelemetryKey,
 )
 
 import uuid
@@ -210,6 +210,29 @@ async def ingest_telemetry(
         # ── 5. Alarm rules ────────────────────────────────────────────────────
         _check_alarm_rules(db, device, key, val_num)
         keys_saved += 1
+
+        # ── Auto-create metadata row for this key (INSERT IGNORE) ────────
+        # Uses INSERT ON CONFLICT DO NOTHING so it only fires once per
+        # (device, key) pair — zero overhead on subsequent ingests.
+        # data_type is inferred from the coerced value.
+        inferred_type = (
+            "boolean" if val_bool is not None else
+            "number"  if val_num  is not None else
+            "string"
+        )
+        meta_stmt = (
+            pg_insert(TelemetryKey)
+            .values(
+                id=uuid.uuid4(),
+                device_id=device.id,
+                key=key,
+                data_type=inferred_type,
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_telemetry_keys_device_key"
+            )
+        )
+        db.execute(meta_stmt)
 
     # ── 6. Commit everything in one transaction ───────────────────────────────
     db.commit()

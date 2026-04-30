@@ -185,6 +185,26 @@ class ProvisioningKeyOut(BaseModel):
     provision_endpoint: str
 
 
+# ── Telemetry Key Metadata ───────────────────────────────────────────────────
+
+class TelemetryKeyOut(BaseModel):
+    """Returned by GET /telemetry/metadata/{device_id}"""
+    key:       str
+    label:     Optional[str] = None
+    unit:      Optional[str] = None
+    data_type: str = "number"
+
+    class Config:
+        from_attributes = True
+
+
+class TelemetryKeyUpdate(BaseModel):
+    """Body for PUT /telemetry/metadata/{device_id}/{key}"""
+    label:     Optional[str] = None
+    unit:      Optional[str] = None
+    data_type: Optional[str] = None
+
+
 class LatestTelemetryOut(BaseModel):
     key: str
     value: Any

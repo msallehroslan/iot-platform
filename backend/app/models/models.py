@@ -112,6 +112,7 @@ class Device(Base):
     telemetry = relationship("TelemetryData", back_populates="device", cascade="all, delete-orphan")
     latest_telemetry = relationship("LatestTelemetry", back_populates="device", cascade="all, delete-orphan")
     alarms = relationship("Alarm", back_populates="device", cascade="all, delete-orphan")
+    telemetry_keys = relationship("TelemetryKey", back_populates="device", cascade="all, delete-orphan")
     dashboards = relationship("Dashboard", back_populates="device", cascade="all, delete-orphan")
 
 
@@ -148,6 +149,29 @@ class LatestTelemetry(Base):
     ts = Column(DateTime(timezone=True), server_default=func.now())
 
     device = relationship("Device", back_populates="latest_telemetry")
+
+
+class TelemetryKey(Base):
+    """
+    Metadata for each telemetry key observed on a device.
+    Auto-created on first ingest of a new key.
+    Users can update label, unit, and data_type via API.
+    """
+    __tablename__ = "telemetry_keys"
+    __table_args__ = (
+        UniqueConstraint("device_id", "key", name="uq_telemetry_keys_device_key"),
+    )
+
+    id        = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id = Column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True)
+    key       = Column(String(255), nullable=False, index=True)
+    label     = Column(String(255), nullable=True)   # e.g. "Blood Glucose"
+    unit      = Column(String(50),  nullable=True)   # e.g. "mg/dL"
+    data_type = Column(String(20),  nullable=False, default="number")  # number | string | boolean
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    device = relationship("Device", back_populates="telemetry_keys")
 
 
 class Alarm(Base):
