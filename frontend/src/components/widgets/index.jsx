@@ -1,9 +1,10 @@
 /**
  * widgets/index.jsx
- * Pure rendering components for each widget type.
- * Props: { config, liveTelem, historyData, alarms }
- * No API calls, no state — data is passed from the parent.
+ * Rendering components for each widget type.
+ * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
+import { useState, useEffect } from "react";
+import { telemetryApi } from "../services/api.js";
 
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
@@ -173,67 +174,218 @@ export function PieChartSVG({ data = [] }) {
 
 // ── Widget type components ────────────────────────────────────────────────────
 
-export function ValueCard({ config, liveTelem, historyData }) {
+export function ValueCard({ config, liveTelem, historyData, deviceId }) {
   const raw  = liveTelem?.[config.key];
   const num  = typeof raw === "number" ? raw : parseFloat(raw);
   const isN  = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
   const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
+  const devId = deviceId || config.device_id;
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null });
+  const [window, setWindow] = useState("1h");
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+    ]).then(([a, mn, mx]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
+  const WINDOWS = ["15m","30m","1h","6h","24h"];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 4 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, justifyContent: "center", flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 6px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Current value */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
         <p style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", color: "#94a3b8" }}>
           {config.label || config.key || "—"}
         </p>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
-          <span style={{
-            fontSize: 44, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
-            color: alert ? "#ef4444" : (config.color || "#1e293b"),
-            transition: "color .3s",
-          }}>
+          <span style={{ fontSize: 42, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
+            color: alert ? "#ef4444" : (config.color || "#1e293b"), transition: "color .3s" }}>
             {isN ? num.toFixed(config.decimals ?? 1) : (raw ?? "—")}
           </span>
-          {config.unit && (
-            <span style={{ fontSize: 16, color: "#94a3b8", fontWeight: 500, paddingBottom: 6 }}>
-              {config.unit}
-            </span>
-          )}
+          {config.unit && <span style={{ fontSize: 15, color: "#94a3b8", fontWeight: 500, paddingBottom: 5 }}>{config.unit}</span>}
         </div>
-        {alert && (
-          <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", background: "#fef2f2", padding: "2px 8px", borderRadius: 20 }}>
-            ⚠ Threshold exceeded
-          </span>
-        )}
+        {alert && <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", background: "#fef2f2", padding: "2px 8px", borderRadius: 20 }}>⚠ Threshold exceeded</span>}
       </div>
-      {history.length > 1 && <Sparkline data={history} color={config.color || "#3b82f6"} height={36} />}
+      {/* AVG / MIN / MAX */}
+      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+          </div>
+        ))}
+      </div>
+      {history.length > 1 && <Sparkline data={history} color={config.color || "#3b82f6"} height={28} />}
     </div>
   );
 }
 
-export function LineChartWidget({ config, historyData }) {
+export function LineChartWidget({ config, historyData, deviceId }) {
   const history = historyData?.[config.key] || [];
+  const [window, setWindow] = useState("1h");
+  const [aggData, setAggData] = useState({ avg: null, min: null, max: null, count: 0 });
+  const [aggLoading, setAggLoading] = useState(false);
+
+  const devId = deviceId || config.device_id;
+  const key   = config.key;
+
+  // Fetch all three aggregates when window or key changes
+  useEffect(() => {
+    if (!devId || !key) return;
+    setAggLoading(true);
+    Promise.all([
+      telemetryApi.aggregate(devId, key, window, "avg"),
+      telemetryApi.aggregate(devId, key, window, "min"),
+      telemetryApi.aggregate(devId, key, window, "max"),
+      telemetryApi.aggregate(devId, key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => {
+      setAggData({
+        avg:   a?.result  ?? null,
+        min:   mn?.result ?? null,
+        max:   mx?.result ?? null,
+        count: ct?.count  ?? 0,
+      });
+    }).catch(() => {}).finally(() => setAggLoading(false));
+  }, [devId, key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(2);
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <LineChartSVG data={history} color={config.color || "#3b82f6"} />
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
-        <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · {config.key}</span>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+
+      {/* Window selector + stats row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        {/* Time window pills */}
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+          {WINDOWS.map(w => (
+            <button key={w} onClick={() => setWindow(w)} style={{
+              padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600,
+              cursor: "pointer", border: "1px solid",
+              borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+              background: window === w ? "#2F8CFF" : "#F4F8FF",
+              color: window === w ? "white" : "#6B7F9F",
+              transition: "all 0.15s",
+            }}>{w}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* AVG / MIN / MAX cards */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        {[["AVG", aggData.avg, "#2F8CFF"], ["MIN", aggData.min, "#10b981"], ["MAX", aggData.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{
+            flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
+            transition: "opacity 0.2s",
+          }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>{label}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>
+              {aggLoading ? "…" : fmt(val)}
+            </span>
+          </div>
+        ))}
+        <div style={{
+          flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
+          display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+          border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
+        }}>
+          <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>PTS</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#8b5cf6", fontFamily: "monospace" }}>
+            {aggLoading ? "…" : aggData.count}
+          </span>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <LineChartSVG data={history} color={config.color || "#3b82f6"} />
+      </div>
+
+      {/* Footer */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+        </div>
       </div>
     </div>
   );
 }
 
-export function GaugeWidget({ config, liveTelem }) {
+export function GaugeWidget({ config, liveTelem, deviceId }) {
   const raw = liveTelem?.[config.key];
   const num = typeof raw === "number" ? raw : parseFloat(raw);
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("24h");
+  const [agg, setAgg] = useState({ min: null, max: null, avg: null });
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+    ]).then(([mn, mx, av]) => setAgg({ min: mn?.result ?? null, max: mx?.result ?? null, avg: av?.result ?? null }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(1);
+  const WINDOWS = ["1h","6h","24h","7d"];
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 6 }}>
-      <GaugeSVG value={isNaN(num) ? config.min : num} min={config.min ?? 0} max={config.max ?? 100} color={config.color || "#3b82f6"} />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "0 8px" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", height: "100%", gap: 4 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Gauge dial */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <GaugeSVG value={isNaN(num) ? config.min : num} min={config.min ?? 0} max={config.max ?? 100} color={config.color || "#3b82f6"} />
+      </div>
+      {/* Label row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "0 8px", flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.min ?? 0}{config.unit}</span>
         <span style={{ fontSize: 10, fontWeight: 600, color: config.color || "#3b82f6" }}>{config.label || config.key}</span>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.max ?? 100}{config.unit}</span>
+      </div>
+      {/* AVG / MIN / MAX for selected window */}
+      <div style={{ display: "flex", gap: 4, width: "100%", flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -263,17 +415,64 @@ export function StatusLight({ config, liveTelem }) {
   );
 }
 
-export function BarChartWidget({ config, historyData }) {
-  // Uses historyData exactly like LineChartWidget — time-series bars over time
-  // config.key = single key to plot as bars (uses first of config.keys if key not set)
+export function BarChartWidget({ config, historyData, deviceId }) {
   const key = config.key || (config.keys || [])[0] || "";
   const history = historyData?.[key] || [];
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("1h");
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
+  const [aggLoading, setAggLoading] = useState(false);
+
+  useEffect(() => {
+    if (!devId || !key) return;
+    setAggLoading(true);
+    Promise.all([
+      telemetryApi.aggregate(devId, key, window, "avg"),
+      telemetryApi.aggregate(devId, key, window, "min"),
+      telemetryApi.aggregate(devId, key, window, "max"),
+      telemetryApi.aggregate(devId, key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
+      .catch(() => {}).finally(() => setAggLoading(false));
+  }, [devId, key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(2);
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <BarChartSVG data={history} color={config.color || "#3b82f6"} />
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0 }} />
-        <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · {key}</span>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+      {/* Window selector */}
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"], ["PTS", agg.count, "#8b5cf6"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "4px 8px",
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
+            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1 }}>
+            <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: "monospace" }}>{aggLoading ? "…" : (label === "PTS" ? val : fmt(val))}</span>
+          </div>
+        ))}
+      </div>
+      {/* Chart */}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <BarChartSVG data={history} color={config.color || "#3b82f6"} />
+      </div>
+      {/* Footer */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+        </div>
       </div>
     </div>
   );
@@ -308,31 +507,73 @@ export function AlarmListWidget({ alarms = [] }) {
   );
 }
 
-export function TimeseriesTable({ config, historyData }) {
+export function TimeseriesTable({ config, historyData, deviceId }) {
   const history = [...(historyData?.[config.key] || [])].reverse().slice(0, 25);
+  const devId = deviceId || config.device_id;
+  const [window, setWindow] = useState("1h");
+  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
+
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    Promise.all([
+      telemetryApi.aggregate(devId, config.key, window, "avg"),
+      telemetryApi.aggregate(devId, config.key, window, "min"),
+      telemetryApi.aggregate(devId, config.key, window, "max"),
+      telemetryApi.aggregate(devId, config.key, window, "count"),
+    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
+      .catch(() => {});
+  }, [devId, config.key, window]);
+
+  const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 2);
+  const WINDOWS = ["15m","30m","1h","6h","24h"];
+
   return (
-    <div style={{ height: "100%", overflowY: "auto" }}>
-      <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse" }}>
-        <thead style={{ position: "sticky", top: 0, background: "white" }}>
-          <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-            <th style={{ textAlign: "left", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>Time</th>
-            <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>{config.key}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {history.map((p, i) => (
-            <tr key={i} style={{ borderBottom: "1px solid #f8fafc" }}>
-              <td style={{ padding: "3px 0", color: "#94a3b8", fontFamily: "monospace" }}>{new Date(p.ts).toLocaleTimeString()}</td>
-              <td style={{ padding: "3px 0", textAlign: "right", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>
-                {typeof p.value === "number" ? p.value.toFixed(config.decimals ?? 2) : String(p.value)}{config.unit}
-              </td>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
+      {/* Window pills */}
+      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+        {WINDOWS.map(w => (
+          <button key={w} onClick={() => setWindow(w)} style={{
+            padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+            background: window === w ? "#2F8CFF" : "#F4F8FF",
+            color: window === w ? "white" : "#6B7F9F",
+          }}>{w}</button>
+        ))}
+      </div>
+      {/* Table */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse" }}>
+          <thead style={{ position: "sticky", top: 0, background: "white" }}>
+            <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+              <th style={{ textAlign: "left", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>Time</th>
+              <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>{config.key}</th>
             </tr>
-          ))}
-          {!history.length && (
-            <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8" }}>No history yet</td></tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {history.map((p, i) => (
+              <tr key={i} style={{ borderBottom: "1px solid #f8fafc" }}>
+                <td style={{ padding: "3px 0", color: "#94a3b8", fontFamily: "monospace" }}>{new Date(p.ts).toLocaleTimeString()}</td>
+                <td style={{ padding: "3px 0", textAlign: "right", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>
+                  {typeof p.value === "number" ? p.value.toFixed(config.decimals ?? 2) : String(p.value)}{config.unit}
+                </td>
+              </tr>
+            ))}
+            {!history.length && (
+              <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8" }}>No history yet</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {/* Summary footer */}
+      <div style={{ display: "flex", gap: 4, borderTop: "1px solid #D8E3F3", paddingTop: 6, flexShrink: 0 }}>
+        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"], ["PTS", agg.count, "#8b5cf6"]].map(([label, val, color]) => (
+          <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{label === "PTS" ? val : fmt(val)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -475,7 +716,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
-  const props = { config: widget.config || {}, liveTelem, historyData, alarms };
+  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id };
 
   switch (widget.widget_type) {
     case "value_card":       return <ValueCard       {...props} />;

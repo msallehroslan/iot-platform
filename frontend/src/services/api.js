@@ -66,9 +66,10 @@ export const deviceApi = {
 
 // ── Telemetry ─────────────────────────────────────────────────────────────────
 export const telemetryApi = {
-  latest:  deviceId          => apiFetch(`/telemetry/latest/${deviceId}`),
-  history: (deviceId, key, n) => apiFetch(`/telemetry/history/${deviceId}?key=${encodeURIComponent(key)}&limit=${n ?? 50}`),
-  keys:    deviceId          => apiFetch(`/telemetry/keys/${deviceId}`),
+  latest:    deviceId                    => apiFetch(`/telemetry/latest/${deviceId}`),
+  history:   (deviceId, key, n)           => apiFetch(`/telemetry/history/${deviceId}?key=${encodeURIComponent(key)}&limit=${n ?? 50}`),
+  keys:      deviceId                    => apiFetch(`/telemetry/keys/${deviceId}`),
+  aggregate: (deviceId, key, window, fn) => apiFetch(`/telemetry/aggregate/${deviceId}?key=${encodeURIComponent(key)}&window=${window}&function=${fn}`),
 };
 
 // ── Alarms ────────────────────────────────────────────────────────────────────
