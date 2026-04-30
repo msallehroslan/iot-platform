@@ -126,3 +126,19 @@ export const userDashboardsHttp = {
   saveLayout:    (dashId, layout)    => apiFetch(`/user-dashboards/${dashId}/layout`,          { method: "PUT",    body: JSON.stringify({ layout }) }),
   deduplicate:   ()                  => apiFetch(`/user-dashboards/deduplicate`,               { method: "POST" }),
 };
+
+// ── User management (TENANT_ADMIN only) ──────────────────────────────────────
+export const userApi = {
+  list:       ()             => apiFetch("/auth/users"),
+  updateRole: (id, body)     => apiFetch(`/auth/users/${id}/role`, { method: "PUT", body: JSON.stringify(body) }),
+  delete:     id             => apiFetch(`/auth/users/${id}`,      { method: "DELETE" }),
+};
+
+// ── Customer management ───────────────────────────────────────────────────────
+export const customerApi = {
+  list:              ()              => apiFetch("/customers/"),
+  create:            body            => apiFetch("/customers/",                    { method: "POST",   body: JSON.stringify(body) }),
+  delete:            id              => apiFetch(`/customers/${id}`,               { method: "DELETE" }),
+  listUsers:         customerId      => apiFetch(`/customers/${customerId}/users`),
+  createUser:        (customerId, b) => apiFetch(`/customers/${customerId}/users`, { method: "POST",   body: JSON.stringify(b) }),
+};

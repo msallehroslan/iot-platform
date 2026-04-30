@@ -14,6 +14,7 @@ from pydantic import BaseModel
 import uuid
 import secrets
 import logging
+from uuid import UUID
 
 from app.core.database import get_db
 from app.core.security import (

@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -86,6 +86,7 @@ const NAV = [
   { id:"alarms",            label:"Alarms",            icon:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0" },
   { id:"rule-chains",       label:"Rule Chains",       icon:"M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9" },
   { id:"customers",         label:"Customers",         icon:"M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm14 2v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" },
+  { id:"users",             label:"Users & Roles",     icon:"M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" },
   { id:"settings",          label:"Settings",          icon:"M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm6.93-3h1.07a2 2 0 0 1 0 4h-1.07A7 7 0 0 1 17 18.93V20a2 2 0 0 1-4 0v-1.07A7 7 0 0 1 11.07 16H10a2 2 0 0 1 0-4h1.07A7 7 0 0 1 13 4.07V3a2 2 0 0 1 4 0v1.07A7 7 0 0 1 18.93 6H20a2 2 0 0 1 0 4h-1.07" },
 ];
 
@@ -100,7 +101,12 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
-        {NAV.map(({id,label,icon}) => (
+        {NAV.filter(({id}) => {
+          // Hide admin-only pages from non-admin users
+          const adminOnly = ["customers", "users"];
+          if (adminOnly.includes(id) && user?.role !== "TENANT_ADMIN") return false;
+          return true;
+        }).map(({id,label,icon}) => (
           <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
             <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
@@ -488,6 +494,419 @@ bool provision() {
   );
 }
 function ComingSoon({ label, desc, icon }) { return <div className="flex flex-col items-center justify-center py-20 gap-3"><div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mb-1"><svg className="w-7 h-7 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={icon}/></svg></div><h2 className="text-base font-semibold text-slate-700">{label}</h2><p className="text-sm text-slate-400 text-center max-w-xs">{desc}</p><span className="text-xs font-medium text-slate-400 bg-slate-100 px-3 py-1 rounded-full mt-1">Coming Soon</span></div>; }
+
+// ── RBAC: Users & Roles Page ──────────────────────────────────────────────────
+function UsersPage({ onToast, user: currentUser }) {
+  const isAdmin = currentUser?.role === "TENANT_ADMIN";
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    try { setUsers(await userApi.list()); }
+    catch (e) { onToast(e.message, "error"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetch(); }, []);
+
+  const handleDelete = async (u) => {
+    if (!window.confirm(`Remove ${u.email} from this tenant?`)) return;
+    try { await userApi.delete(u.id); setUsers(us => us.filter(x => x.id !== u.id)); onToast("User removed"); }
+    catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleSave = async (data) => {
+    setSaving(true);
+    try {
+      await userApi.updateRole(data.id, { role: data.role, is_active: data.is_active });
+      await fetch();
+      setShowModal(false); setEditUser(null);
+      onToast("Role updated");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const ROLE_BADGE = {
+    TENANT_ADMIN:  "bg-purple-100 text-purple-700",
+    TENANT_USER:   "bg-blue-100 text-blue-700",
+    CUSTOMER_USER: "bg-amber-100 text-amber-700",
+  };
+
+  return (
+    <div className="max-w-4xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Users & Roles</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Manage who can access your tenant and what they can do</p>
+        </div>
+        {!isAdmin && <span className="text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">Read-only — admin access required to make changes</span>}
+      </div>
+
+      {/* Role explanation */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { role: "TENANT_ADMIN", color: "purple", desc: "Full access — create devices, manage users, configure rules" },
+          { role: "TENANT_USER", color: "blue", desc: "Read-only access to all devices and telemetry in the tenant" },
+          { role: "CUSTOMER_USER", color: "amber", desc: "Scoped to a single customer — sees only their assigned devices" },
+        ].map(({ role, color, desc }) => (
+          <div key={role} className={`rounded-xl border p-3.5 bg-${color}-50 border-${color}-200`}>
+            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-${color}-100 text-${color}-700`}>{role}</span>
+            <p className={`text-xs text-${color}-700 mt-2 leading-relaxed`}>{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+        <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Tenant Users</p>
+          <span className="text-xs text-slate-400">{users.length} user{users.length !== 1 ? "s" : ""}</span>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-10"><Spinner /></div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 bg-slate-50">
+              {["User", "Role", "Status", "Customer Scope", ""].map(h => (
+                <th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-semibold text-blue-600 flex-shrink-0">
+                        {(u.first_name?.[0] || u.email?.[0] || "U").toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-700 text-xs">{u.first_name ? `${u.first_name} ${u.last_name || ""}`.trim() : "—"}</p>
+                        <p className="text-[11px] text-slate-400">{u.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${ROLE_BADGE[u.role] || "bg-slate-100 text-slate-600"}`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${u.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? "bg-emerald-500" : "bg-slate-400"}`}/>
+                      {u.is_active ? "Active" : "Disabled"}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5 text-[11px] text-slate-400 font-mono">
+                    {u.customer_id ? u.customer_id.slice(0, 8) + "…" : "—"}
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {isAdmin && String(u.id) !== String(currentUser?.id) && (
+                      <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => { setEditUser(u); setShowModal(true); }}
+                          className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-500">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button onClick={() => handleDelete(u)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {!users.length && (
+                <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">No users found</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Edit Role Modal */}
+      {showModal && editUser && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-semibold text-slate-800">Edit Role</h3>
+              <button onClick={() => { setShowModal(false); setEditUser(null); }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <p className="text-xs font-medium text-slate-500 mb-1">User</p>
+                <p className="text-sm font-semibold text-slate-800">{editUser.email}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Role</label>
+                <select className={INP} value={editUser.role}
+                  onChange={e => setEditUser(u => ({ ...u, role: e.target.value }))}>
+                  <option value="TENANT_ADMIN">TENANT_ADMIN — Full access</option>
+                  <option value="TENANT_USER">TENANT_USER — Read only</option>
+                  <option value="CUSTOMER_USER">CUSTOMER_USER — Customer scoped</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-500">Account Active</label>
+                <button onClick={() => setEditUser(u => ({ ...u, is_active: !u.is_active }))}
+                  className={`w-10 h-5 rounded-full transition-colors ${editUser.is_active ? "bg-emerald-500" : "bg-slate-300"} relative`}>
+                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${editUser.is_active ? "left-5" : "left-0.5"}`}/>
+                </button>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => handleSave(editUser)} disabled={saving}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
+              <button onClick={() => { setShowModal(false); setEditUser(null); }}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── RBAC: Customers Page ──────────────────────────────────────────────────────
+function CustomersPage({ onToast, user: currentUser }) {
+  const isAdmin = currentUser?.role === "TENANT_ADMIN";
+  const [customers, setCustomers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [cusUsers, setCusUsers] = useState([]);
+  const [cusUsersLoading, setCusUsersLoading] = useState(false);
+  const [showNewCus, setShowNewCus] = useState(false);
+  const [showNewUser, setShowNewUser] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cusForm, setCusForm] = useState({ name: "", email: "", city: "", country: "" });
+  const [userForm, setUserForm] = useState({ email: "", password: "", first_name: "", last_name: "" });
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const fetchCustomers = useCallback(async () => {
+    setLoading(true);
+    try { setCustomers(await customerApi.list()); }
+    catch (e) { onToast(e.message, "error"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchCustomers(); }, []);
+
+  const loadCusUsers = async (cus) => {
+    setSelected(cus); setCusUsersLoading(true);
+    try { setCusUsers(await customerApi.listUsers(cus.id)); }
+    catch { setCusUsers([]); }
+    finally { setCusUsersLoading(false); }
+  };
+
+  const handleCreateCustomer = async () => {
+    if (!cusForm.name.trim()) return;
+    setSaving(true);
+    try {
+      await customerApi.create({ ...cusForm, tenant_id: "00000000-0000-0000-0000-000000000000" });
+      await fetchCustomers();
+      setShowNewCus(false); setCusForm({ name: "", email: "", city: "", country: "" });
+      onToast("Customer created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDeleteCustomer = async (id) => {
+    if (!window.confirm("Delete this customer and all their users?")) return;
+    try {
+      await customerApi.delete(id);
+      setCustomers(cs => cs.filter(c => c.id !== id));
+      if (selected?.id === id) setSelected(null);
+      onToast("Customer deleted");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleCreateUser = async () => {
+    if (!userForm.email || !userForm.password) return;
+    setSaving(true);
+    try {
+      await customerApi.createUser(selected.id, userForm);
+      setCusUsers(await customerApi.listUsers(selected.id));
+      setShowNewUser(false); setUserForm({ email: "", password: "", first_name: "", last_name: "" });
+      onToast("Customer user created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Customers</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Manage customer accounts and their scoped users</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowNewCus(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F8CFF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Customer
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {/* Customer list */}
+        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+          <div className="px-5 py-3.5 border-b border-slate-50">
+            <p className="text-sm font-semibold text-slate-700">All Customers</p>
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-10"><Spinner /></div>
+          ) : customers.length === 0 ? (
+            <Empty icon="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8" title="No customers yet" sub="Create your first customer to get started" />
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {customers.map(c => (
+                <div key={c.id} onClick={() => loadCusUsers(c)}
+                  className={`flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-slate-50 transition-colors ${selected?.id === c.id ? "bg-blue-50" : ""}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600">
+                      {c.name[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">{c.name}</p>
+                      <p className="text-[11px] text-slate-400">{c.email || c.city || "No details"}</p>
+                    </div>
+                  </div>
+                  {isAdmin && (
+                    <button onClick={e => { e.stopPropagation(); handleDeleteCustomer(c.id); }}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Selected customer users */}
+        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+          <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-700">
+              {selected ? `${selected.name} — Users` : "Select a customer"}
+            </p>
+            {selected && isAdmin && (
+              <button onClick={() => setShowNewUser(true)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-[#2F8CFF] hover:bg-blue-600 text-white text-xs font-semibold rounded-lg">
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add User
+              </button>
+            )}
+          </div>
+          {!selected ? (
+            <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
+              <svg className="w-8 h-8 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              <p className="text-xs">Click a customer to see their users</p>
+            </div>
+          ) : cusUsersLoading ? (
+            <div className="flex justify-center py-10"><Spinner /></div>
+          ) : cusUsers.length === 0 ? (
+            <Empty icon="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3" title="No users" sub="Add a CUSTOMER_USER to give scoped access" />
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {cusUsers.map(u => (
+                <div key={u.id} className="flex items-center justify-between px-5 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-600">
+                      {(u.first_name?.[0] || u.email[0]).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-700">{u.first_name ? `${u.first_name} ${u.last_name || ""}`.trim() : u.email}</p>
+                      <p className="text-[11px] text-slate-400">{u.email}</p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-700">CUSTOMER_USER</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* New Customer Modal */}
+      {showNewCus && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-semibold">New Customer</h3>
+              <button onClick={() => setShowNewCus(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {[["Name *", "name", "Acme Corp"], ["Email", "email", "contact@acme.com"], ["City", "city", "Kuala Lumpur"], ["Country", "country", "Malaysia"]].map(([label, key, ph]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                  <input className={INP} placeholder={ph} value={cusForm[key]}
+                    onChange={e => setCusForm(f => ({ ...f, [key]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreateCustomer} disabled={saving || !cusForm.name.trim()}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create Customer"}
+              </button>
+              <button onClick={() => setShowNewCus(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Customer User Modal */}
+      {showNewUser && selected && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-semibold">Add User to {selected.name}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Creates a CUSTOMER_USER scoped to this customer</p>
+              </div>
+              <button onClick={() => setShowNewUser(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {[["Email *", "email", "user@example.com", "email"], ["Password *", "password", "Min 8 characters", "password"],
+                ["First Name", "first_name", "Optional", "text"], ["Last Name", "last_name", "Optional", "text"]].map(([label, key, ph, type]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                  <input type={type} className={INP} placeholder={ph} value={userForm[key]}
+                    onChange={e => setUserForm(f => ({ ...f, [key]: e.target.value }))} />
+                </div>
+              ))}
+              <div className="bg-amber-50 rounded-lg p-2.5 text-xs text-amber-700">
+                This user will only see devices assigned to <strong>{selected.name}</strong>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreateUser} disabled={saving || !userForm.email || !userForm.password}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create User"}
+              </button>
+              <button onClick={() => setShowNewUser(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Login page ────────────────────────────────────────────────────────────────
 // ── Reset Password page ───────────────────────────────────────────────────────
 // Option 1 — simple direct reset: enter email + new password, no email link needed.
@@ -559,6 +978,419 @@ function ResetPasswordPage({ onBack }) {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ── RBAC: Users & Roles Page ──────────────────────────────────────────────────
+function UsersPage({ onToast, user: currentUser }) {
+  const isAdmin = currentUser?.role === "TENANT_ADMIN";
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const fetch = useCallback(async () => {
+    setLoading(true);
+    try { setUsers(await userApi.list()); }
+    catch (e) { onToast(e.message, "error"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetch(); }, []);
+
+  const handleDelete = async (u) => {
+    if (!window.confirm(`Remove ${u.email} from this tenant?`)) return;
+    try { await userApi.delete(u.id); setUsers(us => us.filter(x => x.id !== u.id)); onToast("User removed"); }
+    catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleSave = async (data) => {
+    setSaving(true);
+    try {
+      await userApi.updateRole(data.id, { role: data.role, is_active: data.is_active });
+      await fetch();
+      setShowModal(false); setEditUser(null);
+      onToast("Role updated");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const ROLE_BADGE = {
+    TENANT_ADMIN:  "bg-purple-100 text-purple-700",
+    TENANT_USER:   "bg-blue-100 text-blue-700",
+    CUSTOMER_USER: "bg-amber-100 text-amber-700",
+  };
+
+  return (
+    <div className="max-w-4xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Users & Roles</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Manage who can access your tenant and what they can do</p>
+        </div>
+        {!isAdmin && <span className="text-xs text-amber-600 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">Read-only — admin access required to make changes</span>}
+      </div>
+
+      {/* Role explanation */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { role: "TENANT_ADMIN", color: "purple", desc: "Full access — create devices, manage users, configure rules" },
+          { role: "TENANT_USER", color: "blue", desc: "Read-only access to all devices and telemetry in the tenant" },
+          { role: "CUSTOMER_USER", color: "amber", desc: "Scoped to a single customer — sees only their assigned devices" },
+        ].map(({ role, color, desc }) => (
+          <div key={role} className={`rounded-xl border p-3.5 bg-${color}-50 border-${color}-200`}>
+            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-semibold bg-${color}-100 text-${color}-700`}>{role}</span>
+            <p className={`text-xs text-${color}-700 mt-2 leading-relaxed`}>{desc}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+        <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-700">Tenant Users</p>
+          <span className="text-xs text-slate-400">{users.length} user{users.length !== 1 ? "s" : ""}</span>
+        </div>
+        {loading ? (
+          <div className="flex justify-center py-10"><Spinner /></div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-slate-100 bg-slate-50">
+              {["User", "Role", "Status", "Customer Scope", ""].map(h => (
+                <th key={h} className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">{h}</th>
+              ))}
+            </tr></thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-semibold text-blue-600 flex-shrink-0">
+                        {(u.first_name?.[0] || u.email?.[0] || "U").toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-medium text-slate-700 text-xs">{u.first_name ? `${u.first_name} ${u.last_name || ""}`.trim() : "—"}</p>
+                        <p className="text-[11px] text-slate-400">{u.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <span className={`inline-flex px-2 py-0.5 rounded text-[11px] font-semibold ${ROLE_BADGE[u.role] || "bg-slate-100 text-slate-600"}`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${u.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${u.is_active ? "bg-emerald-500" : "bg-slate-400"}`}/>
+                      {u.is_active ? "Active" : "Disabled"}
+                    </span>
+                  </td>
+                  <td className="px-5 py-3.5 text-[11px] text-slate-400 font-mono">
+                    {u.customer_id ? u.customer_id.slice(0, 8) + "…" : "—"}
+                  </td>
+                  <td className="px-5 py-3.5">
+                    {isAdmin && String(u.id) !== String(currentUser?.id) && (
+                      <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => { setEditUser(u); setShowModal(true); }}
+                          className="p-1.5 rounded-lg hover:bg-blue-50 text-slate-400 hover:text-blue-500">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button onClick={() => handleDelete(u)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500">
+                          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {!users.length && (
+                <tr><td colSpan={5} className="px-5 py-10 text-center text-sm text-slate-400">No users found</td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Edit Role Modal */}
+      {showModal && editUser && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-semibold text-slate-800">Edit Role</h3>
+              <button onClick={() => { setShowModal(false); setEditUser(null); }} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <p className="text-xs font-medium text-slate-500 mb-1">User</p>
+                <p className="text-sm font-semibold text-slate-800">{editUser.email}</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Role</label>
+                <select className={INP} value={editUser.role}
+                  onChange={e => setEditUser(u => ({ ...u, role: e.target.value }))}>
+                  <option value="TENANT_ADMIN">TENANT_ADMIN — Full access</option>
+                  <option value="TENANT_USER">TENANT_USER — Read only</option>
+                  <option value="CUSTOMER_USER">CUSTOMER_USER — Customer scoped</option>
+                </select>
+              </div>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-slate-500">Account Active</label>
+                <button onClick={() => setEditUser(u => ({ ...u, is_active: !u.is_active }))}
+                  className={`w-10 h-5 rounded-full transition-colors ${editUser.is_active ? "bg-emerald-500" : "bg-slate-300"} relative`}>
+                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${editUser.is_active ? "left-5" : "left-0.5"}`}/>
+                </button>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={() => handleSave(editUser)} disabled={saving}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Saving…" : "Save Changes"}
+              </button>
+              <button onClick={() => { setShowModal(false); setEditUser(null); }}
+                className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl hover:bg-slate-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── RBAC: Customers Page ──────────────────────────────────────────────────────
+function CustomersPage({ onToast, user: currentUser }) {
+  const isAdmin = currentUser?.role === "TENANT_ADMIN";
+  const [customers, setCustomers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [cusUsers, setCusUsers] = useState([]);
+  const [cusUsersLoading, setCusUsersLoading] = useState(false);
+  const [showNewCus, setShowNewCus] = useState(false);
+  const [showNewUser, setShowNewUser] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [cusForm, setCusForm] = useState({ name: "", email: "", city: "", country: "" });
+  const [userForm, setUserForm] = useState({ email: "", password: "", first_name: "", last_name: "" });
+  const INP = "w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400";
+
+  const fetchCustomers = useCallback(async () => {
+    setLoading(true);
+    try { setCustomers(await customerApi.list()); }
+    catch (e) { onToast(e.message, "error"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { fetchCustomers(); }, []);
+
+  const loadCusUsers = async (cus) => {
+    setSelected(cus); setCusUsersLoading(true);
+    try { setCusUsers(await customerApi.listUsers(cus.id)); }
+    catch { setCusUsers([]); }
+    finally { setCusUsersLoading(false); }
+  };
+
+  const handleCreateCustomer = async () => {
+    if (!cusForm.name.trim()) return;
+    setSaving(true);
+    try {
+      await customerApi.create({ ...cusForm, tenant_id: "00000000-0000-0000-0000-000000000000" });
+      await fetchCustomers();
+      setShowNewCus(false); setCusForm({ name: "", email: "", city: "", country: "" });
+      onToast("Customer created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  const handleDeleteCustomer = async (id) => {
+    if (!window.confirm("Delete this customer and all their users?")) return;
+    try {
+      await customerApi.delete(id);
+      setCustomers(cs => cs.filter(c => c.id !== id));
+      if (selected?.id === id) setSelected(null);
+      onToast("Customer deleted");
+    } catch (e) { onToast(e.message, "error"); }
+  };
+
+  const handleCreateUser = async () => {
+    if (!userForm.email || !userForm.password) return;
+    setSaving(true);
+    try {
+      await customerApi.createUser(selected.id, userForm);
+      setCusUsers(await customerApi.listUsers(selected.id));
+      setShowNewUser(false); setUserForm({ email: "", password: "", first_name: "", last_name: "" });
+      onToast("Customer user created");
+    } catch (e) { onToast(e.message, "error"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="max-w-5xl space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-800">Customers</h2>
+          <p className="text-xs text-slate-400 mt-0.5">Manage customer accounts and their scoped users</p>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setShowNewCus(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#2F8CFF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl">
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Customer
+          </button>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {/* Customer list */}
+        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+          <div className="px-5 py-3.5 border-b border-slate-50">
+            <p className="text-sm font-semibold text-slate-700">All Customers</p>
+          </div>
+          {loading ? (
+            <div className="flex justify-center py-10"><Spinner /></div>
+          ) : customers.length === 0 ? (
+            <Empty icon="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8" title="No customers yet" sub="Create your first customer to get started" />
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {customers.map(c => (
+                <div key={c.id} onClick={() => loadCusUsers(c)}
+                  className={`flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-slate-50 transition-colors ${selected?.id === c.id ? "bg-blue-50" : ""}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600">
+                      {c.name[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-slate-700">{c.name}</p>
+                      <p className="text-[11px] text-slate-400">{c.email || c.city || "No details"}</p>
+                    </div>
+                  </div>
+                  {isAdmin && (
+                    <button onClick={e => { e.stopPropagation(); handleDeleteCustomer(c.id); }}
+                      className="p-1.5 rounded-lg hover:bg-red-50 text-slate-300 hover:text-red-500">
+                      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Selected customer users */}
+        <div className="bg-white rounded-2xl border shadow-sm overflow-hidden" style={{borderColor:"#D8E3F3"}}>
+          <div className="px-5 py-3.5 border-b border-slate-50 flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-700">
+              {selected ? `${selected.name} — Users` : "Select a customer"}
+            </p>
+            {selected && isAdmin && (
+              <button onClick={() => setShowNewUser(true)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-[#2F8CFF] hover:bg-blue-600 text-white text-xs font-semibold rounded-lg">
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add User
+              </button>
+            )}
+          </div>
+          {!selected ? (
+            <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
+              <svg className="w-8 h-8 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              <p className="text-xs">Click a customer to see their users</p>
+            </div>
+          ) : cusUsersLoading ? (
+            <div className="flex justify-center py-10"><Spinner /></div>
+          ) : cusUsers.length === 0 ? (
+            <Empty icon="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3" title="No users" sub="Add a CUSTOMER_USER to give scoped access" />
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {cusUsers.map(u => (
+                <div key={u.id} className="flex items-center justify-between px-5 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-600">
+                      {(u.first_name?.[0] || u.email[0]).toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-700">{u.first_name ? `${u.first_name} ${u.last_name || ""}`.trim() : u.email}</p>
+                      <p className="text-[11px] text-slate-400">{u.email}</p>
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-700">CUSTOMER_USER</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* New Customer Modal */}
+      {showNewCus && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <h3 className="text-sm font-semibold">New Customer</h3>
+              <button onClick={() => setShowNewCus(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {[["Name *", "name", "Acme Corp"], ["Email", "email", "contact@acme.com"], ["City", "city", "Kuala Lumpur"], ["Country", "country", "Malaysia"]].map(([label, key, ph]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                  <input className={INP} placeholder={ph} value={cusForm[key]}
+                    onChange={e => setCusForm(f => ({ ...f, [key]: e.target.value }))} />
+                </div>
+              ))}
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreateCustomer} disabled={saving || !cusForm.name.trim()}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create Customer"}
+              </button>
+              <button onClick={() => setShowNewCus(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Customer User Modal */}
+      {showNewUser && selected && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-semibold">Add User to {selected.name}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Creates a CUSTOMER_USER scoped to this customer</p>
+              </div>
+              <button onClick={() => setShowNewUser(false)} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400">
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              {[["Email *", "email", "user@example.com", "email"], ["Password *", "password", "Min 8 characters", "password"],
+                ["First Name", "first_name", "Optional", "text"], ["Last Name", "last_name", "Optional", "text"]].map(([label, key, ph, type]) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                  <input type={type} className={INP} placeholder={ph} value={userForm[key]}
+                    onChange={e => setUserForm(f => ({ ...f, [key]: e.target.value }))} />
+                </div>
+              ))}
+              <div className="bg-amber-50 rounded-lg p-2.5 text-xs text-amber-700">
+                This user will only see devices assigned to <strong>{selected.name}</strong>
+              </div>
+            </div>
+            <div className="px-5 pb-5 flex gap-2">
+              <button onClick={handleCreateUser} disabled={saving || !userForm.email || !userForm.password}
+                className="flex-1 py-2 bg-[#2F8CFF] hover:bg-blue-600 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                {saving ? "Creating…" : "Create User"}
+              </button>
+              <button onClick={() => setShowNewUser(false)} className="px-4 py-2 border border-slate-200 text-slate-600 text-sm rounded-xl">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -637,7 +1469,7 @@ function LoginPage({ onLogin }) {
 const PAGE_TITLES = {
   overview:"Overview", "user-dashboards":"My Dashboards", "device-dashboards":"Device Dashboards",
   devices:"Devices", alarms:"Alarms",
-  "rule-chains":"Rule Chains", customers:"Customers", settings:"Settings",
+  "rule-chains":"Rule Chains", customers:"Customers", users:"Users & Roles", settings:"Settings",
 };
 
 export default function App() {
@@ -686,7 +1518,8 @@ export default function App() {
           {page === "devices"            && <DevicesPage onOpenDrawer={setDrawer} onToast={showToast} />}
           {page === "alarms"             && <AlarmsPage onToast={showToast} />}
           {page === "rule-chains"        && <ComingSoon label="Rule Chains"  desc="Define automated workflows triggered by device telemetry." icon="M6 3v12m12-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6M6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6m12-9a9 9 0 0 1-9 9"/>}
-          {page === "customers"          && <ComingSoon label="Customers"    desc="Manage customer accounts and assign devices per tenant." icon="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm14 2v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>}
+          {page === "customers"          && <CustomersPage onToast={showToast} user={user} />}
+          {page === "users"              && <UsersPage onToast={showToast} user={user} />}
           {page === "settings"           && <SettingsPage user={user} onLogout={handleLogout} />}
         </main>
       </div>
