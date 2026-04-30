@@ -94,18 +94,18 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
   return (
-    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
+    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#0B1426"}}>
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-white/10 overflow-hidden">
         <div className="flex items-center justify-center flex-shrink-0" style={{width:col?32:28}}>
-          <img src="/taat-logo.png" alt="TAAT" style={{height:28, width:"auto", flexShrink:0}} />
+          <img src="/taat-logo.png" alt="TAAT" style={{height:32, width:"auto", flexShrink:0}} />
         </div>
-        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis IoT</span>}
+        {!col && <span className="font-bold text-white text-sm tracking-wide truncate">TriAxis IoT</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
+        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-white/30">Menu</p>}
         {NAV.map(({id,label,icon}) => (
           <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#2F8CFF]/20 text-[#2F8CFF] font-semibold":"text-white/60 hover:bg-white/5 hover:text-white"}`}>
             <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
             {!col && <span className="truncate">{label}</span>}
             {!col && id==="alarms" && alarmCount>0 && <span className="ml-auto bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">{alarmCount}</span>}
@@ -114,9 +114,9 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
           </button>
         ))}
       </nav>
-      <div className="border-t border-[#D8E3F3] p-3 space-y-2">
-        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
-        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <div className="border-t border-white/10 p-3 space-y-2">
+        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-white/5 transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-white truncate">{name}</p><p className="text-[10px] text-white/40">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
+        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-white/30 hover:text-white hover:bg-white/5 transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
     </aside>
   );
@@ -576,13 +576,13 @@ function LoginPage({ onLogin }) {
   if (showReset) return <ResetPasswordPage onBack={() => setShowReset(false)} />;
 
   return (
-    <div className="min-h-screen flex bg-slate-50">
-      <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"linear-gradient(160deg,#0f172a 0%,#1e3a8a 60%,#2563eb 100%)"}}>
-        <div className="flex items-center gap-3"><img src="/taat-logo.png" alt="TAAT" style={{height:36, width:"auto"}} /><span className="font-bold text-white text-base tracking-wide">TriAxis IoT</span></div>
-        <div><h2 className="text-4xl font-bold text-white leading-tight mb-4">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#3b82f6,#06b6d4)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-slate-400 text-sm leading-relaxed">TriAxis AI Technologies — Next-generation IoT management platform. Real-time dashboards, smart alarms, and device provisioning.</p></div>
-        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="bg-slate-800 rounded-xl p-4"><p className="text-sm font-bold text-white">{v}</p><p className="text-xs text-slate-500 mt-0.5">{l}</p></div>)}</div>
+    <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
+      <div className="hidden lg:flex flex-col justify-between w-96 p-10 flex-shrink-0" style={{background:"#0B1426"}}>
+        <div className="flex flex-col gap-3"><img src="/taat-logo.png" alt="TAAT" style={{height:56, width:"auto"}} /><span className="font-bold text-white text-lg tracking-wide">TriAxis IoT</span></div>
+        <div><h2 className="text-5xl font-bold text-white leading-tight mb-6">Connect,<br/>Monitor,<br/><span style={{background:"linear-gradient(135deg,#2F8CFF,#16B8E8)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Control.</span></h2><p className="text-blue-200/80 text-base leading-relaxed">Unified IoT platform for real-time visibility, intelligent alerts, and seamless device management — all in one place.</p></div>
+        <div className="grid grid-cols-2 gap-3">{[["FastAPI","Backend"],["PostgreSQL","Persistence"],["WebSocket","Real-time"],["TriAxis","Powered"]].map(([v,l])=><div key={l} className="rounded-xl p-4" style={{background:"rgba(255,255,255,0.07)"}}><p className="text-sm font-bold text-white">{v}</p><p className="text-xs text-slate-500 mt-0.5">{l}</p></div>)}</div>
       </div>
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8" style={{background:"#F4F8FF"}}>
         <div className="w-full max-w-sm">
           <h1 className="text-2xl font-bold text-slate-800 mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
           <p className="text-sm text-slate-400 mb-6">{tab==="signin"?"Sign in":"Register a new account"}</p>
