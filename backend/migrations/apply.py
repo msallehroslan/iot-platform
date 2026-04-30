@@ -310,3 +310,98 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "016_create_rpc_commands_table",
+        "desc": "Device RPC command queue for two-way device control",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS rpc_commands (
+                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                device_id    UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                method       VARCHAR(255) NOT NULL,
+                params       JSONB NOT NULL DEFAULT '{}',
+                status       VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                result       JSONB,
+                created_by   VARCHAR(255),
+                sent_at      TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                created_at   TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS ix_rpc_commands_device_status
+                ON rpc_commands (device_id, status);
+        """,
+    },
+    {
+        "id":   "017_create_widget_templates_table",
+        "desc": "Reusable widget config templates for cross-dashboard reuse",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS widget_templates (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id   UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                created_by  VARCHAR(255) NOT NULL,
+                name        VARCHAR(255) NOT NULL,
+                widget_type VARCHAR(50)  NOT NULL,
+                config      JSONB NOT NULL DEFAULT '{}',
+                is_public   BOOLEAN NOT NULL DEFAULT false,
+                created_at  TIMESTAMPTZ DEFAULT now(),
+                updated_at  TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS ix_widget_templates_tenant
+                ON widget_templates (tenant_id);
+        """,
+    },
+    {
+        "id":   "018_create_ingest_metrics_table",
+        "desc": "Rolling ingest rate counters for /metrics observability endpoint",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS ingest_metrics (
+                id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id UUID NOT NULL,
+                device_id UUID NOT NULL,
+                ts        TIMESTAMPTZ DEFAULT now(),
+                key_count INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS ix_ingest_metrics_tenant_ts
+                ON ingest_metrics (tenant_id, ts);
+        """,
+    },
+    {
+        "id":   "019_telemetry_partitioning_prep",
+        "desc": "Prepare telemetry_data for monthly partitioning (TimescaleDB-compatible structure)",
+        "sql":  """
+            -- Phase 3: Telemetry partitioning preparation.
+            --
+            -- Full native PostgreSQL partitioning requires recreating the table
+            -- which is destructive on live data. Instead we:
+            --
+            -- 1. Ensure the composite index is optimal for time-range queries
+            -- 2. Add a partial index on recent data (last 7 days) — this is what
+            --    Postgres query planner uses most for live dashboards
+            -- 3. Document the migration path to full partitioning
+            --
+            -- To upgrade to full partitioning on a maintenance window:
+            --   CREATE TABLE telemetry_data_new (LIKE telemetry_data INCLUDING ALL)
+            --     PARTITION BY RANGE (ts);
+            --   CREATE TABLE telemetry_data_2026_01 PARTITION OF telemetry_data_new
+            --     FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+            --   ... create partitions per month ...
+            --   INSERT INTO telemetry_data_new SELECT * FROM telemetry_data;
+            --   ALTER TABLE telemetry_data RENAME TO telemetry_data_old;
+            --   ALTER TABLE telemetry_data_new RENAME TO telemetry_data;
+            --
+            -- TimescaleDB alternative (zero downtime):
+            --   SELECT create_hypertable('telemetry_data', 'ts', migrate_data => true);
+            --   This converts the existing table in-place.
+
+            -- Hot-path index: latest values per device+key (used by every dashboard load)
+            CREATE INDEX IF NOT EXISTS ix_telemetry_hot
+                ON telemetry_data (device_id, key, ts DESC)
+                WHERE ts > NOW() - INTERVAL '7 days';
+
+            -- Analyse to update planner statistics after index creation
+            ANALYZE telemetry_data;
+        """,
+    },
+]

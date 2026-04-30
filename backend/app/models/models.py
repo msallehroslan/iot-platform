@@ -331,3 +331,76 @@ class RateLimit(Base):
     request_count = Column(Integer, default=1, nullable=False)
     window_start  = Column(DateTime(timezone=True), nullable=False)
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ── Phase 3: RPC Commands ─────────────────────────────────────────────────────
+
+class RpcCommandStatus(str, enum.Enum):
+    PENDING   = "PENDING"
+    SENT      = "SENT"
+    COMPLETED = "COMPLETED"
+    FAILED    = "FAILED"
+    TIMEOUT   = "TIMEOUT"
+
+
+class RpcCommand(Base):
+    """
+    Commands sent from dashboard to devices.
+    Stored in DB for audit trail and HTTP polling fallback.
+    """
+    __tablename__ = "rpc_commands"
+    __table_args__ = (
+        Index("ix_rpc_commands_device_status", "device_id", "status"),
+    )
+
+    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    device_id    = Column(UUID(as_uuid=True), ForeignKey("devices.id", ondelete="CASCADE"), nullable=False, index=True)
+    method       = Column(String(255), nullable=False)   # e.g. "setValue", "toggle", "reboot"
+    params       = Column(JSON, nullable=False, default=dict)
+    status       = Column(String(20), nullable=False, default="PENDING")
+    result       = Column(JSON, nullable=True)
+    created_by   = Column(String(255), nullable=True)    # user_id who sent it
+    sent_at      = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Phase 3: Widget Templates ─────────────────────────────────────────────────
+
+class WidgetTemplate(Base):
+    """
+    Reusable widget configurations saved by users.
+    A template captures widget_type + config so the same widget
+    can be quickly added to multiple dashboards without reconfiguring.
+    """
+    __tablename__ = "widget_templates"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id   = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by  = Column(String(255), nullable=False)    # user_id
+    name        = Column(String(255), nullable=False)
+    widget_type = Column(String(50),  nullable=False)
+    config      = Column(JSON, nullable=False, default=dict)
+    is_public   = Column(Boolean, default=False)         # visible to all tenant users
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at  = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ── Phase 3: Ingest Metrics ───────────────────────────────────────────────────
+
+class IngestMetric(Base):
+    """
+    Rolling 1-minute ingest rate counters per tenant.
+    Written on every ingest; read by /metrics endpoint.
+    Old rows purged by the daily cleanup task.
+    """
+    __tablename__ = "ingest_metrics"
+    __table_args__ = (
+        Index("ix_ingest_metrics_tenant_ts", "tenant_id", "ts"),
+    )
+
+    id        = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    device_id = Column(UUID(as_uuid=True), nullable=False)
+    ts        = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    key_count = Column(Integer, default=1)

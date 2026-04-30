@@ -408,3 +408,166 @@ class DashboardListItem(BaseModel):
     widget_count: int = 0
     class Config:
         from_attributes = True
+
+
+# ── Phase 3: RPC ──────────────────────────────────────────────────────────────
+
+class RpcCommandCreate(BaseModel):
+    method: str
+    params: Optional[Dict[str, Any]] = {}
+
+    @field_validator("method")
+    @classmethod
+    def validate_method(cls, v):
+        if not v or not v.strip():
+            raise ValueError("method must not be empty")
+        if len(v) > 128:
+            raise ValueError("method must be <= 128 characters")
+        return v.strip()
+
+
+class RpcCommandOut(BaseModel):
+    id:           UUID
+    device_id:    UUID
+    method:       str
+    params:       Dict[str, Any]
+    status:       str
+    result:       Optional[Dict[str, Any]] = None
+    created_by:   Optional[str] = None
+    sent_at:      Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_at:   datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── Phase 3: Widget Templates ─────────────────────────────────────────────────
+
+class WidgetTemplateCreate(BaseModel):
+    name:        str
+    widget_type: str
+    config:      Dict[str, Any] = {}
+    is_public:   bool = False
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError("name must not be empty")
+        return v.strip()
+
+
+class WidgetTemplateOut(BaseModel):
+    id:          UUID
+    tenant_id:   UUID
+    created_by:  str
+    name:        str
+    widget_type: str
+    config:      Dict[str, Any]
+    is_public:   bool
+    created_at:  datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ── Phase 3: Widget config validation schemas ──────────────────────────────────
+# Each widget type declares its required config fields.
+# Validated server-side before saving. Clients can also use these to
+# build type-safe forms.
+
+WIDGET_CONFIG_SCHEMAS: Dict[str, Dict] = {
+    "value_card": {
+        "required": ["key"],
+        "optional": ["label", "unit", "color", "decimals", "threshold_high", "device_id"],
+    },
+    "line_chart": {
+        "required": ["key"],
+        "optional": ["color", "device_id"],
+    },
+    "bar_chart": {
+        "required": ["key"],
+        "optional": ["color", "device_id"],
+    },
+    "multi_axis_chart": {
+        "required": ["keys"],
+        "optional": ["colors", "device_id"],
+    },
+    "gauge": {
+        "required": ["key"],
+        "optional": ["min", "max", "unit", "color", "label", "device_id"],
+    },
+    "status_light": {
+        "required": [],
+        "optional": ["key", "label", "device_id"],
+    },
+    "alarm_list": {
+        "required": [],
+        "optional": ["device_id"],
+    },
+    "timeseries_table": {
+        "required": ["key"],
+        "optional": ["unit", "decimals", "device_id"],
+    },
+    "pie_chart": {
+        "required": ["keys"],
+        "optional": ["device_id"],
+    },
+    "markdown": {
+        "required": ["content"],
+        "optional": [],
+    },
+    "entity_table": {
+        "required": [],
+        "optional": ["device_id"],
+    },
+    "html_card": {
+        "required": ["content"],
+        "optional": ["decimals", "device_id"],
+    },
+    "rpc_button": {
+        "required": ["method"],
+        "optional": ["label", "params", "color", "device_id"],
+    },
+    "rpc_toggle": {
+        "required": ["method_on", "method_off", "key"],
+        "optional": ["label", "color", "device_id"],
+    },
+    "map": {
+        "required": ["lat_key", "lng_key"],
+        "optional": ["label", "zoom", "device_id"],
+    },
+    "device_summary": {
+        "required": [],
+        "optional": ["keys", "device_id"],
+    },
+}
+
+
+def validate_widget_config(widget_type: str, config: Dict[str, Any]) -> List[str]:
+    """
+    Validate widget config against its schema.
+    Returns list of error messages (empty = valid).
+    Unknown widget types pass through (forward compatibility).
+    """
+    schema = WIDGET_CONFIG_SCHEMAS.get(widget_type)
+    if not schema:
+        return []  # unknown type — allow (forward compat)
+    errors = []
+    for field in schema.get("required", []):
+        if field not in config or config[field] is None or config[field] == "":
+            errors.append(f"Widget type '{widget_type}' requires config field: '{field}'")
+    return errors
+
+
+# ── Phase 3: Metrics ──────────────────────────────────────────────────────────
+
+class PlatformMetrics(BaseModel):
+    active_devices:      int
+    active_ws_clients:   int
+    ingest_rate_per_min: int     # events in last 60 seconds
+    total_devices:       int
+    total_alarms_active: int
+    tenant_id:           str
+    ts:                  datetime

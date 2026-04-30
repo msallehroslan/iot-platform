@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from app.models.models import (
     Alarm, AlarmStatus,
     Device, DeviceStatus,
-    LatestTelemetry, TelemetryData, TelemetryKey, ThresholdRule,
+    LatestTelemetry, TelemetryData, TelemetryKey, ThresholdRule, IngestMetric,
 )
 
 import uuid
@@ -179,8 +179,8 @@ def _process_alarm_for_rule(
                     "message":   f"{key} {rule.condition} {rule.threshold} (current={value_num})",
                 },
             ))
-            logger.debug(
-                "Alarm TRIGGERED device=%s key=%s value=%s alarm_type=%s",
+            logger.info(
+                "alarm.triggered device=%s key=%s value=%s alarm_type=%s",
                 device.id, key, value_num, rule.alarm_type,
             )
         else:
@@ -212,8 +212,8 @@ def _process_alarm_for_rule(
                     f"(current={value_num})"
                 ),
             }
-            logger.debug(
-                "Alarm AUTO-CLEARED device=%s key=%s value=%s alarm_type=%s status=%s",
+            logger.info(
+                "alarm.cleared device=%s key=%s value=%s alarm_type=%s status=%s",
                 device.id, key, value_num, rule.alarm_type, active_alarm.status,
             )
 
@@ -363,10 +363,20 @@ async def ingest_telemetry(
 
     # Single transaction commit
     db.commit()
-    logger.debug(
-        "ingest ok  source=%-4s  device=%s  keys=%d  ts=%s",
-        source, device.id, keys_saved, ts.isoformat(),
+    logger.info(
+        "telemetry.ingest source=%s device=%s tenant=%s keys=%d ts=%s",
+        source, device.id, device.tenant_id, keys_saved, ts.isoformat(),
     )
+    # Write ingest metric row for /metrics observability endpoint
+    try:
+        db.add(IngestMetric(
+            tenant_id=device.tenant_id,
+            device_id=device.id,
+            key_count=keys_saved,
+        ))
+        db.commit()
+    except Exception:
+        pass  # metric write failure never blocks ingest
 
     # WebSocket broadcast (non-fatal)
     try:

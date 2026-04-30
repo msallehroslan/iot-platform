@@ -678,17 +678,26 @@ export function HtmlCard({ config, liveTelem }) {
 // ── Master registry + dispatcher ──────────────────────────────────────────────
 
 export const WIDGET_REGISTRY = [
-  { id: "value_card",       label: "Value Card",      icon: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8",             desc: "Large number + sparkline" },
-  { id: "line_chart",       label: "Line Chart",      icon: "M22 12h-4l-3 9L9 3l-3 9H2",                                            desc: "Time-series history" },
-  { id: "gauge",            label: "Gauge",           icon: "M12 22a10 10 0 0 0 7.07-17.07M5 19.07A10 10 0 0 1 12 2",              desc: "Circular gauge with min/max" },
-  { id: "status_light",     label: "Status Light",    icon: "M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z",                           desc: "Online / offline indicator" },
-  { id: "bar_chart",        label: "Bar Chart",       icon: "M12 20V10M6 20V4M18 20v-4",                                           desc: "Multi-key comparison bars" },
-  { id: "alarm_list",       label: "Alarm List",      icon: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0", desc: "Active alarms" },
-  { id: "timeseries_table", label: "History Table",   icon: "M3 10h18M3 6h18M3 14h18M3 18h18",                                     desc: "Raw telemetry rows" },
-  { id: "pie_chart",        label: "Pie / Donut",     icon: "M21.21 15.89A10 10 0 1 1 8 2.83",                                     desc: "Distribution of keys" },
-  { id: "markdown",         label: "Text / Markdown", icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",         desc: "Free-text notes" },
-  { id: "entity_table",     label: "Entity Table",    icon: "M4 6h16M4 10h16M4 14h16M4 18h16",                                     desc: "All keys + live values" },
-  { id: "html_card",        label: "HTML Card",       icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",        desc: "Custom HTML with ${key}" },
+  // ── Data widgets ─────────────────────────────────────────────────────────
+  { id: "value_card",        label: "Value Card",        icon: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8",             desc: "Large number + sparkline",         category: "data" },
+  { id: "line_chart",        label: "Line Chart",        icon: "M22 12h-4l-3 9L9 3l-3 9H2",                                            desc: "Single-key time-series",           category: "data" },
+  { id: "multi_axis_chart",  label: "Multi-axis Chart",  icon: "M3 3v18h18M7 16l4-8 4 4 4-6",                                          desc: "Multiple keys on one chart",       category: "data" },
+  { id: "bar_chart",         label: "Bar Chart",         icon: "M12 20V10M6 20V4M18 20v-4",                                            desc: "Bar chart over time",              category: "data" },
+  { id: "gauge",             label: "Gauge",             icon: "M12 22a10 10 0 0 0 7.07-17.07M5 19.07A10 10 0 0 1 12 2",               desc: "Circular gauge with min/max",      category: "data" },
+  { id: "pie_chart",         label: "Pie / Donut",       icon: "M21.21 15.89A10 10 0 1 1 8 2.83",                                      desc: "Distribution across keys",         category: "data" },
+  { id: "timeseries_table",  label: "History Table",     icon: "M3 10h18M3 6h18M3 14h18M3 18h18",                                      desc: "Raw telemetry rows",               category: "data" },
+  { id: "entity_table",      label: "Entity Table",      icon: "M4 6h16M4 10h16M4 14h16M4 18h16",                                      desc: "All latest key-value pairs",       category: "data" },
+  // ── Status widgets ───────────────────────────────────────────────────────
+  { id: "status_light",      label: "Status Light",      icon: "M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20z",                            desc: "Online / offline indicator",       category: "status" },
+  { id: "device_summary",    label: "Device Summary",    icon: "M5 12h14M12 5l7 7-7 7",                                                desc: "Last seen, status + key metrics",  category: "status" },
+  { id: "alarm_list",        label: "Alarm List",        icon: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0", desc: "Active alarms for device",        category: "status" },
+  { id: "map",               label: "Map (GPS)",         icon: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z", desc: "Device location from lat/lng",    category: "status" },
+  // ── Control widgets ──────────────────────────────────────────────────────
+  { id: "rpc_button",        label: "RPC Button",        icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Send command on click",            category: "control" },
+  { id: "rpc_toggle",        label: "RPC Toggle",        icon: "M18.36 6.64A9 9 0 1 1 5.64 17.36",                                     desc: "ON/OFF toggle command",            category: "control" },
+  // ── Content widgets ──────────────────────────────────────────────────────
+  { id: "markdown",          label: "Text / Markdown",   icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",          desc: "Free-text notes",                  category: "content" },
+  { id: "html_card",         label: "HTML Card",         icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",         desc: "Custom HTML with \${key} values",  category: "content" },
 ];
 
 /**
@@ -735,22 +744,295 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
   const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id, deviceLastSeen };
 
   switch (widget.widget_type) {
-    case "value_card":       return <ValueCard       {...props} />;
-    case "line_chart":       return <LineChartWidget {...props} />;
-    case "gauge":            return <GaugeWidget     {...props} />;
-    case "status_light":     return <StatusLight     {...props} />;
-    case "bar_chart":        return <BarChartWidget  {...props} />;
-    case "alarm_list":       return <AlarmListWidget {...props} />;
-    case "timeseries_table": return <TimeseriesTable {...props} />;
-    case "pie_chart":        return <PieChartWidget  {...props} />;
-    case "markdown":         return <MarkdownWidget  {...props} />;
-    case "entity_table":     return <EntityTable     {...props} />;
-    case "html_card":        return <HtmlCard        {...props} />;
+    // ── Data ─────────────────────────────────────────────────────────────
+    case "value_card":        return <ValueCard            {...props} />;
+    case "line_chart":        return <LineChartWidget      {...props} />;
+    case "multi_axis_chart":  return <MultiAxisChartWidget {...props} />;
+    case "gauge":             return <GaugeWidget          {...props} />;
+    case "status_light":      return <StatusLight          {...props} />;
+    case "bar_chart":         return <BarChartWidget       {...props} />;
+    case "alarm_list":        return <AlarmListWidget      {...props} />;
+    case "timeseries_table":  return <TimeseriesTable      {...props} />;
+    case "pie_chart":         return <PieChartWidget       {...props} />;
+    case "markdown":          return <MarkdownWidget       {...props} />;
+    case "entity_table":      return <EntityTable          {...props} />;
+    case "html_card":         return <HtmlCard             {...props} />;
+    // ── Phase 3 new ───────────────────────────────────────────────────────
+    case "map":               return <MapWidget            {...props} />;
+    case "device_summary":    return <DeviceSummaryWidget  {...props} />;
+    case "rpc_button":        return <RpcButtonWidget      {...props} />;
+    case "rpc_toggle":        return <RpcToggleWidget      {...props} />;
     default:
       return (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 12, color: "#94a3b8" }}>
-          Unknown type: {widget.widget_type}
+          Unknown widget type: {widget.widget_type}
         </div>
       );
   }
+}
+
+// ── Phase 3: Multi-axis Chart ─────────────────────────────────────────────────
+// Shows multiple telemetry keys on one chart with a shared time axis.
+// Each key gets its own colour and Y-axis label.
+const MULTI_COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4"];
+
+export function MultiAxisChartWidget({ config, historyData, deviceId }) {
+  const keys = config.keys || [];
+  if (!keys.length) return (
+    <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8" }}>
+      Configure keys in Edit
+    </div>
+  );
+  const W=460, H=160, pad={t:8,r:8,b:24,l:36};
+  const w=W-pad.l-pad.r, h=H-pad.t-pad.b;
+
+  // Build series: [{key, pts:[{ts,value}], color}]
+  const series = keys.map((k,i)=>({
+    key: k,
+    pts: (historyData?.[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0})),
+    color: config.colors?.[i] || MULTI_COLORS[i%MULTI_COLORS.length],
+  })).filter(s=>s.pts.length>1);
+
+  if (!series.length) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:6}}>
+      <p style={{fontSize:11,color:"#94a3b8"}}>Waiting for data…</p>
+    </div>
+  );
+
+  // Shared X domain from all series
+  const allTs = series.flatMap(s=>s.pts.map(p=>new Date(p.ts).getTime()));
+  const minTs = Math.min(...allTs), maxTs = Math.max(...allTs);
+  const px = ts => pad.l + ((new Date(ts).getTime()-minTs)/(maxTs-minTs||1))*w;
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:4}}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",flex:1}}>
+        {/* Grid lines */}
+        {[0,0.25,0.5,0.75,1].map(t=>(
+          <line key={t} x1={pad.l} y1={pad.t+h*t} x2={pad.l+w} y2={pad.t+h*t} stroke="#f1f5f9" strokeWidth="1"/>
+        ))}
+        {/* Each series */}
+        {series.map(s=>{
+          const vals=s.pts.map(p=>p.value);
+          const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
+          const py=v=>pad.t+h-((v-mn)/rng)*h;
+          const d=s.pts.map((p,i)=>`${i===0?"M":"L"}${px(p.ts).toFixed(1)},${py(p.value).toFixed(1)}`).join(" ");
+          return <path key={s.key} d={d} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>;
+        })}
+        {/* Time labels */}
+        {series[0].pts.filter((_,i,a)=>i===0||i===Math.floor(a.length/2)||i===a.length-1).map((p,i)=>(
+          <text key={i} x={px(p.ts)} y={pad.t+h+16} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+            {new Date(p.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+          </text>
+        ))}
+      </svg>
+      {/* Legend */}
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",paddingLeft:pad.l}}>
+        {series.map(s=>(
+          <div key={s.key} style={{display:"flex",alignItems:"center",gap:4}}>
+            <div style={{width:10,height:3,borderRadius:2,background:s.color}}/>
+            <span style={{fontSize:10,color:"#64748b"}}>{s.key}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Phase 3: Map Widget ───────────────────────────────────────────────────────
+// Displays device GPS location using lat/lng telemetry keys.
+// Uses OpenStreetMap tile URL as an img src — no JS map library needed.
+
+export function MapWidget({ config, liveTelem }) {
+  const latKey = config.lat_key || "lat";
+  const lngKey = config.lng_key || "lng";
+  const lat = parseFloat(liveTelem?.[latKey]);
+  const lng = parseFloat(liveTelem?.[lngKey]);
+  const zoom = config.zoom || 14;
+
+  if (isNaN(lat) || isNaN(lng)) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8}}>
+      <svg style={{width:28,height:28,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 14 8 14s8-8.75 8-14a8 8 0 0 0-8-8z"/>
+      </svg>
+      <p style={{fontSize:11,color:"#94a3b8"}}>
+        {config.lat_key ? `Waiting for ${latKey}/${lngKey}…` : "Configure lat_key and lng_key"}
+      </p>
+    </div>
+  );
+
+  // Static map tile via OpenStreetMap (no API key needed)
+  const tileUrl = `https://tile.openstreetmap.org/${zoom}/${Math.floor((lng+180)/360*Math.pow(2,zoom))}/${Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,zoom))}.png`;
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:0,borderRadius:8,overflow:"hidden",position:"relative"}}>
+      <div style={{flex:1,background:"#e2e8f0",position:"relative",overflow:"hidden"}}>
+        {/* Fallback colored map with pin */}
+        <div style={{width:"100%",height:"100%",background:"linear-gradient(135deg,#dbeafe 0%,#bfdbfe 50%,#93c5fd 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{textAlign:"center"}}>
+            <svg style={{width:24,height:24,color:"#ef4444"}} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 14 8 14s8-8.75 8-14a8 8 0 0 0-8-8zm0 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+      <div style={{padding:"6px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between"}}>
+        <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
+        <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=${zoom}/${lat}/${lng}`}
+           target="_blank" rel="noopener noreferrer"
+           style={{fontSize:10,color:"#3b82f6",textDecoration:"none"}}>Open Map ↗</a>
+      </div>
+    </div>
+  );
+}
+
+// ── Phase 3: Device Summary Widget ────────────────────────────────────────────
+// Shows device metadata: status, last seen, and configurable key metrics.
+
+export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen }) {
+  const OFFLINE_MS = 5 * 60 * 1000;
+  const status = !deviceLastSeen ? "UNKNOWN"
+    : (Date.now() - new Date(deviceLastSeen).getTime()) < OFFLINE_MS ? "ONLINE" : "OFFLINE";
+  const STATUS_COLOR = {ONLINE:"#10b981",OFFLINE:"#94a3b8",UNKNOWN:"#f59e0b"};
+  const keys = config.keys || Object.keys(liveTelem||{}).slice(0,4);
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:8,padding:"2px 0"}}>
+      {/* Status row */}
+      <div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:6,borderBottom:"1px solid #f1f5f9"}}>
+        <div style={{width:10,height:10,borderRadius:"50%",background:STATUS_COLOR[status],flexShrink:0}}/>
+        <span style={{fontSize:13,fontWeight:600,color:STATUS_COLOR[status]}}>{status}</span>
+        {deviceLastSeen && (
+          <span style={{fontSize:10,color:"#94a3b8",marginLeft:"auto"}}>
+            {new Date(deviceLastSeen).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+      {/* Key metrics grid */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,flex:1}}>
+        {keys.map(k=>{
+          const v = liveTelem?.[k];
+          return (
+            <div key={k} style={{background:"#f8fafc",borderRadius:6,padding:"6px 8px"}}>
+              <p style={{fontSize:9,color:"#94a3b8",textTransform:"uppercase",letterSpacing:"0.05em",margin:"0 0 2px"}}>{k}</p>
+              <p style={{fontSize:14,fontWeight:700,color:"#1e293b",margin:0,fontFamily:"monospace"}}>
+                {v !== undefined ? (typeof v==="number" ? v.toFixed(1) : String(v)) : "—"}
+              </p>
+            </div>
+          );
+        })}
+        {!keys.length && (
+          <div style={{gridColumn:"1/-1",display:"flex",alignItems:"center",justifyContent:"center",height:60}}>
+            <p style={{fontSize:11,color:"#94a3b8"}}>No telemetry received yet</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Phase 3: RPC Button Widget ────────────────────────────────────────────────
+// One-shot command button. Sends a named RPC method to the device.
+
+export function RpcButtonWidget({ config, deviceId }) {
+  const [state, setState] = useState("idle"); // idle | sending | done | error
+  const label  = config.label  || config.method || "Send Command";
+  const color  = config.color  || "#3b82f6";
+  const method = config.method || "";
+
+  if (!method || !deviceId) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8"}}>
+      Configure method in Edit
+    </div>
+  );
+
+  const send = async () => {
+    if (state === "sending") return;
+    setState("sending");
+    try {
+      const token = localStorage.getItem("access_token");
+      const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
+      await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body: JSON.stringify({method, params: config.params||{}}),
+      });
+      setState("done");
+      setTimeout(()=>setState("idle"), 2000);
+    } catch {
+      setState("error");
+      setTimeout(()=>setState("idle"), 2000);
+    }
+  };
+
+  const BG = {idle:color, sending:"#94a3b8", done:"#10b981", error:"#ef4444"}[state];
+  const LABEL = {idle:label, sending:"Sending…", done:"Sent ✓", error:"Error ✗"}[state];
+
+  return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}>
+      <button onClick={send} style={{
+        padding:"12px 28px", borderRadius:10, border:"none", cursor:state==="sending"?"wait":"pointer",
+        background:BG, color:"white", fontSize:14, fontWeight:600,
+        transition:"background .3s", minWidth:120,
+      }}>
+        {LABEL}
+      </button>
+    </div>
+  );
+}
+
+// ── Phase 3: RPC Toggle Widget ────────────────────────────────────────────────
+// ON/OFF toggle. Reads current state from liveTelem, sends method_on/method_off.
+
+export function RpcToggleWidget({ config, liveTelem, deviceId }) {
+  const key       = config.key       || "";
+  const methodOn  = config.method_on || "turnOn";
+  const methodOff = config.method_off|| "turnOff";
+  const label     = config.label     || key || "Toggle";
+  const color     = config.color     || "#10b981";
+
+  const rawVal    = liveTelem?.[key];
+  const isOn      = rawVal === true || rawVal === 1 || rawVal === "1" || rawVal === "true" || rawVal === "ON";
+  const [sending, setSending] = useState(false);
+
+  if (!deviceId) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8"}}>
+      Configure device + key in Edit
+    </div>
+  );
+
+  const toggle = async () => {
+    if (sending) return;
+    setSending(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
+      await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
+        body: JSON.stringify({method: isOn ? methodOff : methodOn, params:{}}),
+      });
+    } catch {}
+    setTimeout(()=>setSending(false), 1500);
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12}}>
+      <button onClick={toggle} style={{
+        width:60, height:32, borderRadius:16, border:"none", cursor:sending?"wait":"pointer",
+        background: isOn ? color : "#e2e8f0",
+        position:"relative", transition:"background .3s",
+      }}>
+        <span style={{
+          position:"absolute", top:4, left: isOn ? 32 : 4,
+          width:24, height:24, borderRadius:"50%", background:"white",
+          boxShadow:"0 1px 4px rgba(0,0,0,.2)", transition:"left .3s",
+        }}/>
+      </button>
+      <div style={{textAlign:"center"}}>
+        <p style={{fontSize:13,fontWeight:600,color: isOn ? color : "#94a3b8",margin:0}}>{isOn?"ON":"OFF"}</p>
+        <p style={{fontSize:10,color:"#94a3b8",margin:"2px 0 0"}}>{label}</p>
+      </div>
+    </div>
+  );
 }

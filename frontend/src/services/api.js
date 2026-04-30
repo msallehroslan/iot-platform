@@ -153,3 +153,22 @@ export const thresholdApi = {
   update: (id, body) => apiFetch(`/threshold-rules/${id}`, { method: "PUT",  body: JSON.stringify(body) }),
   delete: id         => apiFetch(`/threshold-rules/${id}`, { method: "DELETE" }),
 };
+
+// ── RPC ───────────────────────────────────────────────────────────────────────
+export const rpcApi = {
+  send:    (deviceId, body) => apiFetch(`/rpc/${deviceId}`,  { method: "POST", body: JSON.stringify(body) }),
+  history: (deviceId, status) => apiFetch(`/rpc/${deviceId}${status ? `?status=${status}` : ""}`),
+};
+
+// ── Widget Templates ──────────────────────────────────────────────────────────
+export const widgetTemplateApi = {
+  list:   ()         => apiFetch("/widget-templates/"),
+  create: body       => apiFetch("/widget-templates/",       { method: "POST",   body: JSON.stringify(body) }),
+  get:    id         => apiFetch(`/widget-templates/${id}`),
+  delete: id         => apiFetch(`/widget-templates/${id}`,  { method: "DELETE" }),
+};
+
+// ── Metrics ───────────────────────────────────────────────────────────────────
+export const metricsApi = {
+  get: () => apiFetch("/metrics/"),
+};

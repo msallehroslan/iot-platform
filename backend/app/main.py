@@ -129,6 +129,9 @@ app.include_router(dashboards.router,        prefix="/api/v1")
 app.include_router(ws.router,                prefix="/api/v1")
 app.include_router(user_dashboards.router,   prefix="/api/v1")
 app.include_router(threshold_rules.router,   prefix="/api/v1")
+app.include_router(rpc.router,               prefix="/api/v1")
+app.include_router(widget_templates.router,  prefix="/api/v1")
+app.include_router(metrics.router,           prefix="/api/v1")
 
 
 @app.get("/", tags=["System"])
