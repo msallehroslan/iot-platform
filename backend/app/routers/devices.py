@@ -1,9 +1,9 @@
 """
-app/routers/devices.py — Device CRUD with RBAC enforcement.
+app/routers/devices.py — Device CRUD endpoints.
 
-TENANT_ADMIN  — full CRUD
-TENANT_USER   — read-only (list, get)
-CUSTOMER_USER — read-only, filtered to their customer_id
+IMPORTANT: Static routes (/provisioning-key, /provision) must be defined
+BEFORE the dynamic route (/{device_id}) to prevent FastAPI from matching
+the literal string as a UUID path parameter.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -33,7 +33,7 @@ def _fetch_device(device_id: UUID, db: Session) -> Device:
     return device
 
 
-# ── Read endpoints — all authenticated roles ──────────────────────────────────
+# ── Static routes first — MUST come before /{device_id} ─────────────────────
 
 @router.get("/", response_model=PaginatedDevices)
 def list_devices(
@@ -44,94 +44,14 @@ def list_devices(
     current_user: User = Depends(get_current_user),
 ):
     query = db.query(Device).filter(Device.tenant_id == current_user.tenant_id)
-
-    # CUSTOMER_USER sees only their assigned devices
     if current_user.role == "CUSTOMER_USER":
         query = query.filter(Device.customer_id == current_user.customer_id)
-
     if search:
         query = query.filter(Device.name.ilike(f"%{search}%"))
-
     total = query.count()
     items = query.offset((page - 1) * page_size).limit(page_size).all()
     return PaginatedDevices(total=total, page=page, page_size=page_size, items=items)
 
-
-@router.get("/{device_id}", response_model=DeviceOut)
-def get_device(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    device = _fetch_device(device_id, db)
-    return assert_device_access(device, current_user)
-
-
-# ── Write endpoints — TENANT_ADMIN only ──────────────────────────────────────
-
-@router.post("/", response_model=DeviceWithToken, status_code=201)
-def create_device(
-    device_in: DeviceCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    device = Device(
-        name=device_in.name,
-        device_type=device_in.device_type,
-        label=device_in.label,
-        description=device_in.description,
-        additional_info=device_in.additional_info,
-        tenant_id=current_user.tenant_id,
-        customer_id=device_in.customer_id,
-        token=str(uuid.uuid4()),
-        status=DeviceStatus.INACTIVE,
-    )
-    db.add(device)
-    db.commit()
-    db.refresh(device)
-    return device
-
-
-@router.put("/{device_id}", response_model=DeviceOut)
-def update_device(
-    device_id: UUID,
-    device_in: DeviceUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    device = assert_device_access(_fetch_device(device_id, db), current_user)
-    for field, value in device_in.model_dump(exclude_unset=True).items():
-        setattr(device, field, value)
-    db.commit()
-    db.refresh(device)
-    return device
-
-
-@router.delete("/{device_id}", status_code=204)
-def delete_device(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    device = assert_device_access(_fetch_device(device_id, db), current_user)
-    db.delete(device)
-    db.commit()
-
-
-@router.post("/{device_id}/token/regenerate", response_model=DeviceWithToken)
-def regenerate_token(
-    device_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin),
-):
-    device = assert_device_access(_fetch_device(device_id, db), current_user)
-    device.token = str(uuid.uuid4())
-    db.commit()
-    db.refresh(device)
-    return device
-
-
-# ── Provisioning — admin only ─────────────────────────────────────────────────
 
 @router.get("/provisioning-key", response_model=ProvisioningKeyOut)
 def get_provisioning_key(
@@ -190,3 +110,76 @@ def provision_device(body: ProvisionRequest, db: Session = Depends(get_db)):
         device_id=str(device.id), name=device.name,
         token=device.token, status=device.status.value,
     )
+
+
+@router.post("/", response_model=DeviceWithToken, status_code=201)
+def create_device(
+    device_in: DeviceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    device = Device(
+        name=device_in.name,
+        device_type=device_in.device_type,
+        label=device_in.label,
+        description=device_in.description,
+        additional_info=device_in.additional_info,
+        tenant_id=current_user.tenant_id,
+        customer_id=device_in.customer_id,
+        token=str(uuid.uuid4()),
+        status=DeviceStatus.INACTIVE,
+    )
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+# ── Dynamic routes — after all static routes ─────────────────────────────────
+
+@router.get("/{device_id}", response_model=DeviceOut)
+def get_device(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return assert_device_access(_fetch_device(device_id, db), current_user)
+
+
+@router.put("/{device_id}", response_model=DeviceOut)
+def update_device(
+    device_id: UUID,
+    device_in: DeviceUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    device = assert_device_access(_fetch_device(device_id, db), current_user)
+    for field, value in device_in.model_dump(exclude_unset=True).items():
+        setattr(device, field, value)
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+@router.delete("/{device_id}", status_code=204)
+def delete_device(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    device = assert_device_access(_fetch_device(device_id, db), current_user)
+    db.delete(device)
+    db.commit()
+
+
+@router.post("/{device_id}/token/regenerate", response_model=DeviceWithToken)
+def regenerate_token(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin),
+):
+    device = assert_device_access(_fetch_device(device_id, db), current_user)
+    device.token = str(uuid.uuid4())
+    db.commit()
+    db.refresh(device)
+    return device
