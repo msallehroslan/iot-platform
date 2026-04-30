@@ -62,27 +62,33 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # FIX 8: offline detection — mark devices INACTIVE if no ingest for 5 min
+    # FIX 8: offline detection — check every 2 minutes, not every 60s
     from app.models.models import Device, DeviceStatus
     from datetime import datetime, timezone, timedelta
+    from sqlalchemy import update as sa_update
 
     async def _offline_check():
         while True:
-            await _asyncio.sleep(60)  # check every minute
+            await _asyncio.sleep(120)  # every 2 min — less pool pressure
             db = SessionLocal()
             try:
                 cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-                stale = db.query(Device).filter(
-                    Device.status == DeviceStatus.ACTIVE,
-                    Device.last_seen_at < cutoff,
-                ).all()
-                for d in stale:
-                    d.status = DeviceStatus.INACTIVE
-                if stale:
+                # Single UPDATE instead of SELECT + loop
+                result = db.execute(
+                    sa_update(Device)
+                    .where(Device.status == DeviceStatus.ACTIVE)
+                    .where(Device.last_seen_at < cutoff)
+                    .values(status=DeviceStatus.INACTIVE)
+                )
+                if result.rowcount:
                     db.commit()
-                    logger.info("Marked %d device(s) INACTIVE (no data for 5m)", len(stale))
+                    logger.info("Marked %d device(s) INACTIVE", result.rowcount)
+                else:
+                    db.rollback()
             except Exception as exc:
                 logger.error("Offline check failed: %s", exc)
+                try: db.rollback()
+                except: pass
             finally:
                 db.close()
 
