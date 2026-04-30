@@ -601,15 +601,16 @@ function LoginPage({ onLogin }) {
 
       {/* RIGHT — illustration + sign-in form */}
       <div className="relative flex-1 flex items-center justify-center p-8 overflow-hidden" style={{background:"#F4F8FF"}}>
-        {/* Industrial illustration as backdrop */}
+        {/* Industrial illustration — sits on the right half, behind the form */}
         <img
           src="/industrial_iot_illustration.png"
           alt="Industrial IoT control system"
-          className="hidden lg:block pointer-events-none select-none absolute right-[-40px] top-1/2 -translate-y-1/2 w-[640px] max-w-[60%] opacity-90 drop-shadow-2xl"
+          className="hidden lg:block pointer-events-none select-none absolute right-0 top-1/2 -translate-y-1/2 h-[85%] w-auto max-w-[55%] opacity-95 drop-shadow-2xl object-contain"
         />
-        {/* soft fade so form stays readable */}
-        <div className="hidden lg:block absolute inset-0 bg-gradient-to-r from-[#F4F8FF] via-[#F4F8FF]/85 to-transparent" />
-        <div className="relative w-full max-w-md rounded-2xl border bg-white/85 backdrop-blur p-7 shadow-xl shadow-blue-200/40" style={{borderColor:"#D8E3F3"}}>
+        {/* Left-to-right fade: opaque on left (behind form) → transparent on right (shows illustration) */}
+        <div className="hidden lg:block absolute inset-0" style={{background:"linear-gradient(to right, #F4F8FF 30%, rgba(244,248,255,0.92) 50%, rgba(244,248,255,0.3) 70%, transparent 100%)"}} />
+        {/* Form card — shifted left so illustration is visible on the right */}
+        <div className="relative w-full max-w-md rounded-2xl border bg-white/90 backdrop-blur p-7 shadow-xl shadow-blue-200/40 mr-auto ml-8 lg:ml-16" style={{borderColor:"#D8E3F3"}}>
           <h1 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
           <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis IoT":"Register a new account"}</p>
           <div className="flex gap-1 p-1 rounded-lg mb-6" style={{background:"#EAF2FF"}}>
