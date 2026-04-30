@@ -50,6 +50,7 @@ export async function apiFetch(path, opts = {}) {
 export const authApi = {
   login:    (email, password) => apiFetch("/auth/login",    { method: "POST", body: JSON.stringify({ email, password }) }),
   register: (body)            => apiFetch("/auth/register", { method: "POST", body: JSON.stringify(body) }),
+  logout:   (refreshToken)    => apiFetch("/auth/logout",   { method: "POST", body: JSON.stringify({ refresh_token: refreshToken }) }),
   seedDemo:      ()                    => apiFetch("/auth/seed-demo",      { method: "POST" }),
   resetPassword: (email, new_password) => apiFetch("/auth/reset-password", { method: "POST", body: JSON.stringify({ email, new_password }) }),
 };

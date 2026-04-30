@@ -1090,7 +1090,7 @@ function ResetPasswordPage({ onBack }) {
 function LoginPage({ onLogin }) {
   const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false); const [showPw,setShowPw]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
-  const submit=async()=>{setLoading(true);setError("");try{let d;if(tab==="signin"){d=await authApi.login(email,pw);}else{await authApi.register({email,password:pw,first_name:fname,last_name:lname});d=await authApi.login(email,pw);}localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError(e.message);}finally{setLoading(false);}};
+  const submit=async()=>{setLoading(true);setError("");try{let d;if(tab==="signin"){d=await authApi.login(email,pw);}else{await authApi.register({email,password:pw,first_name:fname,last_name:lname});d=await authApi.login(email,pw);}localStorage.setItem("access_token",d.access_token);if(d.refresh_token)localStorage.setItem("refresh_token",d.refresh_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError(e.message);}finally{setLoading(false);}};
   const demo=async()=>{setLoading(true);setError("");try{await authApi.seedDemo();const d=await authApi.login("demo@triaxisai.com","demo1234");localStorage.setItem("access_token",d.access_token);localStorage.setItem("user",JSON.stringify(d.user));onLogin(d.user);}catch(e){setError("Backend not reachable. Start it first.");}finally{setLoading(false);}};
 
   if (showReset) return <ResetPasswordPage onBack={() => setShowReset(false)} />;
@@ -1186,8 +1186,12 @@ export default function App() {
 
   const handleRefresh = () => { setRefreshing(true); setRefreshKey(k => k + 1); setTimeout(() => setRefreshing(false), 700); };
   const handleLogin   = u => { setUser(u); setAuthed(true); };
-  const handleLogout  = () => {
-    // Clear everything — prevents stale data leaking to next login session
+  const handleLogout  = async () => {
+    // Revoke refresh token on server before clearing local state
+    try {
+      const refreshToken = localStorage.getItem("refresh_token");
+      if (refreshToken) await authApi.logout(refreshToken);
+    } catch (_) {}
     localStorage.clear();
     setUser(null); setAuthed(false); setPage("overview");
   };

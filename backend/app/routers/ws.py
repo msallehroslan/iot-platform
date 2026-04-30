@@ -1,9 +1,13 @@
 """
 app/routers/ws.py — WebSocket endpoint for real-time telemetry push.
 
-FIX 4: Authentication is REQUIRED. Connections without a valid JWT are
-rejected with close code 4001 before accept(). Tenant ownership of the
-device_id is verified — wrong tenant gets close code 4003.
+Security:
+  - JWT required as ?token= query param before accept()
+  - Tenant ownership verified before accept()
+  - CUSTOMER_USER: device.customer_id must match user.customer_id
+  - Wrong tenant  → close 4003
+  - Wrong customer → close 4003
+  - No/bad token  → close 4001
 """
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from app.core.websocket_manager import manager
@@ -26,7 +30,7 @@ async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
     from app.core.database import SessionLocal
     from app.models.models import User as UserModel, Device
 
-    # ── Require token — reject before accept ──────────────────────────────────
+    # ── 1. Require token ──────────────────────────────────────────────────────
     if not token:
         await websocket.close(code=4001)
         return
@@ -41,7 +45,7 @@ async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
         await websocket.close(code=4001)
         return
 
-    # ── Verify user is active and owns the device ─────────────────────────────
+    # ── 2. Verify user + device ownership (tenant + customer scope) ───────────
     db = SessionLocal()
     try:
         user = db.query(UserModel).filter(
@@ -53,13 +57,29 @@ async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
             return
 
         device = db.query(Device).filter(Device.id == device_id).first()
-        if not device or device.tenant_id != user.tenant_id:
+        if not device:
             await websocket.close(code=4003)
             return
+
+        # Tenant check — all roles
+        if device.tenant_id != user.tenant_id:
+            await websocket.close(code=4003)
+            return
+
+        # CUSTOMER_USER: additionally scope to their customer_id
+        if user.role == "CUSTOMER_USER":
+            if device.customer_id is None or device.customer_id != user.customer_id:
+                logger.warning(
+                    "WS CUSTOMER_USER scope rejected user=%s device=%s "
+                    "device.customer_id=%s user.customer_id=%s",
+                    user_id, device_id, device.customer_id, user.customer_id,
+                )
+                await websocket.close(code=4003)
+                return
     finally:
         db.close()
 
-    # ── Accept and register ───────────────────────────────────────────────────
+    # ── 3. Accept and register ────────────────────────────────────────────────
     await websocket.accept()
     manager.connect(device_id, websocket)
 

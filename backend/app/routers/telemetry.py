@@ -1,22 +1,18 @@
 """
 app/routers/telemetry.py
-FIX 5:  rate limiting on ingest (100 req/min per token)
-FIX 12: payload validation enforced in schema
-FIX 14: bulk history endpoint POST /telemetry/history/{device_id}/bulk
-FIX 13: health endpoint (in main.py)
+FIX 3:  DB-backed rate limiting (replaces in-memory _rate_store)
+FIX 14: bulk history endpoint
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
-import time
-from collections import defaultdict
 
 from app.core.database import get_db
 from app.core.auth_deps import get_current_user, assert_device_access, require_admin
-from app.models.models import Device, TelemetryData, LatestTelemetry, TelemetryKey, User
+from app.models.models import Device, TelemetryData, LatestTelemetry, TelemetryKey, User, RateLimit
 from app.schemas.schemas import (
     TelemetryIngest, LatestTelemetryOut, TelemetryDataPoint,
     TelemetryKeyOut, TelemetryKeyUpdate, BulkHistoryRequest, BulkHistoryResponse,
@@ -25,22 +21,46 @@ from app.services.telemetry_service import ingest_telemetry, DeviceNotFoundError
 
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
-# ── FIX 5: Simple in-process rate limiter (100 req/min per token) ─────────────
-# For multi-worker deployments replace with Redis-backed slowapi
-_rate_store: Dict[str, list] = defaultdict(list)
-_RATE_LIMIT = 100
+_RATE_LIMIT  = 100
 _RATE_WINDOW = 60  # seconds
 
 
-def _check_rate_limit(token: str):
-    now = time.time()
-    window_start = now - _RATE_WINDOW
-    timestamps = _rate_store[token]
-    # Remove old entries
-    _rate_store[token] = [t for t in timestamps if t > window_start]
-    if len(_rate_store[token]) >= _RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="Rate limit exceeded: 100 requests/minute per device")
-    _rate_store[token].append(now)
+def _check_rate_limit(db: Session, token: str):
+    """
+    DB-backed sliding window rate limiter.
+    Survives restarts. Safe under single-worker deployment.
+    For multi-worker: add SELECT ... FOR UPDATE or use Redis.
+    """
+    now          = datetime.now(timezone.utc)
+    window_start = now - timedelta(seconds=_RATE_WINDOW)
+
+    row = db.query(RateLimit).filter(
+        RateLimit.token == token,
+        RateLimit.window_start >= window_start,
+    ).first()
+
+    if row:
+        if row.request_count >= _RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded: 100 requests/minute per device",
+            )
+        row.request_count += 1
+        row.updated_at = now
+    else:
+        # New window — clean up old rows for this token and start fresh
+        db.query(RateLimit).filter(
+            RateLimit.token == token,
+            RateLimit.window_start < window_start,
+        ).delete(synchronize_session=False)
+        db.add(RateLimit(
+            token=token,
+            request_count=1,
+            window_start=now,
+        ))
+
+    # Commit rate limit update immediately — before ingest
+    db.flush()
 
 
 def _get_device_owned(device_id: UUID, current_user: User, db: Session) -> Device:
@@ -50,7 +70,7 @@ def _get_device_owned(device_id: UUID, current_user: User, db: Session) -> Devic
 
 @router.post("/ingest/{token}", status_code=200)
 async def ingest_telemetry_http(token: str, payload: TelemetryIngest, db: Session = Depends(get_db)):
-    _check_rate_limit(token)
+    _check_rate_limit(db, token)
     try:
         result = await ingest_telemetry(db=db, token=token, values=payload.values, ts=payload.ts, source="http")
     except DeviceNotFoundError:
@@ -101,7 +121,6 @@ def get_telemetry_history(
     return result
 
 
-# FIX 14: bulk history — replaces N serial requests from frontend
 @router.post("/history/{device_id}/bulk", response_model=BulkHistoryResponse)
 def get_bulk_history(
     device_id: UUID,
@@ -109,7 +128,7 @@ def get_bulk_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Fetch history for multiple keys in one request. Replaces N serial GET calls."""
+    """Fetch history for multiple keys in one request."""
     _get_device_owned(device_id, current_user, db)
     data: Dict[str, List[TelemetryDataPoint]] = {}
     for key in body.keys:
@@ -190,7 +209,7 @@ def aggregate_telemetry(
     if fn_name not in _AGG_FUNCS:
         raise HTTPException(status_code=400, detail=f"Invalid function. Valid: {', '.join(_AGG_FUNCS)}")
 
-    to_ts = datetime.now(timezone.utc)
+    to_ts   = datetime.now(timezone.utc)
     from_ts = to_ts - _WINDOWS[window]
     base_filter = and_(
         TelemetryData.device_id == device_id, TelemetryData.key == key,
@@ -198,10 +217,12 @@ def aggregate_telemetry(
         TelemetryData.value_num.isnot(None),
     )
     count_result = db.query(func.count(TelemetryData.id)).filter(base_filter).scalar() or 0
-    target = TelemetryData.id if fn_name == "count" else TelemetryData.value_num
-    result = db.query(_AGG_FUNCS[fn_name](target)).filter(base_filter).scalar()
+    target  = TelemetryData.id if fn_name == "count" else TelemetryData.value_num
+    result  = db.query(_AGG_FUNCS[fn_name](target)).filter(base_filter).scalar()
     if result is not None and isinstance(result, float):
         result = round(result, 4)
-    return {"device_id": str(device_id), "key": key, "window": window, "function": fn_name,
-            "result": result, "count": count_result,
-            "from_ts": from_ts.isoformat(), "to_ts": to_ts.isoformat()}
+    return {
+        "device_id": str(device_id), "key": key, "window": window, "function": fn_name,
+        "result": result, "count": count_result,
+        "from_ts": from_ts.isoformat(), "to_ts": to_ts.isoformat(),
+    }

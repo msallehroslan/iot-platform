@@ -275,6 +275,26 @@ class MqttClient:
             logger.info("MQTT disabled (MQTT_ENABLED=false) — skipping MQTT startup")
             return
 
+        # Safety guard: refuse to connect to known public brokers.
+        # A public broker means ALL telemetry is readable by anyone on the internet.
+        # Set MQTT_BROKER_HOST to a private broker, or set MQTT_ENABLED=false.
+        _PUBLIC_BROKERS = {
+            "broker.hivemq.com",
+            "test.mosquitto.org",
+            "mqtt.eclipseprojects.io",
+            "broker.emqx.io",
+            "public.mqtthq.com",
+        }
+        if mqtt_settings.broker_host.lower() in _PUBLIC_BROKERS:
+            logger.error(
+                "MQTT STARTUP BLOCKED: broker_host=%r is a known public broker. "
+                "All telemetry on a public broker is readable by anyone. "
+                "Set MQTT_BROKER_HOST to a private broker, or set MQTT_ENABLED=false. "
+                "Disabling MQTT for this session.",
+                mqtt_settings.broker_host,
+            )
+            return
+
         self._loop    = loop
         self._stopped = False
 

@@ -1,12 +1,13 @@
 """
 app/routers/auth.py — Authentication endpoints.
 
-POST /auth/register       — create account + tenant
-POST /auth/login          — returns access + refresh JWT
-POST /auth/refresh        — exchange refresh token for new access token
-POST /auth/seed-demo      — create demo account
-POST /auth/reset-password — requires valid reset_token from /auth/forgot-password
-POST /auth/forgot-password — generates a signed reset token (logs it; wire up SMTP for email)
+POST /auth/register        — create account + tenant
+POST /auth/login           — returns access + refresh JWT (refresh stored in DB)
+POST /auth/refresh         — rotate refresh token (old revoked, new issued)
+POST /auth/logout          — revoke current refresh token
+POST /auth/forgot-password — DB-backed reset token (single-use, 30min TTL)
+POST /auth/reset-password  — consume reset token, set new password
+POST /auth/seed-demo       — create demo account
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -15,22 +16,25 @@ import uuid
 import secrets
 import logging
 from uuid import UUID
+from datetime import datetime, timezone, timedelta
 
 from app.core.database import get_db
 from app.core.security import (
     verify_password, get_password_hash,
     create_access_token, create_refresh_token, decode_token,
 )
-from app.models.models import User, Tenant
+from app.models.models import User, Tenant, RefreshToken, PasswordReset
 from app.schemas.schemas import UserCreate, UserOut, LoginRequest, TokenResponse
+from app.core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 logger = logging.getLogger(__name__)
 
-# In-memory reset token store  {token: email}
-# For production replace with a DB table with expiry timestamps
-_reset_tokens: dict[str, str] = {}
+_RESET_TOKEN_TTL_MINUTES = 30
+_REFRESH_TOKEN_TTL_DAYS  = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
+
+# ── Request schemas ───────────────────────────────────────────────────────────
 
 class ResetPasswordRequest(BaseModel):
     reset_token: str
@@ -44,6 +48,63 @@ class ForgotPasswordRequest(BaseModel):
 class RefreshRequest(BaseModel):
     refresh_token: str
 
+
+class LogoutRequest(BaseModel):
+    refresh_token: str
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _store_refresh_token(db: Session, user_id: uuid.UUID, raw_token: str) -> None:
+    """Persist a new refresh token to DB."""
+    expires_at = datetime.now(timezone.utc) + timedelta(days=_REFRESH_TOKEN_TTL_DAYS)
+    db.add(RefreshToken(
+        user_id=user_id,
+        token=raw_token,
+        revoked=False,
+        expires_at=expires_at,
+    ))
+
+
+def _revoke_refresh_token(db: Session, raw_token: str) -> bool:
+    """Mark a refresh token as revoked. Returns True if found."""
+    row = db.query(RefreshToken).filter(
+        RefreshToken.token == raw_token,
+        RefreshToken.revoked == False,
+    ).first()
+    if not row:
+        return False
+    row.revoked = True
+    return True
+
+
+def _validate_refresh_token(db: Session, raw_token: str) -> RefreshToken:
+    """
+    Verify the token exists in DB, is not revoked, and is not expired.
+    Raises 401 on any failure.
+    """
+    row = db.query(RefreshToken).filter(
+        RefreshToken.token == raw_token,
+    ).first()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if row.revoked:
+        # Token reuse detected — could be a stolen token replay attack
+        # Revoke all tokens for this user as a precaution
+        logger.warning("Refresh token reuse detected for user=%s — revoking all tokens", row.user_id)
+        db.query(RefreshToken).filter(
+            RefreshToken.user_id == row.user_id,
+            RefreshToken.revoked == False,
+        ).update({"revoked": True})
+        db.commit()
+        raise HTTPException(status_code=401, detail="Refresh token already used — please log in again")
+    if row.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Refresh token expired")
+    return row
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
@@ -81,60 +142,122 @@ def login(credentials: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="Account disabled")
 
     payload = {"sub": str(user.id), "email": user.email, "role": user.role}
+    raw_refresh = create_refresh_token(payload)
+
+    # Persist refresh token to DB
+    _store_refresh_token(db, user.id, raw_refresh)
+    db.commit()
+
     return {
         "access_token":  create_access_token(payload),
-        "refresh_token": create_refresh_token(payload),
+        "refresh_token": raw_refresh,
         "token_type": "bearer",
         "user": user,
     }
 
 
 @router.post("/refresh")
-def refresh_token(body: RefreshRequest):
-    """Exchange a valid refresh token for a new access token."""
+def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
+    """
+    Token rotation:
+      1. Validate JWT signature + type
+      2. Verify token exists in DB, not revoked, not expired
+      3. Revoke old token
+      4. Issue new access + refresh token pair
+      5. Store new refresh token in DB
+    A reused (already-revoked) token triggers full session revocation.
+    """
+    # Step 1: validate JWT signature
     payload = decode_token(body.refresh_token)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
-    new_access = create_access_token({
+
+    # Step 2+3: validate DB record + revoke old token
+    row = _validate_refresh_token(db, body.refresh_token)
+    row.revoked = True
+
+    # Step 4+5: issue new token pair
+    new_payload = {
         "sub":   payload["sub"],
         "email": payload.get("email", ""),
         "role":  payload.get("role", ""),
-    })
-    return {"access_token": new_access, "token_type": "bearer"}
+    }
+    new_refresh = create_refresh_token(new_payload)
+    _store_refresh_token(db, row.user_id, new_refresh)
+    db.commit()
+
+    return {
+        "access_token":  create_access_token(new_payload),
+        "refresh_token": new_refresh,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/logout")
+def logout(body: LogoutRequest, db: Session = Depends(get_db)):
+    """Revoke the supplied refresh token. Silent success even if token not found."""
+    _revoke_refresh_token(db, body.refresh_token)
+    db.commit()
+    return {"message": "Logged out successfully"}
 
 
 @router.post("/forgot-password")
 def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
-    Generate a signed reset token.
-    In production, email this token to the user. Here we log it so you can
-    wire up SMTP (SendGrid, SES, etc.) without breaking the flow.
+    Generate a DB-backed reset token (single-use, 30-minute TTL).
+    Survives server restarts. Any prior unused tokens for this email are
+    invalidated to prevent token accumulation.
     """
     user = db.query(User).filter(User.email == body.email).first()
-    # Always return 200 — never confirm whether email exists (enumeration attack)
+    # Always return 200 — never leak whether email exists
     if user:
+        # Invalidate any existing unused tokens for this email
+        db.query(PasswordReset).filter(
+            PasswordReset.email == body.email,
+            PasswordReset.used == False,
+        ).update({"used": True})
+
         token = secrets.token_urlsafe(32)
-        _reset_tokens[token] = body.email
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=_RESET_TOKEN_TTL_MINUTES)
+        db.add(PasswordReset(
+            email=body.email,
+            token=token,
+            used=False,
+            expires_at=expires_at,
+        ))
+        db.commit()
         # TODO: send email with reset link containing token
         logger.info("Password reset token for %s: %s", body.email, token)
+
     return {"message": "If that email is registered, a reset link has been sent."}
 
 
 @router.post("/reset-password")
 def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
-    """Reset password using a token from /forgot-password."""
+    """
+    Consume a DB-backed reset token.
+    Token must exist, be unused, and not expired.
+    """
     if not body.new_password or len(body.new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    email = _reset_tokens.pop(body.reset_token, None)
-    if not email:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    row = db.query(PasswordReset).filter(
+        PasswordReset.token == body.reset_token,
+    ).first()
 
-    user = db.query(User).filter(User.email == email).first()
+    if not row:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    if row.used:
+        raise HTTPException(status_code=400, detail="Reset token already used")
+    if row.expires_at < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    user = db.query(User).filter(User.email == row.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     user.hashed_password = get_password_hash(body.new_password)
+    row.used = True  # mark consumed — cannot be reused
     db.commit()
     return {"message": "Password updated successfully. You can now log in."}
 
@@ -163,18 +286,20 @@ def seed_demo(db: Session = Depends(get_db)):
 # ── User management (TENANT_ADMIN only) ──────────────────────────────────────
 
 from app.core.auth_deps import require_admin, get_current_user
-from app.models.models import Device as DeviceModel
 from typing import List
 from pydantic import BaseModel as _BaseModel
+
 
 class UserUpdateRole(_BaseModel):
     role: str
     is_active: bool = True
 
+
 @router.get("/users", response_model=List[UserOut], tags=["Users"])
 def list_users(db: Session = Depends(get_db), current_user=Depends(require_admin)):
     """List all users in the tenant."""
     return db.query(User).filter(User.tenant_id == current_user.tenant_id).all()
+
 
 @router.put("/users/{user_id}/role", response_model=UserOut, tags=["Users"])
 def update_user_role(
@@ -183,8 +308,6 @@ def update_user_role(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    """Change a user's role. TENANT_ADMIN only."""
-    from uuid import UUID as _UUID
     if body.role not in ("TENANT_ADMIN", "TENANT_USER", "CUSTOMER_USER"):
         raise HTTPException(status_code=400, detail="Invalid role")
     user = db.query(User).filter(User.id == user_id, User.tenant_id == current_user.tenant_id).first()
@@ -198,16 +321,22 @@ def update_user_role(
     db.refresh(user)
     return user
 
+
 @router.delete("/users/{user_id}", status_code=204, tags=["Users"])
-def delete_user(user_id, db: Session = Depends(get_db), current_user=Depends(require_admin)):
-    """Remove a user from the tenant. TENANT_ADMIN only."""
+def delete_user(user_id: UUID, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     user = db.query(User).filter(User.id == user_id, User.tenant_id == current_user.tenant_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if str(user.id) == str(current_user.id):
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    # Revoke all active refresh tokens for this user
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user_id,
+        RefreshToken.revoked == False,
+    ).update({"revoked": True})
     db.delete(user)
     db.commit()
+
 
 @router.post("/users/invite", response_model=UserOut, status_code=201, tags=["Users"])
 def invite_user(
@@ -215,25 +344,18 @@ def invite_user(
     db: Session = Depends(get_db),
     current_user=Depends(require_admin),
 ):
-    """
-    TENANT_ADMIN creates a new user directly inside their tenant.
-    The new user gets TENANT_USER role by default (never TENANT_ADMIN unless specified).
-    No new tenant is created — the user joins the admin's tenant.
-    """
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Force role to TENANT_USER unless admin explicitly sets it
     role = body.role if body.role in ("TENANT_ADMIN", "TENANT_USER") else "TENANT_USER"
-
     user = User(
         email=body.email,
         hashed_password=get_password_hash(body.password),
         first_name=body.first_name,
         last_name=body.last_name,
         role=role,
-        tenant_id=current_user.tenant_id,  # same tenant as admin
+        tenant_id=current_user.tenant_id,
         is_active=True,
     )
     db.add(user)

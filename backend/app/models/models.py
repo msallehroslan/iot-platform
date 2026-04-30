@@ -277,3 +277,57 @@ class UserWidget(Base):
     updated_at   = Column(DateTime(timezone=True), onupdate=func.now())
 
     dashboard = relationship("UserDashboard", back_populates="widgets")
+
+
+# ── Security tables ───────────────────────────────────────────────────────────
+
+class RefreshToken(Base):
+    """
+    Persisted refresh tokens with rotation support.
+    On each /auth/refresh call:
+      1. Verify token exists + not revoked + not expired
+      2. Issue new refresh token (insert new row)
+      3. Mark this row as revoked
+    Revoked tokens are kept for audit; a daily cleanup job can purge old ones.
+    """
+    __tablename__ = "refresh_tokens"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id    = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token      = Column(String(512), nullable=False, unique=True, index=True)
+    revoked    = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordReset(Base):
+    """
+    Single-use, time-limited password reset tokens stored in DB.
+    Replaces the in-memory _reset_tokens dict.
+    """
+    __tablename__ = "password_resets"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email      = Column(String(255), nullable=False, index=True)
+    token      = Column(String(512), nullable=False, unique=True, index=True)
+    used       = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RateLimit(Base):
+    """
+    Per-device-token rate limit counters stored in DB.
+    Replaces the in-memory _rate_store defaultdict.
+    Window is a sliding 60-second bucket tracked by window_start.
+    """
+    __tablename__ = "rate_limits"
+    __table_args__ = (
+        Index("ix_rate_limits_token_window", "token", "window_start"),
+    )
+
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token         = Column(String(255), nullable=False, index=True)
+    request_count = Column(Integer, default=1, nullable=False)
+    window_start  = Column(DateTime(timezone=True), nullable=False)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
