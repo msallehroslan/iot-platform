@@ -96,7 +96,7 @@ def list_alarms(
 def create_alarm(
     alarm_in: AlarmCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Manually create an alarm. Device must belong to user's tenant."""
     device = db.query(Device).filter(Device.id == alarm_in.device_id).first()
@@ -135,7 +135,7 @@ def get_alarm(
 def acknowledge_alarm(
     alarm_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_tenant_member),
 ):
     alarm = _get_alarm_owned(alarm_id, current_user, db)
 
@@ -157,7 +157,7 @@ def acknowledge_alarm(
 def clear_alarm(
     alarm_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_tenant_member),
 ):
     alarm = _get_alarm_owned(alarm_id, current_user, db)
 
@@ -178,7 +178,7 @@ def clear_alarm(
 def delete_alarm(
     alarm_id: UUID,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     alarm = _get_alarm_owned(alarm_id, current_user, db)
     db.delete(alarm)

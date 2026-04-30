@@ -31,7 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.core.auth_deps import get_current_user
+from app.core.auth_deps import get_current_user, require_admin
 from app.models.models import User
 from app.services import dashboard_service
 

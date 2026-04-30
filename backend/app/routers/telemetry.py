@@ -15,7 +15,7 @@ import time
 from collections import defaultdict
 
 from app.core.database import get_db
-from app.core.auth_deps import get_current_user, assert_device_access
+from app.core.auth_deps import get_current_user, assert_device_access, require_admin
 from app.models.models import Device, TelemetryData, LatestTelemetry, TelemetryKey, User
 from app.schemas.schemas import (
     TelemetryIngest, LatestTelemetryOut, TelemetryDataPoint,
@@ -147,7 +147,7 @@ def get_telemetry_metadata(device_id: UUID, db: Session = Depends(get_db), curre
 @router.put("/metadata/{device_id}/{key}", response_model=TelemetryKeyOut)
 def update_telemetry_metadata(
     device_id: UUID, key: str, body: TelemetryKeyUpdate,
-    db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db), current_user: User = Depends(require_admin),
 ):
     _get_device_owned(device_id, current_user, db)
     row = db.query(TelemetryKey).filter(TelemetryKey.device_id == device_id, TelemetryKey.key == key).first()
