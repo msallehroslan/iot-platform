@@ -720,7 +720,7 @@ export const WIDGET_REGISTRY = [
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN" }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -742,6 +742,60 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
   }
 
   const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id, deviceLastSeen };
+
+  // ── Role-based widget access control ─────────────────────────────────────
+  // Matches the access table exactly:
+  //
+  //  Widget                  ADMIN  TENANT_USER  CUSTOMER_USER
+  //  ──────────────────────  ─────  ───────────  ─────────────
+  //  rpc_button / rpc_toggle  ✅       ❌            ❌
+  //  multi_axis_chart         ✅       ✅            ❌
+  //  bar_chart                ✅       ✅            ❌
+  //  timeseries_table         ✅       ✅            ❌
+  //  entity_table             ✅       ✅            ❌
+  //  pie_chart                ✅       ✅            ❌
+  //  everything else          ✅       ✅            ✅
+
+  const wtype = widget.widget_type;
+
+  // RPC = TENANT_ADMIN only
+  const isRpc = wtype === "rpc_button" || wtype === "rpc_toggle";
+  if (isRpc && userRole !== "TENANT_ADMIN") {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", height: "100%", gap: 8, padding: 12,
+        textAlign: "center",
+      }}>
+        <svg style={{ width: 20, height: 20, color: "#94a3b8" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <p style={{ fontSize: 11, color: "#94a3b8", margin: 0, lineHeight: 1.4 }}>
+          Device control is<br/>restricted to admins
+        </p>
+      </div>
+    );
+  }
+
+  // Technical widgets = hidden from CUSTOMER_USER only (TENANT_USER can see them)
+  const customerHidden = new Set([
+    "multi_axis_chart", "bar_chart", "timeseries_table", "entity_table", "pie_chart",
+  ]);
+  if (customerHidden.has(wtype) && userRole === "CUSTOMER_USER") {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", height: "100%", gap: 8, padding: 12,
+        textAlign: "center",
+      }}>
+        <svg style={{ width: 20, height: 20, color: "#cbd5e1" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+        </svg>
+        <p style={{ fontSize: 11, color: "#94a3b8", margin: 0 }}>Not available</p>
+      </div>
+    );
+  }
 
   switch (widget.widget_type) {
     // ── Data ─────────────────────────────────────────────────────────────

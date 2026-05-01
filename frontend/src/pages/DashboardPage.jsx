@@ -110,7 +110,15 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
         <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
           {step === 1 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {WIDGET_REGISTRY.map(wt => (
+              {WIDGET_REGISTRY
+                .filter(wt => {
+                  // Hide RPC widgets for non-admins
+                  if (["rpc_button","rpc_toggle"].includes(wt.id) && user?.role !== "TENANT_ADMIN") return false;
+                  // Hide technical widgets for CUSTOMER_USER
+                  if (["multi_axis_chart","bar_chart","timeseries_table","entity_table","pie_chart"].includes(wt.id) && user?.role === "CUSTOMER_USER") return false;
+                  return true;
+                })
+                .map(wt => (
                 <button key={wt.id} onClick={() => {
             setType(wt.id);
             // Auto-select all keys for multi-key widgets
@@ -631,6 +639,8 @@ export default function DashboardPage({ device, onBack, user }) {
               liveTelem={liveTelem}
               historyData={historyData}
               alarms={alarms}
+              deviceLastSeen={device?.last_seen_at}
+              userRole={user?.role}
             />
           )}
         />

@@ -193,9 +193,13 @@ def delete_dashboard(dashboard_id: UUID, tenant_id: UUID, db: Session) -> None:
 # ── Widget service ────────────────────────────────────────────────────────────
 
 VALID_WIDGET_TYPES = {
+    # Original 11
     "value_card", "line_chart", "gauge", "status_light",
     "bar_chart", "alarm_list", "timeseries_table", "pie_chart",
     "markdown", "entity_table", "html_card",
+    # Phase 3 — 6 new types
+    "multi_axis_chart", "map", "device_summary",
+    "rpc_button", "rpc_toggle",
 }
 
 

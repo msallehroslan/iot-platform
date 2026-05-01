@@ -186,7 +186,13 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
           {/* Step 1 — choose widget type */}
           {step === 1 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {WIDGET_REGISTRY.map(wt => (
+              {WIDGET_REGISTRY
+                .filter(wt => {
+                  if (["rpc_button","rpc_toggle"].includes(wt.id) && user?.role !== "TENANT_ADMIN") return false;
+                  if (["multi_axis_chart","bar_chart","timeseries_table","entity_table","pie_chart"].includes(wt.id) && user?.role === "CUSTOMER_USER") return false;
+                  return true;
+                })
+                .map(wt => (
                 <button key={wt.id} onClick={() => { setType(wt.id); setStep(2); }}
                   style={{ padding: 16, borderRadius: 12, border: `2px solid ${type === wt.id ? "#3b82f6" : "#e2e8f0"}`, background: type === wt.id ? "#eff6ff" : "white", cursor: "pointer", textAlign: "left" }}>
                   <svg style={{ width: 20, height: 20, color: "#3b82f6", marginBottom: 8, display: "block" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={wt.icon}/></svg>
@@ -824,6 +830,7 @@ export default function UserDashboardPage({ onToast, user }) {
                   alarms={alarmsData[widget.config?.device_id] || []}
                   // Flag for backward compat — no device_id = show warning
                   missingDevice={!widget.config?.device_id}
+                  userRole={user?.role}
                 />
               )}
             />
