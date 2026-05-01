@@ -349,7 +349,8 @@ function AlarmsPage({ onToast, user }) {
 }
 
 // ── Device Drawer ─────────────────────────────────────────────────────────────
-function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast }) {
+function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast, user }) {
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const [device,setDevice]=useState(initDev); const [chartData,setChartData]=useState([]); const [selKey,setSelKey]=useState(""); const [copied,setCopied]=useState(false); const [regen,setRegen]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   // Real-time via WebSocket; keys come from useTelemetry
