@@ -20,7 +20,7 @@ from app.routers import (
     auth, devices, telemetry, alarms, customers,
     dashboard, dashboards, ws, user_dashboards,
 )
-from app.routers import threshold_rules
+from app.routers import threshold_rules, rpc, widget_templates, metrics
 
 logger = logging.getLogger(__name__)
 
