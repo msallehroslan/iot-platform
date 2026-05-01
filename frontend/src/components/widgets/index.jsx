@@ -392,19 +392,50 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
 }
 
 export function StatusLight({ config, liveTelem, deviceLastSeen }) {
-  // FIX 6: Use last_seen_at as the authoritative source for online status.
-  // UNKNOWN when last_seen_at is null — never infer from key presence (unreliable).
-  const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+  const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
 
+  // ── Mode 1: Key-based (monitors a specific telemetry value) ──────────────
+  // When config.key is set, show ON/OFF based on that key's value.
+  // e.g. key="led1" → green when led1=1, red when led1=0
+  const raw = config.key ? liveTelem?.[config.key] : undefined;
+  const hasKey = config.key && config.key !== "";
+
+  if (hasKey) {
+    const isOn   = raw === true || raw === 1 || raw === "1" || raw === "true" || raw === "ON";
+    const isNull = raw === undefined || raw === null;
+    const color  = isNull ? "#f59e0b" : isOn ? (config.color || "#10b981") : "#94a3b8";
+    const label  = config.label || config.key;
+    const text   = isNull ? "—" : isOn ? "ON" : "OFF";
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: "50%", background: color,
+          boxShadow: isOn ? `0 0 20px ${color}66` : "none",
+          transition: "all .5s",
+        }} />
+        <div style={{ textAlign: "center" }}>
+          <p style={{ fontSize: 15, fontWeight: 700, color }}>{text}</p>
+          <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{label}</p>
+        </div>
+        {raw !== undefined && (
+          <p style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
+            {config.key}: {String(raw)}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // ── Mode 2: Device online/offline (default when no key set) ──────────────
   const status = (() => {
-    if (!deviceLastSeen) return "UNKNOWN";   // no data ever received or col missing
+    if (!deviceLastSeen) return "UNKNOWN";
     const age = Date.now() - new Date(deviceLastSeen).getTime();
     return age < OFFLINE_THRESHOLD_MS ? "ONLINE" : "OFFLINE";
   })();
 
   const COLOR = { ONLINE: "#10b981", OFFLINE: "#94a3b8", UNKNOWN: "#f59e0b" };
-  const c   = COLOR[status];
-  const raw = config.key ? liveTelem?.[config.key] : undefined;
+  const c = COLOR[status];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" }}>
@@ -415,13 +446,8 @@ export function StatusLight({ config, liveTelem, deviceLastSeen }) {
       }} />
       <div style={{ textAlign: "center" }}>
         <p style={{ fontSize: 15, fontWeight: 700, color: c }}>{status}</p>
-        <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{config.label || config.key || "Status"}</p>
+        <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{config.label || "Device Status"}</p>
       </div>
-      {raw !== undefined && (
-        <p style={{ fontSize: 11, color: "#64748b", fontFamily: "monospace" }}>
-          {config.key}: {String(raw)}
-        </p>
-      )}
       <p style={{ fontSize: 10, color: "#94a3b8" }}>
         {deviceLastSeen
           ? `Last seen: ${new Date(deviceLastSeen).toLocaleTimeString()}`
@@ -1179,66 +1205,93 @@ export function RpcButtonWidget({ config, deviceId }) {
 // ON/OFF toggle. Reads current state from liveTelem, sends method_on/method_off.
 
 export function RpcToggleWidget({ config, liveTelem, deviceId }) {
-  // Industry-standard "set" pattern:
-  //   method: "set", params: { <param_key>: true/false }
-  // Backward compat: if method_on/method_off are set, use legacy mode.
-  const key        = config.key        || "";
-  const paramKey   = config.param_key  || key || "led1";  // key to set in params
-  const label      = config.label      || key || "Toggle";
-  const color      = config.color      || "#10b981";
+  // key      = telemetry key to READ current state (e.g. "led1", "pump", "relay1")
+  // paramKey = RPC param key to SEND (defaults to key — usually the same)
+  // This separation allows monitor key != control key if needed.
+  const key      = config.key       || "";
+  const paramKey = config.param_key || key;   // falls back to key if not set
+  const label    = config.label     || key    || "Toggle";
+  const color    = config.color     || "#10b981";
 
-  // Legacy fields — still respected if present
-  const legacyOn   = config.method_on  || "";
-  const legacyOff  = config.method_off || "";
-  const useLegacy  = legacyOn !== "" && legacyOff !== "";
+  // Backward compat: legacy method_on/method_off still work
+  const legacyOn  = config.method_on  || "";
+  const legacyOff = config.method_off || "";
+  const useLegacy = legacyOn !== "" && legacyOff !== "";
 
   const rawVal = liveTelem?.[key];
   const isOn   = rawVal === true || rawVal === 1 || rawVal === "1" || rawVal === "true" || rawVal === "ON";
+  const hasData = rawVal !== undefined && rawVal !== null;
   const [sending, setSending] = useState(false);
+  const [feedback, setFeedback] = useState(null); // "ok" | "err" | null
 
-  if (!deviceId) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8"}}>
-      Configure device + key in Edit
+  if (!deviceId || !key) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:6}}>
+      <svg style={{width:20,height:20,color:"#94a3b8"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <p style={{fontSize:11,color:"#94a3b8",textAlign:"center",margin:0}}>
+        {!deviceId ? "No device linked" : "Select a key in Edit"}
+      </p>
     </div>
   );
 
   const toggle = async () => {
-    if (sending) return;
+    if (sending || !paramKey) return;
     setSending(true);
+    setFeedback(null);
     try {
       const token = localStorage.getItem("access_token");
-      const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
-      // Standard: {method:"set", params:{led1:true}}
-      // Legacy:   {method:"turnOn", params:{}}
+      const BASE  = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
+      // Standard: {"method":"set","params":{"pump":true}}
+      // Legacy:   {"method":"turnOn","params":{}}
       const body = useLegacy
         ? { method: isOn ? legacyOff : legacyOn, params: {} }
         : { method: "set", params: { [paramKey]: !isOn } };
-      await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
+      const res = await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
         method: "POST",
         headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
         body: JSON.stringify(body),
       });
-    } catch {}
-    setTimeout(()=>setSending(false), 1500);
+      setFeedback(res.ok ? "ok" : "err");
+    } catch { setFeedback("err"); }
+    setTimeout(() => { setSending(false); setFeedback(null); }, 2000);
   };
 
+  // Colour logic: green=ON, grey=OFF, amber=no data yet
+  const dotColor  = !hasData ? "#f59e0b" : isOn ? color : "#e2e8f0";
+  const textColor = !hasData ? "#f59e0b" : isOn ? color : "#94a3b8";
+  const stateText = !hasData ? "—" : isOn ? "ON" : "OFF";
+
   return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:12}}>
-      <button onClick={toggle} style={{
-        width:60, height:32, borderRadius:16, border:"none", cursor:sending?"wait":"pointer",
-        background: isOn ? color : "#e2e8f0",
-        position:"relative", transition:"background .3s",
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10}}>
+      {/* Toggle pill */}
+      <button onClick={toggle} disabled={sending} style={{
+        width:60, height:32, borderRadius:16, border:"none",
+        cursor: sending ? "wait" : "pointer",
+        background: dotColor, position:"relative", transition:"background .4s",
+        opacity: sending ? 0.7 : 1,
       }}>
         <span style={{
-          position:"absolute", top:4, left: isOn ? 32 : 4,
+          position:"absolute", top:4,
+          left: (isOn && hasData) ? 32 : 4,
           width:24, height:24, borderRadius:"50%", background:"white",
-          boxShadow:"0 1px 4px rgba(0,0,0,.2)", transition:"left .3s",
+          boxShadow:"0 1px 4px rgba(0,0,0,.25)", transition:"left .3s",
         }}/>
       </button>
+
+      {/* State text */}
       <div style={{textAlign:"center"}}>
-        <p style={{fontSize:13,fontWeight:600,color: isOn ? color : "#94a3b8",margin:0}}>{isOn?"ON":"OFF"}</p>
+        <p style={{fontSize:13,fontWeight:700,color:textColor,margin:0}}>
+          {sending ? "…" : feedback === "err" ? "Error" : stateText}
+        </p>
         <p style={{fontSize:10,color:"#94a3b8",margin:"2px 0 0"}}>{label}</p>
+        {!hasData && <p style={{fontSize:9,color:"#f59e0b",margin:"2px 0 0"}}>Waiting for data</p>}
       </div>
+
+      {/* Param key badge — shows what key is being controlled */}
+      <p style={{fontSize:9,color:"#cbd5e1",fontFamily:"monospace",margin:0}}>
+        {paramKey !== key ? `${key} → ${paramKey}` : key}
+      </p>
     </div>
   );
 }

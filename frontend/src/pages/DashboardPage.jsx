@@ -72,8 +72,9 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
 
   const needsKey      = ![
     "alarm_list","markdown","entity_table","html_card","pie_chart",
-    "rpc_button","rpc_toggle","rpc_input","status_light","device_summary","map","multi_axis_chart",
+    "rpc_button","rpc_toggle","rpc_input","device_summary","map","multi_axis_chart",
   ].includes(type);
+  const isStatusLight = type === "status_light";
   const needsMultiKey  = ["pie_chart","multi_axis_chart"].includes(type);
   const needsContent   = ["markdown","html_card"].includes(type);
   const isRpcButton    = type === "rpc_button";
@@ -86,9 +87,6 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
     // Frontend validation for RPC widgets
     if (isRpcButton && !cfg.method?.trim()) {
       alert("RPC Button requires a Method name (e.g. turnOn, reboot)"); return;
-    }
-    if (isRpcToggle && (!cfg.method_on?.trim() || !cfg.method_off?.trim())) {
-      alert("RPC Toggle requires both ON and OFF command names"); return;
     }
     if (isRpcToggle && !cfg.key) {
       alert("RPC Toggle requires a Telemetry Key to read current state"); return;
@@ -285,24 +283,36 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
               {/* ── RPC Toggle config ─────────────────────────────────── */}
               {isRpcToggle && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
-                      Telemetry Key * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads current ON/OFF state)</span>
-                    </label>
-                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => { set("key", e.target.value); set("param_key", e.target.value); }}>
-                      <option value="">— Select key —</option>
-                      {availableKeys.map(k => <option key={k}>{k}</option>)}
-                    </select>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                        Monitor Key * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads ON/OFF)</span>
+                      </label>
+                      <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""}
+                        onChange={e => { set("key", e.target.value); if (!cfg.param_key) set("param_key", e.target.value); }}>
+                        <option value="">— Select key —</option>
+                        {availableKeys.map(k => <option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                        Control Key * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(sets via RPC)</span>
+                      </label>
+                      <select style={{ ...inp, cursor: "pointer" }} value={cfg.param_key || cfg.key || ""}
+                        onChange={e => set("param_key", e.target.value)}>
+                        <option value="">— Same as monitor —</option>
+                        {availableKeys.map(k => <option key={k}>{k}</option>)}
+                      </select>
+                    </div>
                   </div>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Label</label>
                     <input style={inp} value={cfg.label || ""} onChange={e => set("label", e.target.value)}
-                      placeholder="e.g. Relay 1, Pump, LED" />
+                      placeholder="e.g. Pump, Relay 1, Fan, LED 2" />
                   </div>
                   <div style={{ padding: "10px 12px", background: "#f0fdf4", borderRadius: 8, fontSize: 11, color: "#166534", lineHeight: 1.7 }}>
-                    <strong>Standard mode (recommended):</strong><br/>
-                    Sends: <span style={{ fontFamily: "monospace" }}>{`{"method":"set","params":{"${cfg.key||"led1"}":true/false}}`}</span><br/>
-                    <span style={{ color: "#64748b" }}>ESP32 firmware handles the "set" method with params object.</span>
+                    <strong>Sends:</strong> <span style={{ fontFamily: "monospace" }}>{`{"method":"set","params":{"${cfg.param_key||cfg.key||"key"}":true/false}}`}</span><br/>
+                    <span style={{ color: "#64748b" }}>Reads state from <code style={{fontFamily:"monospace"}}>{cfg.key||"key"}</code> telemetry. Works for any actuator — LED, relay, motor, pump, fan.</span>
                   </div>
                 </div>
               )}
@@ -349,6 +359,25 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Max</label>
                     <input type="number" style={inp} value={cfg.max ?? 100} onChange={e => set("max", parseFloat(e.target.value))} />
+                  </div>
+                </div>
+              )}
+              {isStatusLight && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                      Telemetry Key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional — leave blank for device online/offline)</span>
+                    </label>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                      <option value="">— Device online/offline —</option>
+                      {availableKeys.map(k => <option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ padding: "10px 12px", background: "#f8fafc", borderRadius: 8, fontSize: 11, color: "#64748b", lineHeight: 1.7 }}>
+                    {cfg.key
+                      ? <span>Shows <strong style={{color:"#10b981"}}>ON</strong> / <strong style={{color:"#94a3b8"}}>OFF</strong> based on <code style={{fontFamily:"monospace"}}>{cfg.key}</code> value (1/true = ON)</span>
+                      : <span>Shows <strong style={{color:"#10b981"}}>ONLINE</strong> / <strong style={{color:"#94a3b8"}}>OFFLINE</strong> based on last device heartbeat</span>
+                    }
                   </div>
                 </div>
               )}
