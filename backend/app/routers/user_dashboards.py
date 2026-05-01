@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.services.audit import audit
 from app.core.auth_deps import get_current_user_id, get_current_user
+from app.models.models import User
 from app.services import user_dashboard_service
 
 router = APIRouter(prefix="/user-dashboards", tags=["User Dashboards"])
