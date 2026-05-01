@@ -541,8 +541,10 @@ WIDGET_CONFIG_SCHEMAS: Dict[str, Dict] = {
         "optional": ["label", "params", "color", "device_id"],
     },
     "rpc_toggle": {
-        "required": ["method_on", "method_off", "key"],
-        "optional": ["label", "color", "device_id"],
+        # Standard mode: requires "key" (monitor) and "param_key" (control, defaults to key)
+        # Legacy mode: method_on + method_off still accepted but no longer required
+        "required": ["key"],
+        "optional": ["param_key", "label", "color", "device_id", "method_on", "method_off"],
     },
     "rpc_input": {
         "required": ["method"],
