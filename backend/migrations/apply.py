@@ -95,10 +95,6 @@ def run():
     logger.info("All migrations applied.")
 
 
-if __name__ == "__main__":
-    run()
-
-
 # Migration 003: Assign NULL tenant_id devices to the first tenant
 # Devices created before the auth fix have tenant_id = NULL.
 # This assigns them to the oldest tenant in the database as a best-effort fix.
@@ -614,3 +610,7 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+if __name__ == "__main__":
+    run()
