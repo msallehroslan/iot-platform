@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
 
-    # FIX 11: daily telemetry retention purge
+    # FIX 11: daily telemetry retention purge + ingest_metrics cleanup
     from app.services.telemetry_service import purge_old_telemetry
     from app.core.database import SessionLocal
     import asyncio as _asyncio
@@ -63,6 +63,12 @@ async def lifespan(app: FastAPI):
             db = SessionLocal()
             try:
                 purge_old_telemetry(db)
+                # Purge ingest_metrics older than 2 hours (only need last 1 min window)
+                from app.models.models import IngestMetric
+                from datetime import datetime as _dt, timezone as _tz, timedelta
+                cutoff = _dt.now(_tz.utc) - timedelta(hours=2)
+                db.query(IngestMetric).filter(IngestMetric.ts < cutoff).delete(synchronize_session=False)
+                db.commit()
             except Exception as exc:
                 logger.error("Telemetry purge failed: %s", exc)
             finally:

@@ -327,7 +327,7 @@ WHERE d.id IS NULL;
 SELECT
     widget_type,
     COUNT(*)        AS count,
-    COUNT(*) FILTER (WHERE config = '{}'::jsonb OR config IS NULL) AS empty_config
+    COUNT(*) FILTER (WHERE config::text = '{}' OR config IS NULL) AS empty_config
 FROM widgets
 GROUP BY widget_type
 ORDER BY count DESC;

@@ -612,5 +612,70 @@ MIGRATIONS += [
 ]
 
 
+MIGRATIONS += [
+    {
+        "id":   "025_add_telemetry_ts_index_and_ingest_cleanup",
+        "desc": "Add standalone ts index on telemetry_data for purge queries; add ts index on ingest_metrics",
+        "sql":  """
+            -- Standalone ts index for purge_old_telemetry() which filters only by ts
+            CREATE INDEX IF NOT EXISTS ix_telemetry_data_ts
+                ON telemetry_data (ts);
+
+            -- Standalone ts index for ingest_metrics cleanup
+            CREATE INDEX IF NOT EXISTS ix_ingest_metrics_ts_only
+                ON ingest_metrics (ts);
+
+            -- Autovacuum tuning for high-churn tables
+            ALTER TABLE latest_telemetry SET (autovacuum_vacuum_scale_factor = 0.01);
+            ALTER TABLE rate_limits      SET (autovacuum_vacuum_scale_factor = 0.01);
+            ALTER TABLE devices          SET (autovacuum_vacuum_scale_factor = 0.01);
+            ALTER TABLE alarms           SET (autovacuum_vacuum_scale_factor = 0.05);
+        """,
+    },
+]
+
+
+MIGRATIONS += [
+    {
+        "id":   "026_deduplicate_user_dashboards",
+        "desc": "Remove duplicate Default Dashboards per user, keep the one with widgets or the oldest",
+        "sql":  """
+            -- Delete duplicate Default Dashboards keeping the one with widgets,
+            -- or if all empty, keep the oldest one per user
+            DELETE FROM user_dashboards
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT
+                        ud.id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY ud.user_id
+                            ORDER BY
+                                (SELECT COUNT(*) FROM user_widgets uw WHERE uw.dashboard_id = ud.id) DESC,
+                                ud.created_at ASC
+                        ) AS rn
+                    FROM user_dashboards ud
+                    WHERE ud.name = 'Default Dashboard'
+                ) ranked
+                WHERE rn > 1
+            );
+
+            -- Set is_default=true on the remaining dashboard for users who have none
+            UPDATE user_dashboards ud
+            SET is_default = true
+            WHERE ud.is_default = false
+              AND NOT EXISTS (
+                SELECT 1 FROM user_dashboards ud2
+                WHERE ud2.user_id = ud.user_id AND ud2.is_default = true
+              )
+              AND ud.id = (
+                SELECT id FROM user_dashboards
+                WHERE user_id = ud.user_id
+                ORDER BY created_at ASC LIMIT 1
+              );
+        """,
+    },
+]
+
+
 if __name__ == "__main__":
     run()
