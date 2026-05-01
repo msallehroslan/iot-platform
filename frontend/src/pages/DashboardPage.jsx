@@ -773,6 +773,7 @@ export default function DashboardPage({ device, onBack, user }) {
               alarms={alarms}
               deviceLastSeen={device?.last_seen_at}
               userRole={user?.role}
+              deviceId={device?.id}
             />
           )}
         />

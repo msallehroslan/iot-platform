@@ -757,7 +757,7 @@ export const WIDGET_COMPONENT_MAP = {
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN" }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -778,7 +778,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
-  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id, deviceLastSeen };
+  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
 
   // ── Role-based widget access control ─────────────────────────────────────
   // Matches the access table exactly:

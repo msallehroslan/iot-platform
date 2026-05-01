@@ -37,7 +37,7 @@ export async function apiFetch(path, opts = {}) {
     let msg;
     if (Array.isArray(detail)) {
       // [{loc:[...], msg:'...', type:'...'}, ...]
-      msg = detail.map(e => `${e.loc?.slice(-1)[0] || 'field'}: ${e.msg}`).join(' | ');
+      msg = detail.map(e => typeof e === 'string' ? e : `${e.loc?.slice(-1)[0] || 'field'}: ${e.msg}`).join(' | ');
     } else {
       msg = typeof detail === 'string' ? detail : `HTTP ${res.status}`;
     }
