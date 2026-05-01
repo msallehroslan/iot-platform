@@ -423,7 +423,17 @@ class RpcCommandCreate(BaseModel):
             raise ValueError("method must not be empty")
         if len(v) > 128:
             raise ValueError("method must be <= 128 characters")
+        # "set" is the standard industry method for key-value updates.
+        # params should be a dict of {key: value} pairs e.g. {"led1": true, "led2": false}
         return v.strip()
+
+    @model_validator(mode="after")
+    def validate_set_params(self) -> "RpcCommandCreate":
+        """When method is 'set', params must be a non-empty dict."""
+        if self.method == "set":
+            if not self.params or not isinstance(self.params, dict):
+                raise ValueError("method 'set' requires params to be a non-empty object e.g. {\"led1\": true}")
+        return self
 
 
 class RpcCommandOut(BaseModel):

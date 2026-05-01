@@ -77,6 +77,8 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
     label: "", unit: "", color: "#3b82f6",
     min: 0, max: 100, decimals: 1,
     threshold_high: "", content: "",
+    method: "", param_key: "",  // used by RPC Toggle standard mode
+    param_key: "value", input_type: "number",
     ...(editWidget?.config || {}),
   }));
 
@@ -148,6 +150,11 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
       (needsKey && cfg.key) ||
       (needsMultiKey && cfg.keys?.length > 0)
     ))
+  ) && (
+    // RPC widget method validation
+    (!isRpcButton || cfg.method?.trim()) &&
+    (!isRpcToggle || cfg.key) &&
+    (!isRpcInput  || cfg.method?.trim())
   );
 
   // ── Save handler ──────────────────────────────────────────────────────────
@@ -422,26 +429,20 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
-                      Telemetry Key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads ON/OFF state)</span>
+                      Telemetry Key * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads current ON/OFF state)</span>
                     </label>
-                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => { set("key", e.target.value); set("param_key", e.target.value); }}>
                       <option value="">— Select key —</option>
                       {availableKeys.map(k => <option key={k}>{k}</option>)}
                     </select>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>ON command *</label>
-                      <input style={inp} value={cfg.method_on || ""} onChange={e => set("method_on", e.target.value)} placeholder="e.g. turnOn" />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>OFF command *</label>
-                      <input style={inp} value={cfg.method_off || ""} onChange={e => set("method_off", e.target.value)} placeholder="e.g. turnOff" />
-                    </div>
-                  </div>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Label</label>
                     <input style={inp} value={cfg.label || ""} onChange={e => set("label", e.target.value)} placeholder="e.g. Relay 1, Pump" />
+                  </div>
+                  <div style={{ padding: "10px 12px", background: "#f0fdf4", borderRadius: 8, fontSize: 11, color: "#166534", lineHeight: 1.7 }}>
+                    <strong>Standard mode:</strong><br/>
+                    Sends: <span style={{ fontFamily: "monospace" }}>{`{"method":"set","params":{"${cfg.key||"led1"}":true/false}}`}</span>
                   </div>
                 </div>
               )}

@@ -57,6 +57,8 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
       label: "", unit: "", color: "#3b82f6",
       min: 0, max: 100, decimals: 1,
       threshold_high: "", keys: [], content: "",
+      method: "", method_on: "turnOn", method_off: "turnOff",
+      param_key: "value", input_type: "number",
       ...(editWidget?.config || {}),
     };
     // Auto-select all available keys for bar/pie chart when creating a new widget
@@ -81,6 +83,19 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const isMultiAxisChart = type === "multi_axis_chart";
 
   const handleSave = () => {
+    // Frontend validation for RPC widgets
+    if (isRpcButton && !cfg.method?.trim()) {
+      alert("RPC Button requires a Method name (e.g. turnOn, reboot)"); return;
+    }
+    if (isRpcToggle && (!cfg.method_on?.trim() || !cfg.method_off?.trim())) {
+      alert("RPC Toggle requires both ON and OFF command names"); return;
+    }
+    if (isRpcToggle && !cfg.key) {
+      alert("RPC Toggle requires a Telemetry Key to read current state"); return;
+    }
+    if (isRpcInput && !cfg.method?.trim()) {
+      alert("RPC Input requires a Method name"); return;
+    }
     const wt   = WIDGET_REGISTRY.find(w => w.id === type);
     const auto = `${wt?.label || type}${cfg.key ? ` · ${cfg.key}` : ""}`;
     // New widgets: sensible default size from widgetService (same as user dashboard)
@@ -272,29 +287,22 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
-                      Telemetry Key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads current ON/OFF state)</span>
+                      Telemetry Key * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads current ON/OFF state)</span>
                     </label>
-                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => { set("key", e.target.value); set("param_key", e.target.value); }}>
                       <option value="">— Select key —</option>
                       {availableKeys.map(k => <option key={k}>{k}</option>)}
                     </select>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    <div>
-                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>ON command *</label>
-                      <input style={inp} value={cfg.method_on || ""} onChange={e => set("method_on", e.target.value)}
-                        placeholder="e.g. turnOn" />
-                    </div>
-                    <div>
-                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>OFF command *</label>
-                      <input style={inp} value={cfg.method_off || ""} onChange={e => set("method_off", e.target.value)}
-                        placeholder="e.g. turnOff" />
-                    </div>
                   </div>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Label</label>
                     <input style={inp} value={cfg.label || ""} onChange={e => set("label", e.target.value)}
                       placeholder="e.g. Relay 1, Pump, LED" />
+                  </div>
+                  <div style={{ padding: "10px 12px", background: "#f0fdf4", borderRadius: 8, fontSize: 11, color: "#166534", lineHeight: 1.7 }}>
+                    <strong>Standard mode (recommended):</strong><br/>
+                    Sends: <span style={{ fontFamily: "monospace" }}>{`{"method":"set","params":{"${cfg.key||"led1"}":true/false}}`}</span><br/>
+                    <span style={{ color: "#64748b" }}>ESP32 firmware handles the "set" method with params object.</span>
                   </div>
                 </div>
               )}

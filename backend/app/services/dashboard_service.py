@@ -280,6 +280,11 @@ def update_widget(
             raise HTTPException(status_code=400, detail="Title cannot be empty")
         w.title = title.strip()
     if config is not None:
+        # Validate config against widget type schema on update too
+        effective_type = widget_type if widget_type is not None else w.widget_type
+        config_errors = validate_widget_config(effective_type, config)
+        if config_errors:
+            raise HTTPException(status_code=422, detail=config_errors)
         w.config = config
     if position is not None:
         w.position = position

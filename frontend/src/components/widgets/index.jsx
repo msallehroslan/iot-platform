@@ -1142,10 +1142,14 @@ export function RpcButtonWidget({ config, deviceId }) {
     try {
       const token = localStorage.getItem("access_token");
       const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
+      // If method is "set", build standard params from config.param_key
+      const body = method === "set"
+        ? { method: "set", params: config.params || {} }
+        : { method, params: config.params || {} };
       await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
         method: "POST",
         headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body: JSON.stringify({method, params: config.params||{}}),
+        body: JSON.stringify(body),
       });
       setState("done");
       setTimeout(()=>setState("idle"), 2000);
@@ -1175,14 +1179,21 @@ export function RpcButtonWidget({ config, deviceId }) {
 // ON/OFF toggle. Reads current state from liveTelem, sends method_on/method_off.
 
 export function RpcToggleWidget({ config, liveTelem, deviceId }) {
-  const key       = config.key       || "";
-  const methodOn  = config.method_on || "turnOn";
-  const methodOff = config.method_off|| "turnOff";
-  const label     = config.label     || key || "Toggle";
-  const color     = config.color     || "#10b981";
+  // Industry-standard "set" pattern:
+  //   method: "set", params: { <param_key>: true/false }
+  // Backward compat: if method_on/method_off are set, use legacy mode.
+  const key        = config.key        || "";
+  const paramKey   = config.param_key  || key || "led1";  // key to set in params
+  const label      = config.label      || key || "Toggle";
+  const color      = config.color      || "#10b981";
 
-  const rawVal    = liveTelem?.[key];
-  const isOn      = rawVal === true || rawVal === 1 || rawVal === "1" || rawVal === "true" || rawVal === "ON";
+  // Legacy fields — still respected if present
+  const legacyOn   = config.method_on  || "";
+  const legacyOff  = config.method_off || "";
+  const useLegacy  = legacyOn !== "" && legacyOff !== "";
+
+  const rawVal = liveTelem?.[key];
+  const isOn   = rawVal === true || rawVal === 1 || rawVal === "1" || rawVal === "true" || rawVal === "ON";
   const [sending, setSending] = useState(false);
 
   if (!deviceId) return (
@@ -1197,10 +1208,15 @@ export function RpcToggleWidget({ config, liveTelem, deviceId }) {
     try {
       const token = localStorage.getItem("access_token");
       const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
+      // Standard: {method:"set", params:{led1:true}}
+      // Legacy:   {method:"turnOn", params:{}}
+      const body = useLegacy
+        ? { method: isOn ? legacyOff : legacyOn, params: {} }
+        : { method: "set", params: { [paramKey]: !isOn } };
       await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
         method: "POST",
         headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body: JSON.stringify({method: isOn ? methodOff : methodOn, params:{}}),
+        body: JSON.stringify(body),
       });
     } catch {}
     setTimeout(()=>setSending(false), 1500);
