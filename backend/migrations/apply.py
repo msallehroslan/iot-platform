@@ -677,5 +677,21 @@ MIGRATIONS += [
 ]
 
 
+MIGRATIONS += [
+    {
+        "id":   "027_fix_audit_logs_id_default",
+        "desc": "Fix audit_logs id column missing gen_random_uuid() default",
+        "sql":  """
+            CREATE EXTENSION IF NOT EXISTS pgcrypto;
+            ALTER TABLE audit_logs ALTER COLUMN id SET DEFAULT gen_random_uuid();
+            ALTER TABLE tenant_quotas ALTER COLUMN id SET DEFAULT gen_random_uuid();
+            ALTER TABLE api_keys ALTER COLUMN id SET DEFAULT gen_random_uuid();
+            ALTER TABLE widget_templates ALTER COLUMN id SET DEFAULT gen_random_uuid();
+            ALTER TABLE password_resets ALTER COLUMN id SET DEFAULT gen_random_uuid();
+        """,
+    },
+]
+
+
 if __name__ == "__main__":
     run()
