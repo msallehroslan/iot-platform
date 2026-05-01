@@ -407,3 +407,81 @@ MIGRATIONS += [
         """,
     },
 ]
+
+
+MIGRATIONS += [
+    {
+        "id":   "020_create_tenant_quotas_table",
+        "desc": "Per-tenant resource limits (devices, dashboards, ingest rate)",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS tenant_quotas (
+                id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id          UUID NOT NULL UNIQUE REFERENCES tenants(id) ON DELETE CASCADE,
+                max_devices        INTEGER,
+                max_dashboards     INTEGER,
+                max_telemetry_rate INTEGER,
+                plan               VARCHAR(50) DEFAULT 'free',
+                created_at         TIMESTAMPTZ DEFAULT now(),
+                updated_at         TIMESTAMPTZ
+            );
+            CREATE INDEX IF NOT EXISTS ix_tenant_quotas_tenant
+                ON tenant_quotas (tenant_id);
+        """,
+    },
+    {
+        "id":   "021_create_audit_logs_table",
+        "desc": "Immutable audit trail for user actions and system events",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id   UUID NOT NULL,
+                user_id     UUID,
+                user_email  VARCHAR(255),
+                action      VARCHAR(100) NOT NULL,
+                resource    VARCHAR(50),
+                resource_id VARCHAR(255),
+                detail      JSONB,
+                ip_address  VARCHAR(45),
+                created_at  TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_tenant_ts
+                ON audit_logs (tenant_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS ix_audit_logs_user_action
+                ON audit_logs (user_id, action);
+        """,
+    },
+    {
+        "id":   "022_create_api_keys_table",
+        "desc": "Long-lived API keys for server-to-server authentication",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                tenant_id    UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+                user_id      UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name         VARCHAR(255) NOT NULL,
+                key_hash     VARCHAR(255) NOT NULL UNIQUE,
+                key_prefix   VARCHAR(8)   NOT NULL,
+                is_active    BOOLEAN NOT NULL DEFAULT true,
+                last_used_at TIMESTAMPTZ,
+                expires_at   TIMESTAMPTZ,
+                created_at   TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS ix_api_keys_tenant
+                ON api_keys (tenant_id);
+            CREATE INDEX IF NOT EXISTS ix_api_keys_hash
+                ON api_keys (key_hash);
+        """,
+    },
+    {
+        "id":   "023_purge_ingest_metrics_old_rows",
+        "desc": "Clean up ingest_metrics rows older than 24h (they are only needed for 1-min rate window)",
+        "sql":  """
+            -- Delete rows older than 24 hours. Safe to run on existing data.
+            DELETE FROM ingest_metrics WHERE ts < NOW() - INTERVAL '24 hours';
+
+            -- Add TTL-friendly index if not already present
+            CREATE INDEX IF NOT EXISTS ix_ingest_metrics_ts
+                ON ingest_metrics (ts);
+        """,
+    },
+]

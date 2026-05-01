@@ -20,7 +20,7 @@ from app.routers import (
     auth, devices, telemetry, alarms, customers,
     dashboard, dashboards, ws, user_dashboards,
 )
-from app.routers import threshold_rules, rpc, widget_templates, metrics
+from app.routers import threshold_rules, rpc, widget_templates, metrics, api_keys, observability
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,12 @@ def create_tables_with_retry(retries: int = 5, delay: int = 3) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables_with_retry()
+
+    # Phase 4: Redis manager startup (no-op if REDIS_URL not set)
+    from app.core.websocket_manager import manager as _ws_manager
+    if hasattr(_ws_manager, "startup"):
+        await _ws_manager.startup()
+        logger.info("RedisManager started")
 
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
@@ -99,6 +105,10 @@ async def lifespan(app: FastAPI):
 
     purge_task.cancel()
     offline_task.cancel()
+
+    # Phase 4: Redis manager shutdown
+    if hasattr(_ws_manager, "shutdown"):
+        await _ws_manager.shutdown()
     mqtt_client.stop()
 
 
@@ -132,6 +142,8 @@ app.include_router(threshold_rules.router,   prefix="/api/v1")
 app.include_router(rpc.router,               prefix="/api/v1")
 app.include_router(widget_templates.router,  prefix="/api/v1")
 app.include_router(metrics.router,           prefix="/api/v1")
+app.include_router(api_keys.router,          prefix="/api/v1")
+app.include_router(observability.router,     prefix="/api/v1")
 
 
 @app.get("/", tags=["System"])

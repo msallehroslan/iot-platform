@@ -18,6 +18,7 @@ from app.core.auth_deps import (
 )
 from app.models.models import Device, DeviceStatus, User, Tenant
 from app.core.config import settings
+from app.services.audit import audit, check_quota
 from app.schemas.schemas import (
     DeviceCreate, DeviceUpdate, DeviceOut, DeviceWithToken,
     PaginatedDevices, ProvisionRequest, ProvisionResponse, ProvisioningKeyOut,
@@ -118,6 +119,7 @@ def create_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
+    check_quota(db, current_user.tenant_id, "devices")
     device = Device(
         name=device_in.name,
         device_type=device_in.device_type,
@@ -132,6 +134,9 @@ def create_device(
     db.add(device)
     db.commit()
     db.refresh(device)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="device.create", resource="device", resource_id=str(device.id),
+          detail={"name": device.name, "type": device.device_type}, commit=True)
     return device
 
 

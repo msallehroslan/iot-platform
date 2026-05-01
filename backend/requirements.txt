@@ -20,3 +20,9 @@ python-multipart==0.0.9
 
 # MQTT
 paho-mqtt==1.6.1
+
+# Phase 4: Redis (WebSocket scaling + optional queue)
+redis==5.0.4
+
+# Phase 4: Observability
+psutil==5.9.8

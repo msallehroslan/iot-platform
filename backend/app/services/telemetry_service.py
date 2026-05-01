@@ -283,6 +283,17 @@ async def ingest_telemetry(
     if not device:
         raise DeviceNotFoundError(f"No device found for token={token!r}")
 
+    # Phase 4: tenant-level ingest rate quota (non-blocking — catches sustained abuse)
+    try:
+        from app.services.audit import check_tenant_ingest_rate
+        check_tenant_ingest_rate(db, device.tenant_id)
+    except Exception as quota_exc:
+        # Re-raise HTTPException (quota hit), swallow others
+        from fastapi import HTTPException
+        if isinstance(quota_exc, HTTPException):
+            raise
+        logger.warning("Quota check error (non-fatal): %s", quota_exc)
+
     if device.status != DeviceStatus.ACTIVE:
         device.status = DeviceStatus.ACTIVE
 

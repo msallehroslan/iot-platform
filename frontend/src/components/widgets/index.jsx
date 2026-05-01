@@ -701,6 +701,42 @@ export const WIDGET_REGISTRY = [
   { id: "html_card",         label: "HTML Card",         icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",         desc: "Custom HTML with \${key} values",  category: "content" },
 ];
 
+
+// ── Phase 4: Pluggable Widget Component Registry ─────────────────────────────
+//
+// To add a new widget type:
+//   1. Create your component function in this file (or import it)
+//   2. Add one entry here: "your_type": YourComponent
+//   3. Add to WIDGET_REGISTRY array (for the Add Widget picker)
+//   4. Add to VALID_WIDGET_TYPES in dashboard_service.py
+//   5. Add to WIDGET_CONFIG_SCHEMAS in schemas.py
+//
+// Nothing else changes. No switch-case to update.
+//
+export const WIDGET_COMPONENT_MAP = {
+  // ── Data ──────────────────────────────────────────────────────────────────
+  value_card:        ValueCard,
+  line_chart:        LineChartWidget,
+  multi_axis_chart:  MultiAxisChartWidget,
+  gauge:             GaugeWidget,
+  bar_chart:         BarChartWidget,
+  timeseries_table:  TimeseriesTable,
+  pie_chart:         PieChartWidget,
+  entity_table:      EntityTable,
+  // ── Status ─────────────────────────────────────────────────────────────────
+  status_light:      StatusLight,
+  device_summary:    DeviceSummaryWidget,
+  alarm_list:        AlarmListWidget,
+  map:               MapWidget,
+  // ── Control ────────────────────────────────────────────────────────────────
+  rpc_button:        RpcButtonWidget,
+  rpc_toggle:        RpcToggleWidget,
+  rpc_input:         RpcInputWidget,
+  // ── Content ────────────────────────────────────────────────────────────────
+  markdown:          MarkdownWidget,
+  html_card:         HtmlCard,
+};
+
 /**
  * WidgetRenderer — dispatches to the correct component based on widget.widget_type
  */
@@ -798,33 +834,18 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
-  switch (widget.widget_type) {
-    // ── Data ─────────────────────────────────────────────────────────────
-    case "value_card":        return <ValueCard            {...props} />;
-    case "line_chart":        return <LineChartWidget      {...props} />;
-    case "multi_axis_chart":  return <MultiAxisChartWidget {...props} />;
-    case "gauge":             return <GaugeWidget          {...props} />;
-    case "status_light":      return <StatusLight          {...props} />;
-    case "bar_chart":         return <BarChartWidget       {...props} />;
-    case "alarm_list":        return <AlarmListWidget      {...props} />;
-    case "timeseries_table":  return <TimeseriesTable      {...props} />;
-    case "pie_chart":         return <PieChartWidget       {...props} />;
-    case "markdown":          return <MarkdownWidget       {...props} />;
-    case "entity_table":      return <EntityTable          {...props} />;
-    case "html_card":         return <HtmlCard             {...props} />;
-    // ── Phase 3 new ───────────────────────────────────────────────────────
-    case "map":               return <MapWidget            {...props} />;
-    case "device_summary":    return <DeviceSummaryWidget  {...props} />;
-    case "rpc_button":        return <RpcButtonWidget      {...props} />;
-    case "rpc_toggle":        return <RpcToggleWidget      {...props} />;
-    case "rpc_input":         return <RpcInputWidget       {...props} />;
-    default:
-      return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 12, color: "#94a3b8" }}>
-          Unknown widget type: {widget.widget_type}
-        </div>
-      );
+  // Phase 4: pluggable registry lookup — O(1), no switch-case.
+  // To add a new widget: import it and add one entry to WIDGET_COMPONENT_MAP.
+  // No changes needed here.
+  const WidgetComponent = WIDGET_COMPONENT_MAP[wtype];
+  if (!WidgetComponent) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 12, color: "#94a3b8" }}>
+        Unknown widget type: {wtype}
+      </div>
+    );
   }
+  return <WidgetComponent {...props} />;
 }
 
 

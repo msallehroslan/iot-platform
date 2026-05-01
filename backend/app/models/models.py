@@ -404,3 +404,73 @@ class IngestMetric(Base):
     device_id = Column(UUID(as_uuid=True), nullable=False)
     ts        = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     key_count = Column(Integer, default=1)
+
+
+# ── Phase 4: Tenant Quotas ────────────────────────────────────────────────────
+
+class TenantQuota(Base):
+    """
+    Per-tenant resource limits. Overrides global defaults from settings.
+    If a field is NULL, the system default from config.py is used.
+    """
+    __tablename__ = "tenant_quotas"
+
+    id                   = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id            = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
+                                  nullable=False, unique=True, index=True)
+    max_devices          = Column(Integer, nullable=True)   # NULL = use DEFAULT_MAX_DEVICES
+    max_dashboards       = Column(Integer, nullable=True)   # NULL = use DEFAULT_MAX_DASHBOARDS
+    max_telemetry_rate   = Column(Integer, nullable=True)   # events/min, NULL = use DEFAULT
+    plan                 = Column(String(50), default="free")  # free | pro | enterprise
+    created_at           = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at           = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# ── Phase 4: Audit Log ────────────────────────────────────────────────────────
+
+class AuditLog(Base):
+    """
+    Immutable record of user actions for security and compliance.
+    Written on: device CRUD, alarm ack/clear, user management, RPC sends.
+    Never deleted — use archival rotation after 1 year.
+    """
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_tenant_ts",   "tenant_id", "created_at"),
+        Index("ix_audit_logs_user_action", "user_id",   "action"),
+    )
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id   = Column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id     = Column(UUID(as_uuid=True), nullable=True)   # NULL = system action
+    user_email  = Column(String(255), nullable=True)
+    action      = Column(String(100), nullable=False)         # e.g. "device.create"
+    resource    = Column(String(50),  nullable=True)          # e.g. "device"
+    resource_id = Column(String(255), nullable=True)          # UUID of affected entity
+    detail      = Column(JSON, nullable=True)                 # before/after or params
+    ip_address  = Column(String(45),  nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# ── Phase 4: API Keys ─────────────────────────────────────────────────────────
+
+class ApiKey(Base):
+    """
+    Long-lived API keys for server-to-server integrations.
+    Alternative to JWT for non-interactive clients (scripts, dashboards, CI).
+    Hashed before storage — raw key shown only once on creation.
+    """
+    __tablename__ = "api_keys"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id   = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    user_id     = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"),
+                          nullable=False)
+    name        = Column(String(255), nullable=False)         # human label
+    key_hash    = Column(String(255), nullable=False, unique=True)  # SHA-256 of raw key
+    key_prefix  = Column(String(8),   nullable=False)         # first 8 chars for display
+    is_active   = Column(Boolean, default=True)
+    last_used_at= Column(DateTime(timezone=True), nullable=True)
+    expires_at  = Column(DateTime(timezone=True), nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
