@@ -52,7 +52,7 @@ function Spinner({ size = 16 }) {
 //   onSave     — called with completed widget data including config.device_id
 //   onClose    — closes modal
 //   editWidget — existing widget object when editing (null for add)
-function WidgetModal({ devices, onSave, onClose, editWidget }) {
+function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
   const isEdit = !!editWidget;
 
   // Step 1 = choose widget type, Step 2 = configure
@@ -394,7 +394,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
                       </label>
                       <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
                         <option value="">— None —</option>
-                        {availableKeys.map(k => <option key={k}>{k}</option>)}
+                        {deviceKeys.map(k => <option key={k}>{k}</option>)}
                       </select>
                     </div>
                     <div>
@@ -486,14 +486,14 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Latitude key *</label>
                     <select style={{ ...inp, cursor: "pointer" }} value={cfg.lat_key || "lat"} onChange={e => set("lat_key", e.target.value)}>
                       <option value="lat">lat</option>
-                      {availableKeys.filter(k=>k!=="lat").map(k=><option key={k}>{k}</option>)}
+                      {deviceKeys.filter(k=>k!=="lat").map(k=><option key={k}>{k}</option>)}
                     </select>
                   </div>
                   <div>
                     <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Longitude key *</label>
                     <select style={{ ...inp, cursor: "pointer" }} value={cfg.lng_key || "lng"} onChange={e => set("lng_key", e.target.value)}>
                       <option value="lng">lng</option>
-                      {availableKeys.filter(k=>k!=="lng").map(k=><option key={k}>{k}</option>)}
+                      {deviceKeys.filter(k=>k!=="lng").map(k=><option key={k}>{k}</option>)}
                     </select>
                   </div>
                 </div>
@@ -996,6 +996,7 @@ export default function UserDashboardPage({ onToast, user }) {
           onSave={handleSaveWidget}
           onClose={() => { setShowModal(false); setEditingWidget(null); }}
           editWidget={editingWidget}
+          user={user}
         />
       )}
     </div>
