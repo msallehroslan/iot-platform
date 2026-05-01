@@ -46,7 +46,7 @@ function Spinner() {
 // The old "Size" picker is removed — initial size now comes from
 // getDefaultPositionForType(), matching UserDashboardPage behaviour.
 // The user drags to resize after adding, same as the user dashboard.
-function WidgetModal({ availableKeys, onSave, onClose, editWidget }) {
+function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const isEdit = !!editWidget;
   const [step,  setStep]  = useState(isEdit ? 2 : 1);
   const [type,  setType]  = useState(editWidget?.widget_type || "");
@@ -785,6 +785,7 @@ export default function DashboardPage({ device, onBack, user }) {
           onSave={handleSaveWidget}
           onClose={() => { setShowModal(false); setEditingWidget(null); }}
           editWidget={editingWidget}
+          user={user}
         />
       )}
     </div>

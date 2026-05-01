@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -88,6 +88,9 @@ const NAV = [
   { id:"customers",         label:"Customers",         icon:"M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm14 2v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" },
   { id:"users",             label:"Users & Roles",     icon:"M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" },
   { id:"settings",          label:"Settings",          icon:"M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm6.93-3h1.07a2 2 0 0 1 0 4h-1.07A7 7 0 0 1 17 18.93V20a2 2 0 0 1-4 0v-1.07A7 7 0 0 1 11.07 16H10a2 2 0 0 1 0-4h1.07A7 7 0 0 1 13 4.07V3a2 2 0 0 1 4 0v1.07A7 7 0 0 1 18.93 6H20a2 2 0 0 1 0 4h-1.07" },
+  { id:"api-keys",          label:"API Keys",           icon:"M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" },
+  { id:"system-metrics",    label:"System Metrics",    icon:"M22 12h-4l-3 9L9 3l-3 9H2" },
+  { id:"audit-log",         label:"Audit Log",          icon:"M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" },
 ];
 
 function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
@@ -103,7 +106,7 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
         {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
         {NAV.filter(({id}) => {
           // Hide admin-only pages from non-admin users
-          const adminOnly = ["customers", "users"];
+          const adminOnly = ["customers", "users", "api-keys", "system-metrics", "audit-log"];
           if (adminOnly.includes(id) && user?.role !== "TENANT_ADMIN") return false;
           return true;
         }).map(({id,label,icon}) => (
@@ -1375,6 +1378,413 @@ function ResetPasswordPage({ onBack }) {
 
 // ── Rule Chains Page (Threshold Rules) ───────────────────────────────────────
 // ── Login page ────────────────────────────────────────────────────────────────
+
+// ── API Keys Page ─────────────────────────────────────────────────────────────
+function ApiKeysPage({ onToast }) {
+  const [keys, setKeys]       = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating]     = useState(false);
+  const [newKey, setNewKey]         = useState(null); // raw key shown once
+  const [form, setForm]             = useState({ name: "", expires_days: "" });
+  const [revoking, setRevoking]     = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setKeys(await apiKeysApi.list()); }
+    catch(e) { onToast({ msg: e.message, type: "error" }); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return onToast({ msg: "Name is required", type: "error" });
+    setCreating(true);
+    try {
+      const body = { name: form.name.trim(), ...(form.expires_days ? { expires_days: parseInt(form.expires_days) } : {}) };
+      const res = await apiKeysApi.create(body);
+      setNewKey(res);
+      setForm({ name: "", expires_days: "" });
+      setShowCreate(false);
+      load();
+    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    finally { setCreating(false); }
+  };
+
+  const handleRevoke = async (id) => {
+    setRevoking(id);
+    try {
+      await apiKeysApi.revoke(id);
+      onToast({ msg: "API key revoked", type: "success" });
+      load();
+    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    finally { setRevoking(null); }
+  };
+
+  const copyKey = (key) => {
+    navigator.clipboard.writeText(key).catch(() => {});
+    onToast({ msg: "Copied to clipboard", type: "success" });
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-bold text-[#0B1426]">API Keys</h2>
+          <p className="text-xs text-[#6B7F9F] mt-0.5">Long-lived keys for server-to-server integrations. Keys are shown once on creation.</p>
+        </div>
+        <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm shadow-blue-500/25">
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Create Key
+        </button>
+      </div>
+
+      {/* One-time key reveal banner */}
+      {newKey && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Save this key — it won&apos;t be shown again</p>
+              <p className="text-xs text-amber-700 mt-0.5 mb-2">This is the only time the raw key will be displayed.</p>
+              <div className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                <code className="flex-1 text-xs font-mono text-slate-700 break-all">{newKey.raw_key}</code>
+                <button onClick={() => copyKey(newKey.raw_key)} className="flex-shrink-0 text-xs font-medium text-amber-700 hover:text-amber-900 px-2 py-1 rounded hover:bg-amber-50">Copy</button>
+              </div>
+            </div>
+            <button onClick={() => setNewKey(null)} className="text-amber-400 hover:text-amber-600 flex-shrink-0">
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Create modal */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <h3 className="text-sm font-bold text-[#0B1426]">Create API Key</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Name</label>
+                <input value={form.name} onChange={e => setForm(f=>({...f,name:e.target.value}))} placeholder="e.g. CI/CD pipeline" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Expires in days <span className="text-slate-400">(leave empty = never)</span></label>
+                <input type="number" value={form.expires_days} onChange={e => setForm(f=>({...f,expires_days:e.target.value}))} placeholder="e.g. 90" min="1" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300" />
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setShowCreate(false)} className="flex-1 py-2 rounded-lg border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={handleCreate} disabled={creating} className="flex-1 py-2 rounded-lg bg-[#2F8CFF] text-white text-sm font-medium hover:bg-[#0B4BB3] disabled:opacity-50">{creating ? "Creating…" : "Create"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Keys table */}
+      <div className="bg-white rounded-2xl border border-[#D8E3F3] overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center h-32 text-sm text-slate-400">Loading…</div>
+        ) : keys.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-32 gap-2 text-slate-400">
+            <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            <p className="text-sm">No API keys yet</p>
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#D8E3F3] bg-[#F4F8FF]">
+                <th className="text-left px-5 py-3 text-xs font-semibold text-[#6B7F9F]">Name</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-[#6B7F9F]">Prefix</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-[#6B7F9F]">Created</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-[#6B7F9F]">Expires</th>
+                <th className="text-left px-5 py-3 text-xs font-semibold text-[#6B7F9F]">Last Used</th>
+                <th className="px-5 py-3"/>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((k, i) => (
+                <tr key={k.id} className={`border-b border-[#D8E3F3] last:border-0 ${i%2===1?"bg-[#F8FAFF]":""}`}>
+                  <td className="px-5 py-3 font-medium text-[#0B1426]">{k.name}</td>
+                  <td className="px-5 py-3"><code className="font-mono text-xs bg-slate-100 px-2 py-0.5 rounded">{k.key_prefix}…</code></td>
+                  <td className="px-5 py-3 text-[#6B7F9F] text-xs">{new Date(k.created_at).toLocaleDateString()}</td>
+                  <td className="px-5 py-3 text-xs">
+                    {k.expires_at ? (
+                      <span className={new Date(k.expires_at) < new Date() ? "text-red-500 font-medium" : "text-[#6B7F9F]"}>
+                        {new Date(k.expires_at).toLocaleDateString()}
+                      </span>
+                    ) : <span className="text-emerald-600 font-medium">Never</span>}
+                  </td>
+                  <td className="px-5 py-3 text-xs text-[#6B7F9F]">{k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "—"}</td>
+                  <td className="px-5 py-3 text-right">
+                    <button onClick={() => handleRevoke(k.id)} disabled={revoking === k.id} className="text-xs font-medium text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1 rounded-lg disabled:opacity-40 transition-colors">
+                      {revoking === k.id ? "Revoking…" : "Revoke"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+        <p className="text-xs text-blue-700"><strong>Usage:</strong> Send API keys in the <code className="font-mono bg-blue-100 px-1 rounded">Authorization: ApiKey &lt;key&gt;</code> header for server-to-server requests. Keys bypass JWT expiry but are rate-limited the same way.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── System Metrics Page ───────────────────────────────────────────────────────
+function SystemMetricsPage({ onToast }) {
+  const [data, setData]       = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lastFetched, setLastFetched] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [sys, tenant] = await Promise.all([systemApi.metrics(), metricsApi.get()]);
+      setData({ sys, tenant });
+      setLastFetched(new Date());
+    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+
+  const Stat = ({ label, value, unit = "", color = "text-[#0B1426]", sub }) => (
+    <div className="bg-white rounded-xl border border-[#D8E3F3] px-5 py-4">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p>
+      <p className={`text-2xl font-bold ${color}`}>{value ?? "—"}<span className="text-sm font-normal text-[#6B7F9F] ml-1">{unit}</span></p>
+      {sub && <p className="text-[10px] text-[#6B7F9F] mt-0.5">{sub}</p>}
+    </div>
+  );
+
+  const Bar = ({ label, pct, color = "#2F8CFF" }) => (
+    <div>
+      <div className="flex justify-between text-xs mb-1"><span className="text-[#334866] font-medium">{label}</span><span className="text-[#6B7F9F]">{pct?.toFixed(1) ?? "—"}%</span></div>
+      <div className="h-2 bg-slate-100 rounded-full overflow-hidden"><div style={{ width: `${Math.min(pct||0,100)}%`, background: color }} className="h-full rounded-full transition-all duration-500" /></div>
+    </div>
+  );
+
+  const uptime = data?.sys?.uptime_seconds;
+  const uptimeStr = uptime != null ? `${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m` : "—";
+  const s = data?.sys; const t = data?.tenant;
+
+  return (
+    <div className="max-w-4xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-bold text-[#0B1426]">System Metrics</h2>
+          <p className="text-xs text-[#6B7F9F] mt-0.5">Live infrastructure health. Auto-refreshes every 30 seconds.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {lastFetched && <span className="text-[10px] text-[#6B7F9F]">Updated {lastFetched.toLocaleTimeString()}</span>}
+          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-xs font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors border border-[#D8E3F3]">
+            <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading && !data ? (
+        <div className="flex items-center justify-center h-48 text-sm text-slate-400">Loading metrics…</div>
+      ) : (
+        <>
+          {/* Tenant stats */}
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F] mb-3">Tenant Activity</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Stat label="Total Devices"    value={t?.total_devices}       />
+              <Stat label="Active (5 min)"   value={t?.active_devices}      color={t?.active_devices > 0 ? "text-emerald-600" : "text-[#0B1426]"} />
+              <Stat label="Active Alarms"    value={t?.total_alarms_active} color={t?.total_alarms_active > 0 ? "text-red-500" : "text-[#0B1426]"} />
+              <Stat label="Ingest Rate"      value={t?.ingest_rate_per_min} unit="evt/min" />
+            </div>
+          </div>
+
+          {/* Infrastructure */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Process */}
+            <div className="bg-white rounded-2xl border border-[#D8E3F3] p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F]">Process</p>
+                <span className="text-[10px] text-[#6B7F9F]">Uptime: {uptimeStr}</span>
+              </div>
+              <Bar label="Process CPU" pct={s?.process?.cpu_pct} color={s?.process?.cpu_pct > 80 ? "#ef4444" : "#2F8CFF"} />
+              <div className="flex justify-between text-xs">
+                <span className="text-[#334866] font-medium">Process Memory</span>
+                <span className="text-[#6B7F9F]">{s?.process?.mem_mb?.toFixed(0) ?? "—"} MB</span>
+              </div>
+            </div>
+
+            {/* System */}
+            <div className="bg-white rounded-2xl border border-[#D8E3F3] p-5 space-y-4">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F]">Host System</p>
+              <Bar label="System CPU" pct={s?.system?.cpu_pct} color={s?.system?.cpu_pct > 80 ? "#ef4444" : "#10b981"} />
+              <Bar label="System Memory" pct={s?.system?.mem_pct} color={s?.system?.mem_pct > 85 ? "#ef4444" : "#10b981"} />
+              {s?.system?.mem_used_gb != null && <p className="text-[10px] text-[#6B7F9F]">{s.system.mem_used_gb} GB used</p>}
+            </div>
+
+            {/* Database */}
+            <div className="bg-white rounded-2xl border border-[#D8E3F3] p-5 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F]">Database</p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ["Pool Size",    s?.database?.pool_size],
+                  ["Checked Out",  s?.database?.checked_out],
+                  ["Overflow",     s?.database?.overflow],
+                  ["Latency",      s?.database?.latency_ms != null ? `${s.database.latency_ms} ms` : "—"],
+                ].map(([label, val]) => (
+                  <div key={label} className="bg-[#F4F8FF] rounded-lg px-3 py-2">
+                    <p className="text-[10px] text-[#6B7F9F]">{label}</p>
+                    <p className="text-sm font-bold text-[#0B1426] mt-0.5">{val ?? "—"}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* WebSocket + Redis */}
+            <div className="bg-white rounded-2xl border border-[#D8E3F3] p-5 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F]">WebSocket &amp; Redis</p>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-[#334866]">Connected Clients</span>
+                  <span className="font-bold text-[#0B1426]">{s?.websocket?.total_clients ?? "—"}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-[#334866]">Active Devices</span>
+                  <span className="font-bold text-[#0B1426]">{s?.websocket?.active_devices ?? "—"}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-[#334866]">WS Backend</span>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s?.websocket?.backend === "redis" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>{s?.websocket?.backend ?? "—"}</span>
+                </div>
+                <div className="flex justify-between text-sm items-center">
+                  <span className="text-[#334866]">Redis</span>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s?.redis === "ok" ? "bg-emerald-100 text-emerald-700" : s?.redis === "not_configured" ? "bg-slate-100 text-slate-600" : "bg-red-100 text-red-600"}`}>
+                    {s?.redis === "ok" ? "Connected" : s?.redis === "not_configured" ? "Not configured" : "Error"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Tenant WS clients */}
+          <div className="bg-[#EAF2FF] rounded-xl px-4 py-3 text-xs text-[#334866]">
+            <strong>Active WebSocket clients:</strong> {s?.websocket?.total_clients ?? "—"} &nbsp;·&nbsp; <strong>WS backend:</strong> {s?.websocket?.backend ?? "—"} &nbsp;·&nbsp; <strong>Tenant ingest:</strong> {t?.active_ws_clients ?? "—"} clients
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Audit Log Page ────────────────────────────────────────────────────────────
+const AUDIT_ACTION_COLORS = {
+  "device.create":    "bg-emerald-100 text-emerald-700",
+  "device.delete":    "bg-red-100 text-red-600",
+  "device.update":    "bg-blue-100 text-blue-700",
+  "alarm.ack":        "bg-amber-100 text-amber-700",
+  "alarm.clear":      "bg-slate-100 text-slate-600",
+  "api_key.create":   "bg-purple-100 text-purple-700",
+  "api_key.revoke":   "bg-red-100 text-red-600",
+  "user.invite":      "bg-blue-100 text-blue-700",
+  "user.delete":      "bg-red-100 text-red-600",
+};
+const auditBadge = (action) => AUDIT_ACTION_COLORS[action] || "bg-slate-100 text-slate-600";
+
+function AuditLogPage({ onToast }) {
+  const [rows, setRows]         = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [limit, setLimit]       = useState(50);
+  const [actionFilter, setActionFilter] = useState("");
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setRows(await systemApi.audit(limit, actionFilter || null)); }
+    catch(e) { onToast({ msg: e.message, type: "error" }); }
+    finally { setLoading(false); }
+  }, [limit, actionFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Distinct actions from current rows for filter dropdown
+  const actions = Array.from(new Set(rows.map(r => r.action))).sort();
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-base font-bold text-[#0B1426]">Audit Log</h2>
+          <p className="text-xs text-[#6B7F9F] mt-0.5">All admin actions for your tenant, newest first.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={actionFilter} onChange={e => setActionFilter(e.target.value)} className="text-xs border border-[#D8E3F3] rounded-lg px-3 py-2 bg-white text-[#334866] focus:outline-none focus:ring-2 focus:ring-blue-300">
+            <option value="">All actions</option>
+            {actions.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <select value={limit} onChange={e => setLimit(Number(e.target.value))} className="text-xs border border-[#D8E3F3] rounded-lg px-3 py-2 bg-white text-[#334866] focus:outline-none focus:ring-2 focus:ring-blue-300">
+            {[25,50,100,200].map(n => <option key={n} value={n}>{n} rows</option>)}
+          </select>
+          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-xs font-medium text-[#334866] hover:text-[#0B1426] px-3 py-2 rounded-lg hover:bg-[#D7E8FF] transition-colors border border-[#D8E3F3]">
+            <svg className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-[#D8E3F3] overflow-hidden">
+        {loading && rows.length === 0 ? (
+          <div className="flex items-center justify-center h-32 text-sm text-slate-400">Loading…</div>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-32 gap-2 text-slate-400">
+            <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/></svg>
+            <p className="text-sm">No audit entries</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-[#D8E3F3]">
+            {rows.map(r => (
+              <div key={r.id}>
+                <button onClick={() => setExpanded(expanded === r.id ? null : r.id)} className="w-full flex items-center gap-3 px-5 py-3 hover:bg-[#F4F8FF] transition-colors text-left">
+                  <div className="flex-1 flex items-center gap-3 min-w-0">
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${auditBadge(r.action)}`}>{r.action}</span>
+                    <span className="text-sm text-[#0B1426] font-medium truncate">{r.resource}{r.resource_id ? ` · ${r.resource_id.slice(0,8)}…` : ""}</span>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="text-xs text-[#6B7F9F] hidden md:block">{r.user_email || "system"}</span>
+                    <span className="text-xs text-[#6B7F9F]">{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</span>
+                    <svg className={`w-3.5 h-3.5 text-[#6B7F9F] flex-shrink-0 transition-transform ${expanded === r.id ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                </button>
+                {expanded === r.id && (
+                  <div className="px-5 pb-3 bg-[#F8FAFF] border-t border-[#D8E3F3]">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 text-xs">
+                      <div><p className="text-[#6B7F9F] font-medium">Action</p><p className="text-[#0B1426] mt-0.5">{r.action}</p></div>
+                      <div><p className="text-[#6B7F9F] font-medium">Resource</p><p className="text-[#0B1426] mt-0.5">{r.resource}</p></div>
+                      <div><p className="text-[#6B7F9F] font-medium">Resource ID</p><p className="text-[#0B1426] mt-0.5 font-mono">{r.resource_id || "—"}</p></div>
+                      <div><p className="text-[#6B7F9F] font-medium">User</p><p className="text-[#0B1426] mt-0.5">{r.user_email || "system"}</p></div>
+                    </div>
+                    {r.detail && Object.keys(r.detail).length > 0 && (
+                      <div className="mt-3">
+                        <p className="text-[#6B7F9F] text-xs font-medium mb-1">Detail</p>
+                        <pre className="text-[11px] bg-white border border-[#D8E3F3] rounded-lg px-3 py-2 overflow-x-auto text-[#334866]">{JSON.stringify(r.detail, null, 2)}</pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function LoginPage({ onLogin }) {
   const [tab,setTab]=useState("signin"); const [email,setEmail]=useState("demo@triaxisai.com"); const [pw,setPw]=useState("demo1234"); const [fname,setFname]=useState(""); const [lname,setLname]=useState(""); const [loading,setLoading]=useState(false); const [error,setError]=useState(""); const [showReset,setShowReset]=useState(false); const [showPw,setShowPw]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
@@ -1449,7 +1859,7 @@ function LoginPage({ onLogin }) {
 const PAGE_TITLES = {
   overview:"Overview", "user-dashboards":"My Dashboards", "device-dashboards":"Device Dashboards",
   devices:"Devices", alarms:"Alarms",
-  "rule-chains":"Rule Chains (Threshold Rules)", customers:"Customers", users:"Users & Roles", settings:"Settings",
+  "rule-chains":"Rule Chains (Threshold Rules)", customers:"Customers", users:"Users & Roles", settings:"Settings", "api-keys":"API Keys", "system-metrics":"System Metrics", "audit-log":"Audit Log",
 };
 
 export default function App() {
@@ -1505,6 +1915,9 @@ export default function App() {
           {page === "customers"          && <CustomersPage onToast={showToast} user={user} />}
           {page === "users"              && <UsersPage onToast={showToast} user={user} />}
           {page === "settings"           && <SettingsPage user={user} onLogout={handleLogout} />}
+          {page === "api-keys"           && <ApiKeysPage onToast={showToast} />}
+          {page === "system-metrics"     && <SystemMetricsPage onToast={showToast} />}
+          {page === "audit-log"          && <AuditLogPage onToast={showToast} />}
         </main>
       </div>
       {drawer && <DeviceDrawer device={drawer} onClose={() => setDrawer(null)} refreshKey={refreshKey} onToast={showToast} user={user} />}

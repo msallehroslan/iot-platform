@@ -172,3 +172,17 @@ export const widgetTemplateApi = {
 export const metricsApi = {
   get: () => apiFetch("/metrics/"),
 };
+
+// ── API Keys (TENANT_ADMIN only) ──────────────────────────────────────────────
+export const apiKeysApi = {
+  list:   ()              => apiFetch("/api-keys/"),
+  create: body            => apiFetch("/api-keys/",     { method: "POST",   body: JSON.stringify(body) }),
+  revoke: id              => apiFetch(`/api-keys/${id}`, { method: "DELETE" }),
+};
+
+// ── System observability (TENANT_ADMIN only) ──────────────────────────────────
+export const systemApi = {
+  health:  ()                          => apiFetch("/system/health"),
+  metrics: ()                          => apiFetch("/system/metrics"),
+  audit:   (limit = 50, action = null) => apiFetch(`/system/audit?limit=${limit}${action ? `&action=${encodeURIComponent(action)}` : ""}`),
+};
