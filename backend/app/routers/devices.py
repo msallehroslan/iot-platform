@@ -163,6 +163,9 @@ def update_device(
         setattr(device, field, value)
     db.commit()
     db.refresh(device)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="device.update", resource="device", resource_id=str(device_id),
+          detail={"name": device.name}, commit=True)
     return device
 
 
@@ -173,6 +176,9 @@ def delete_device(
     current_user: User = Depends(require_admin),
 ):
     device = assert_device_access(_fetch_device(device_id, db), current_user)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="device.delete", resource="device", resource_id=str(device_id),
+          detail={"name": device.name})
     db.delete(device)
     db.commit()
 
@@ -187,4 +193,6 @@ def regenerate_token(
     device.token = str(uuid.uuid4())
     db.commit()
     db.refresh(device)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="device.token_regenerate", resource="device", resource_id=str(device_id), commit=True)
     return device

@@ -31,6 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.services.audit import audit
 from app.core.auth_deps import get_current_user, require_admin
 from app.models.models import User
 from app.services import dashboard_service
@@ -110,7 +111,7 @@ def create_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return dashboard_service.create_dashboard(
+    result = dashboard_service.create_dashboard(
         device_id=body.device_id,
         tenant_id=current_user.tenant_id,
         name=body.name,
@@ -118,6 +119,10 @@ def create_dashboard(
         is_default=body.is_default,
         db=db,
     )
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="dashboard.create", resource="dashboard", resource_id=str(result.get("id","")),
+          detail={"name": body.name, "device_id": str(body.device_id)}, commit=True)
+    return result
 
 
 @router.get("/{dashboard_id}")
@@ -156,6 +161,8 @@ def delete_dashboard(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="dashboard.delete", resource="dashboard", resource_id=str(dashboard_id))
     dashboard_service.delete_dashboard(
         dashboard_id=dashboard_id,
         tenant_id=current_user.tenant_id,
@@ -185,7 +192,7 @@ def add_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
-    return dashboard_service.add_widget(
+    result = dashboard_service.add_widget(
         dashboard_id=dashboard_id,
         tenant_id=current_user.tenant_id,
         widget_type=body.widget_type,
@@ -194,6 +201,10 @@ def add_widget(
         position=body.position.model_dump(),
         db=db,
     )
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="widget.add", resource="widget", resource_id=str(result.get("id","")),
+          detail={"dashboard_id": str(dashboard_id), "widget_type": body.widget_type}, commit=True)
+    return result
 
 
 @router.put("/{dashboard_id}/widgets/{widget_id}")
@@ -226,6 +237,9 @@ def delete_widget(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin),
 ):
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="widget.delete", resource="widget", resource_id=str(widget_id),
+          detail={"dashboard_id": str(dashboard_id)})
     dashboard_service.delete_widget(
         dashboard_id=dashboard_id,
         widget_id=widget_id,

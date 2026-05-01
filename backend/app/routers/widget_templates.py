@@ -15,6 +15,7 @@ from typing import List
 from uuid import UUID
 
 from app.core.database import get_db
+from app.services.audit import audit
 from app.core.auth_deps import get_current_user
 from app.models.models import WidgetTemplate, User
 from app.schemas.schemas import WidgetTemplateCreate, WidgetTemplateOut, validate_widget_config
@@ -56,6 +57,9 @@ def create_template(
     db.add(tmpl)
     db.commit()
     db.refresh(tmpl)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="widget_template.create", resource="widget_template", resource_id=str(tmpl.id),
+          detail={"name": tmpl.name, "widget_type": tmpl.widget_type}, commit=True)
     return tmpl
 
 
@@ -87,5 +91,8 @@ def delete_template(
     ).first()
     if not tmpl:
         raise HTTPException(status_code=404, detail="Template not found or not yours")
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="widget_template.delete", resource="widget_template", resource_id=str(template_id),
+          detail={"name": tmpl.name})
     db.delete(tmpl)
     db.commit()

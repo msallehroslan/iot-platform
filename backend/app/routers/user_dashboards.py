@@ -24,6 +24,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.services.audit import audit
 from app.core.auth_deps import get_current_user_id, get_current_user
 from app.services import user_dashboard_service
 
@@ -106,13 +107,18 @@ def create_dashboard(
     body: CreateDashboardBody,
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
 ):
-    return user_dashboard_service.create_dashboard(
+    result = user_dashboard_service.create_dashboard(
         user_id=user_id,
         name=body.name,
         description=body.description,
         db=db,
     )
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="user_dashboard.create", resource="user_dashboard", resource_id=str(result.get("id","")),
+          detail={"name": body.name}, commit=True)
+    return result
 
 
 @router.get("/{dashboard_id}")
@@ -155,8 +161,11 @@ def delete_dashboard(
     dashboard_id: UUID,
     db: Session = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
 ):
     """Delete dashboard + all widgets. Blocks if it's the user's only dashboard."""
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="user_dashboard.delete", resource="user_dashboard", resource_id=str(dashboard_id))
     user_dashboard_service.delete_dashboard(
         dashboard_id=dashboard_id, user_id=user_id, db=db
     )

@@ -10,6 +10,7 @@ from uuid import UUID
 from app.core.database import get_db
 from app.core.auth_deps import get_current_user
 from app.models.models import ThresholdRule, Device, User
+from app.services.audit import audit
 from app.schemas.schemas import ThresholdRuleCreate, ThresholdRuleOut
 
 router = APIRouter(prefix="/threshold-rules", tags=["Threshold Rules"])
@@ -44,6 +45,9 @@ def create_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="rule.create", resource="threshold_rule", resource_id=str(rule.id),
+          detail={"key": rule.key, "condition": rule.condition, "threshold": rule.threshold}, commit=True)
     return rule
 
 
@@ -61,6 +65,9 @@ def update_rule(
         setattr(rule, field, value)
     db.commit()
     db.refresh(rule)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="rule.update", resource="threshold_rule", resource_id=str(rule_id),
+          detail={"key": rule.key, "condition": rule.condition, "threshold": rule.threshold}, commit=True)
     return rule
 
 
@@ -71,5 +78,8 @@ def delete_rule(rule_id: UUID, db: Session = Depends(get_db), current_user: User
     ).first()
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="rule.delete", resource="threshold_rule", resource_id=str(rule_id),
+          detail={"key": rule.key})
     db.delete(rule)
     db.commit()

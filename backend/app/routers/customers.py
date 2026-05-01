@@ -12,6 +12,7 @@ from app.core.auth_deps import require_admin
 from app.core.security import get_password_hash
 from app.models.models import Customer, User
 from app.schemas.schemas import CustomerCreate, CustomerOut, UserOut
+from app.services.audit import audit
 from pydantic import BaseModel
 from typing import Optional
 
@@ -48,6 +49,9 @@ def create_customer(
     db.add(customer)
     db.commit()
     db.refresh(customer)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="customer.create", resource="customer", resource_id=str(customer.id),
+          detail={"name": customer.name}, commit=True)
     return customer
 
 
@@ -64,6 +68,9 @@ def delete_customer(customer_id: UUID, db: Session = Depends(get_db), current_us
     c = db.query(Customer).filter(Customer.id == customer_id, Customer.tenant_id == current_user.tenant_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Customer not found")
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="customer.delete", resource="customer", resource_id=str(customer_id),
+          detail={"name": c.name})
     db.delete(c)
     db.commit()
 
@@ -100,6 +107,9 @@ def create_customer_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="customer_user.create", resource="user", resource_id=str(user.id),
+          detail={"email": user.email, "customer_id": str(customer_id)}, commit=True)
     return user
 
 

@@ -130,6 +130,9 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit(db, tenant_id=user.tenant_id, user=user,
+          action="user.register", resource="user", resource_id=str(user.id),
+          detail={"email": user.email, "role": user.role}, commit=True)
     return user
 
 
@@ -285,6 +288,7 @@ def seed_demo(db: Session = Depends(get_db)):
 
 # ── User management (TENANT_ADMIN only) ──────────────────────────────────────
 
+from app.services.audit import audit
 from app.core.auth_deps import require_admin, get_current_user
 from typing import List
 from pydantic import BaseModel as _BaseModel
@@ -315,10 +319,14 @@ def update_user_role(
         raise HTTPException(status_code=404, detail="User not found")
     if str(user.id) == str(current_user.id):
         raise HTTPException(status_code=400, detail="Cannot change your own role")
+    old_role = user.role
     user.role = body.role
     user.is_active = body.is_active
     db.commit()
     db.refresh(user)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="user.role_change", resource="user", resource_id=str(user.id),
+          detail={"email": user.email, "old_role": old_role, "new_role": body.role}, commit=True)
     return user
 
 
@@ -329,6 +337,9 @@ def delete_user(user_id: UUID, db: Session = Depends(get_db), current_user=Depen
         raise HTTPException(status_code=404, detail="User not found")
     if str(user.id) == str(current_user.id):
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="user.delete", resource="user", resource_id=str(user.id),
+          detail={"email": user.email, "role": user.role})
     # Revoke all active refresh tokens for this user
     db.query(RefreshToken).filter(
         RefreshToken.user_id == user_id,
@@ -361,4 +372,7 @@ def invite_user(
     db.add(user)
     db.commit()
     db.refresh(user)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="user.invite", resource="user", resource_id=str(user.id),
+          detail={"email": user.email, "role": user.role}, commit=True)
     return user

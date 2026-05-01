@@ -14,6 +14,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from app.core.database import get_db
+from app.services.audit import audit
 from app.core.auth_deps import get_current_user, assert_device_access, require_admin
 from app.models.models import Device, User, RpcCommand, RpcCommandStatus
 from app.schemas.schemas import RpcCommandCreate, RpcCommandOut
@@ -96,6 +97,9 @@ async def send_rpc_command(
     db.add(cmd)
     db.commit()
     db.refresh(cmd)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="rpc.send", resource="rpc_command", resource_id=str(cmd.id),
+          detail={"device_id": str(device_id), "method": body.method, "params": body.params}, commit=True)
 
     # Push to device via WebSocket immediately if connected
     try:

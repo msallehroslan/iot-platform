@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.auth_deps import get_current_user, require_admin, require_tenant_member
 from app.models.models import Alarm, Device, AlarmStatus, User
 from app.schemas.schemas import AlarmCreate, AlarmOut, AlarmWithDevice
+from app.services.audit import audit
 
 router = APIRouter(prefix="/alarms", tags=["Alarms"])
 
@@ -119,6 +120,9 @@ def create_alarm(
     db.add(alarm)
     db.commit()
     db.refresh(alarm)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="alarm.create", resource="alarm", resource_id=str(alarm.id),
+          detail={"alarm_type": alarm.alarm_type, "severity": alarm.severity}, commit=True)
     return alarm
 
 
@@ -153,6 +157,8 @@ def acknowledge_alarm(
     alarm.ack_by = current_user.email   # record who acknowledged it
     db.commit()
     db.refresh(alarm)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="alarm.ack", resource="alarm", resource_id=str(alarm.id), commit=True)
     return alarm
 
 
@@ -174,6 +180,8 @@ def clear_alarm(
 
     db.commit()
     db.refresh(alarm)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="alarm.clear", resource="alarm", resource_id=str(alarm.id), commit=True)
     return alarm
 
 
@@ -184,5 +192,7 @@ def delete_alarm(
     current_user: User = Depends(require_admin),
 ):
     alarm = _get_alarm_owned(alarm_id, current_user, db)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="alarm.delete", resource="alarm", resource_id=str(alarm_id))
     db.delete(alarm)
     db.commit()
