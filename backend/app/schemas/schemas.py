@@ -534,6 +534,10 @@ WIDGET_CONFIG_SCHEMAS: Dict[str, Dict] = {
         "required": ["method_on", "method_off", "key"],
         "optional": ["label", "color", "device_id"],
     },
+    "rpc_input": {
+        "required": ["method"],
+        "optional": ["param_key", "input_type", "label", "unit", "key", "decimals", "device_id"],
+    },
     "map": {
         "required": ["lat_key", "lng_key"],
         "optional": ["label", "zoom", "device_id"],

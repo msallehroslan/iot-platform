@@ -125,9 +125,16 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
   // bar_chart, pie_chart need multiple keys
   // markdown, html_card need freeform content
   const noTelemetry   = ["markdown"].includes(type);
-  const needsKey      = !["alarm_list","markdown","entity_table","html_card","pie_chart"].includes(type);  // bar_chart now needs a key
-  const needsMultiKey = ["pie_chart"].includes(type);  // bar_chart now uses single key (time-series)
-  const needsContent  = ["markdown","html_card"].includes(type);
+  const needsKey      = ![
+    "alarm_list","markdown","entity_table","html_card","pie_chart",
+    "rpc_button","rpc_toggle","rpc_input","status_light","device_summary","map","multi_axis_chart",
+  ].includes(type);
+  const needsMultiKey  = ["pie_chart","multi_axis_chart"].includes(type);
+  const needsContent   = ["markdown","html_card"].includes(type);
+  const isRpcButton    = type === "rpc_button";
+  const isRpcToggle    = type === "rpc_toggle";
+  const isRpcInput     = type === "rpc_input";
+  const isMap          = type === "map";
   const needsDevice   = !["markdown"].includes(type);  // everything except pure markdown needs a device
 
   // ── Validation ────────────────────────────────────────────────────────────
@@ -188,7 +195,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {WIDGET_REGISTRY
                 .filter(wt => {
-                  if (["rpc_button","rpc_toggle"].includes(wt.id) && user?.role !== "TENANT_ADMIN") return false;
+                  if (["rpc_button","rpc_toggle","rpc_input"].includes(wt.id) && user?.role !== "TENANT_ADMIN") return false;
                   if (["multi_axis_chart","bar_chart","timeseries_table","entity_table","pie_chart"].includes(wt.id) && user?.role === "CUSTOMER_USER") return false;
                   return true;
                 })
@@ -345,6 +352,116 @@ function WidgetModal({ devices, onSave, onClose, editWidget }) {
                     value={cfg.content || ""} onChange={e => set("content", e.target.value)}
                     placeholder={type === "html_card" ? "<h2>Temp: ${temperature}°C</h2>" : "**Status:** Online\n`key`: value"}
                   />
+                </div>
+              )}
+
+              {isRpcInput && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                      Command Method * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(e.g. setValue, setSetpoint)</span>
+                    </label>
+                    <input style={inp} value={cfg.method || ""} onChange={e => set("method", e.target.value)}
+                      placeholder="e.g. setValue" />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                        Param Name * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(key in JSON)</span>
+                      </label>
+                      <input style={inp} value={cfg.param_key || "value"} onChange={e => set("param_key", e.target.value)}
+                        placeholder="e.g. value, setpoint, level" />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Input Type</label>
+                      <select style={{ ...inp, cursor: "pointer" }} value={cfg.input_type || "number"} onChange={e => set("input_type", e.target.value)}>
+                        <option value="number">Number</option>
+                        <option value="text">Text</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                        Current value key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(optional)</span>
+                      </label>
+                      <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                        <option value="">— None —</option>
+                        {availableKeys.map(k => <option key={k}>{k}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Unit</label>
+                      <input style={inp} value={cfg.unit || ""} onChange={e => set("unit", e.target.value)} placeholder="e.g. °C, %, RPM" />
+                    </div>
+                  </div>
+                  <div style={{ padding: "10px 12px", background: "#f8fafc", borderRadius: 8, fontSize: 11, color: "#64748b", lineHeight: 1.7 }}>
+                    <strong>How it works:</strong><br/>
+                    Device receives: <span style={{ fontFamily: "monospace" }}>{"{method: \"" + (cfg.method||"setValue") + "\", params: {\"" + (cfg.param_key||"value") + "\": &lt;input&gt;}}"}</span>
+                  </div>
+                </div>
+              )}
+              {isRpcButton && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                      Command Method * <span style={{ color: "#94a3b8", fontWeight: 400 }}>(sent to device on click)</span>
+                    </label>
+                    <input style={inp} value={cfg.method || ""} onChange={e => set("method", e.target.value)}
+                      placeholder="e.g. turnOn, reboot, setValue" />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Button Label</label>
+                    <input style={inp} value={cfg.label || ""} onChange={e => set("label", e.target.value)}
+                      placeholder="e.g. Turn On, Restart" />
+                  </div>
+                </div>
+              )}
+
+              {isRpcToggle && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>
+                      Telemetry Key <span style={{ color: "#94a3b8", fontWeight: 400 }}>(reads ON/OFF state)</span>
+                    </label>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                      <option value="">— Select key —</option>
+                      {availableKeys.map(k => <option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>ON command *</label>
+                      <input style={inp} value={cfg.method_on || ""} onChange={e => set("method_on", e.target.value)} placeholder="e.g. turnOn" />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>OFF command *</label>
+                      <input style={inp} value={cfg.method_off || ""} onChange={e => set("method_off", e.target.value)} placeholder="e.g. turnOff" />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Label</label>
+                    <input style={inp} value={cfg.label || ""} onChange={e => set("label", e.target.value)} placeholder="e.g. Relay 1, Pump" />
+                  </div>
+                </div>
+              )}
+
+              {isMap && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Latitude key *</label>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.lat_key || "lat"} onChange={e => set("lat_key", e.target.value)}>
+                      <option value="lat">lat</option>
+                      {availableKeys.filter(k=>k!=="lat").map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Longitude key *</label>
+                    <select style={{ ...inp, cursor: "pointer" }} value={cfg.lng_key || "lng"} onChange={e => set("lng_key", e.target.value)}>
+                      <option value="lng">lng</option>
+                      {availableKeys.filter(k=>k!=="lng").map(k=><option key={k}>{k}</option>)}
+                    </select>
+                  </div>
                 </div>
               )}
 

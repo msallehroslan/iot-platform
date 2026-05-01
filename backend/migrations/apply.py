@@ -395,10 +395,12 @@ MIGRATIONS += [
             --   SELECT create_hypertable('telemetry_data', 'ts', migrate_data => true);
             --   This converts the existing table in-place.
 
-            -- Hot-path index: latest values per device+key (used by every dashboard load)
-            CREATE INDEX IF NOT EXISTS ix_telemetry_hot
-                ON telemetry_data (device_id, key, ts DESC)
-                WHERE ts > NOW() - INTERVAL '7 days';
+            -- Composite index for fast time-range queries per device+key
+            -- Note: partial index with NOW() is not allowed in Postgres (non-immutable).
+            -- The existing ix_telemetry_data_device_key_ts composite index already covers
+            -- this access pattern. We add an ANALYZE to update planner statistics.
+            CREATE INDEX IF NOT EXISTS ix_telemetry_device_key_ts
+                ON telemetry_data (device_id, key, ts DESC);
 
             -- Analyse to update planner statistics after index creation
             ANALYZE telemetry_data;

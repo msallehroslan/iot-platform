@@ -14,7 +14,7 @@ from uuid import UUID
 from datetime import datetime, timezone
 
 from app.core.database import get_db
-from app.core.auth_deps import get_current_user, assert_device_access
+from app.core.auth_deps import get_current_user, assert_device_access, require_admin
 from app.models.models import Device, User, RpcCommand, RpcCommandStatus
 from app.schemas.schemas import RpcCommandCreate, RpcCommandOut
 
@@ -80,7 +80,7 @@ async def send_rpc_command(
     device_id: UUID,
     body: RpcCommandCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """Send a command to a device. Stored in DB + broadcast via WebSocket."""
     device = db.query(Device).filter(Device.id == device_id).first()
@@ -118,7 +118,7 @@ def list_rpc_commands(
     status: Optional[str] = None,
     limit: int = 20,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
 ):
     """List RPC command history for a device."""
     device = db.query(Device).filter(Device.id == device_id).first()

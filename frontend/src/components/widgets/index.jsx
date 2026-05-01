@@ -695,6 +695,7 @@ export const WIDGET_REGISTRY = [
   // ── Control widgets ──────────────────────────────────────────────────────
   { id: "rpc_button",        label: "RPC Button",        icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Send command on click",            category: "control" },
   { id: "rpc_toggle",        label: "RPC Toggle",        icon: "M18.36 6.64A9 9 0 1 1 5.64 17.36",                                     desc: "ON/OFF toggle command",            category: "control" },
+  { id: "rpc_input",         label: "RPC Input",         icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z", desc: "Send value to device (setpoint override)", category: "control" },
   // ── Content widgets ──────────────────────────────────────────────────────
   { id: "markdown",          label: "Text / Markdown",   icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",          desc: "Free-text notes",                  category: "content" },
   { id: "html_card",         label: "HTML Card",         icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",         desc: "Custom HTML with \${key} values",  category: "content" },
@@ -759,7 +760,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
   const wtype = widget.widget_type;
 
   // RPC = TENANT_ADMIN only
-  const isRpc = wtype === "rpc_button" || wtype === "rpc_toggle";
+  const isRpc = wtype === "rpc_button" || wtype === "rpc_toggle" || wtype === "rpc_input";
   if (isRpc && userRole !== "TENANT_ADMIN") {
     return (
       <div style={{
@@ -816,6 +817,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     case "device_summary":    return <DeviceSummaryWidget  {...props} />;
     case "rpc_button":        return <RpcButtonWidget      {...props} />;
     case "rpc_toggle":        return <RpcToggleWidget      {...props} />;
+    case "rpc_input":         return <RpcInputWidget       {...props} />;
     default:
       return (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 12, color: "#94a3b8" }}>
@@ -823,6 +825,119 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
         </div>
       );
   }
+}
+
+
+
+// ── Phase 3: RPC Input Widget ─────────────────────────────────────────────────
+// Operator types a value and hits Send — used to override device setpoints,
+// thresholds, modes, or any numeric/string parameter dynamically.
+
+export function RpcInputWidget({ config, liveTelem, deviceId }) {
+  const method    = config.method    || "setValue";
+  const paramKey  = config.param_key || "value";
+  const label     = config.label     || paramKey;
+  const inputType = config.input_type || "number";  // "number" | "text"
+  const unit      = config.unit      || "";
+  const currentRaw = liveTelem?.[config.key];
+  const currentVal = currentRaw !== undefined
+    ? (typeof currentRaw === "number" ? currentRaw.toFixed(config.decimals ?? 1) : String(currentRaw))
+    : null;
+
+  const [value,   setValue]   = useState("");
+  const [state,   setState]   = useState("idle"); // idle | sending | done | error
+  const [errMsg,  setErrMsg]  = useState("");
+
+  if (!deviceId || !method) return (
+    <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8" }}>
+      Configure method in Edit
+    </div>
+  );
+
+  const send = async () => {
+    if (state === "sending" || !value.toString().trim()) return;
+    setState("sending"); setErrMsg("");
+    try {
+      const token = localStorage.getItem("access_token");
+      const BASE  = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+      const parsed = inputType === "number" ? parseFloat(value) : value;
+      if (inputType === "number" && isNaN(parsed)) {
+        setErrMsg("Enter a valid number"); setState("idle"); return;
+      }
+      const res = await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${token}` },
+        body: JSON.stringify({ method, params: { [paramKey]: parsed } }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setState("done");
+      setTimeout(() => setState("idle"), 2000);
+    } catch (e) {
+      setErrMsg("Send failed");
+      setState("error");
+      setTimeout(() => setState("idle"), 2500);
+    }
+  };
+
+  const onKey = e => { if (e.key === "Enter") send(); };
+
+  const BTN_BG = { idle:"#2F8CFF", sending:"#94a3b8", done:"#10b981", error:"#ef4444" }[state];
+  const BTN_LBL = { idle:"Send", sending:"Sending…", done:"Sent ✓", error:"Error" }[state];
+
+  return (
+    <div style={{ display:"flex",flexDirection:"column",justifyContent:"center",height:"100%",gap:10,padding:"4px 2px" }}>
+      {/* Current value display */}
+      {config.key && (
+        <div style={{ display:"flex",justifyContent:"space-between",alignItems:"baseline" }}>
+          <span style={{ fontSize:11,color:"#94a3b8" }}>Current {label}</span>
+          <span style={{ fontSize:15,fontWeight:700,color:"#1e293b",fontFamily:"monospace" }}>
+            {currentVal !== null ? `${currentVal}${unit ? " "+unit : ""}` : "—"}
+          </span>
+        </div>
+      )}
+
+      {/* Input + Send */}
+      <div style={{ display:"flex",gap:8,alignItems:"stretch" }}>
+        <div style={{ flex:1,position:"relative" }}>
+          <input
+            type={inputType}
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onKeyDown={onKey}
+            placeholder={`New ${label}${unit ? " ("+unit+")" : ""}`}
+            style={{
+              width:"100%", boxSizing:"border-box",
+              padding:"8px 12px", borderRadius:8,
+              border:`1.5px solid ${errMsg ? "#ef4444" : "#e2e8f0"}`,
+              fontSize:13, outline:"none", fontFamily:"monospace",
+              background:"#f8fafc",
+            }}
+          />
+        </div>
+        <button
+          onClick={send}
+          disabled={state === "sending" || !value.toString().trim()}
+          style={{
+            padding:"8px 16px", borderRadius:8, border:"none",
+            background: BTN_BG, color:"white",
+            fontSize:13, fontWeight:600, cursor: state==="sending"?"wait":"pointer",
+            transition:"background .3s", whiteSpace:"nowrap",
+            opacity: !value.toString().trim() ? 0.5 : 1,
+          }}
+        >
+          {BTN_LBL}
+        </button>
+      </div>
+
+      {errMsg && <p style={{ fontSize:11,color:"#ef4444",margin:0 }}>{errMsg}</p>}
+
+      {/* Method hint */}
+      <p style={{ fontSize:10,color:"#cbd5e1",margin:0 }}>
+        method: <span style={{ fontFamily:"monospace" }}>{method}</span>
+        {" · param: "}<span style={{ fontFamily:"monospace" }}>{paramKey}</span>
+      </p>
+    </div>
+  );
 }
 
 // ── Phase 3: Multi-axis Chart ─────────────────────────────────────────────────

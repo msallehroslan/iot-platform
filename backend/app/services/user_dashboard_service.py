@@ -14,6 +14,7 @@ from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
+from app.schemas.schemas import validate_widget_config
 
 from app.models.models import UserDashboard, UserWidget
 
@@ -26,7 +27,7 @@ VALID_WIDGET_TYPES = {
     "markdown", "entity_table", "html_card",
     # Phase 3 — 6 new types
     "multi_axis_chart", "map", "device_summary",
-    "rpc_button", "rpc_toggle",
+    "rpc_button", "rpc_toggle", "rpc_input",
 }
 
 
@@ -306,7 +307,9 @@ def add_widget(dashboard_id: UUID, user_id: str, widget_type: str,
         )
     if not title or not title.strip():
         raise HTTPException(status_code=400, detail="Widget title is required")
-
+    config_errors = validate_widget_config(widget_type, config or {})
+    if config_errors:
+        raise HTTPException(status_code=422, detail=config_errors)
     w = UserWidget(
         dashboard_id=dashboard_id,
         widget_type=widget_type,
