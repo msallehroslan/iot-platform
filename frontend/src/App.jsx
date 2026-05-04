@@ -2047,16 +2047,20 @@ function AIChatbot({ user }) {
       {/* Floating button */}
       <button onClick={()=>setOpen(o=>!o)} style={{
         position:"fixed", bottom:24, right:24, zIndex:50,
-        width:52, height:52, borderRadius:"50%",
-        background: open ? "#334866" : "linear-gradient(135deg,#2F8CFF,#0B4BB3)",
-        border:"none", cursor:"pointer", boxShadow:"0 4px 20px rgba(47,140,255,0.4)",
+        width:60, height:60, borderRadius:"50%",
+        background: open ? "#0B1426" : "linear-gradient(135deg,#0B1426,#1a2e5a)",
+        border: open ? "2px solid #334866" : "2px solid rgba(47,140,255,0.5)",
+        cursor:"pointer",
+        boxShadow: open ? "0 4px 20px rgba(0,0,0,0.4)" : "0 4px 24px rgba(47,140,255,0.5), 0 0 0 1px rgba(16,185,129,0.15)",
         display:"flex", alignItems:"center", justifyContent:"center",
         transition:"all 0.2s",
+        overflow:"hidden",
+        padding:0,
       }}>
         {open ? (
-          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         ) : (
-          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:22,height:22}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          <img src="/taat-robot.png" alt="TAAT AI" style={{width:56,height:56,objectFit:"cover",borderRadius:"50%"}} />
         )}
       </button>
 
@@ -2074,22 +2078,33 @@ function AIChatbot({ user }) {
         }}>
           {/* Header */}
           <div style={{padding:"14px 16px", background:"linear-gradient(135deg,#0B1426,#1a2e5a)", display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
-            <div style={{width:32,height:32,borderRadius:"50%",background:"rgba(47,140,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2" style={{width:16,height:16}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            <div style={{width:36,height:36,borderRadius:"50%",overflow:"hidden",border:"1.5px solid rgba(47,140,255,0.5)",flexShrink:0}}>
+              <img src="/taat-robot.png" alt="TAAT AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
             </div>
             <div>
               <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>TriAxis AI Assistant</p>
               <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.1</p>
             </div>
-            <div style={{marginLeft:"auto",width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+            <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+              <div style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+              <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2.5" style={{width:14,height:14}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
           </div>
 
           {/* Messages */}
           <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
             {msgs.map((m,i)=>(
-              <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+              <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-end",gap:6}}>
+                {m.role==="assistant" && (
+                  <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
+                    <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                  </div>
+                )}
                 <div style={{
-                  maxWidth:"82%", padding:"8px 12px", borderRadius: m.role==="user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                  maxWidth:"78%", padding:"8px 12px", borderRadius: m.role==="user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                   background: m.role==="user" ? "linear-gradient(135deg,#2F8CFF,#0B4BB3)" : "#F4F8FF",
                   color: m.role==="user" ? "white" : "#334866",
                   fontSize:12, lineHeight:1.6,
@@ -2100,7 +2115,10 @@ function AIChatbot({ user }) {
               </div>
             ))}
             {loading && (
-              <div style={{display:"flex",justifyContent:"flex-start"}}>
+              <div style={{display:"flex",justifyContent:"flex-start",alignItems:"flex-end",gap:6}}>
+                <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
+                  <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                </div>
                 <div style={{padding:"10px 14px",background:"#F4F8FF",borderRadius:"16px 16px 16px 4px",display:"flex",gap:4,alignItems:"center"}}>
                   {[0,1,2].map(i=>(
                     <div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#94a3b8",animation:`bounce 1s ${i*0.2}s infinite`}}/>

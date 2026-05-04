@@ -502,10 +502,9 @@ Today is {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}.
         return {"reply": f"Sorry, I'm having trouble connecting right now. Please try again. ({str(exc)[:60]})", "engine": "error"}
 
 
-# ── AI Chatbot ────────────────────────────────────────────────────────────────
+# ── (duplicate /chat removed — ai_chat above is the canonical endpoint) ───────
 
-@router.post("/chat")
-async def chat(
+async def _chat_unused(
     body: dict,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
