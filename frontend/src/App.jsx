@@ -125,15 +125,18 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
         {!col && (
           <div className="mx-1 px-3 py-2.5 rounded-xl border border-[#D8E3F3] bg-white flex flex-col items-center gap-2">
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
-            <div className="flex items-center justify-center gap-2 w-full">
-              <div className="flex items-center gap-1 border-r border-[#D8E3F3] pr-2">
-                <img src="/taat-logo-2.png" alt="TAAT" className="h-4 w-auto object-contain" />
-                <span className="text-[9px] font-bold text-[#07142F]">TAAT</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <img src="/greenson-logo.jpg" alt="Greenson" className="h-4 w-auto object-contain" />
+            <div className="flex items-center justify-center gap-2.5 w-full">
+              <div className="flex items-center gap-1.5 border-r border-[#D8E3F3] pr-2.5">
+                <img src="/taat-logo-2.png" alt="TAAT" className="h-6 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
-                  <span className="text-[8px] font-bold text-[#0B1426]">Greenson</span>
+                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis</span>
+                  <span className="text-[7px] text-[#6B7F9F]">AI Technologies</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <img src="/greenson-logo.jpg" alt="Greenson" className="h-6 w-auto object-contain" />
+                <div className="flex flex-col leading-none">
+                  <span className="text-[9px] font-bold text-[#0B1426]">Greenson</span>
                   <span className="text-[7px] text-[#6B7F9F]">Technology</span>
                 </div>
               </div>
