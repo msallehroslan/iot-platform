@@ -720,3 +720,73 @@ MIGRATIONS += [
 
 if __name__ == "__main__":
     run()
+
+
+MIGRATIONS += [
+    {
+        "id":   "030_anomaly_scores",
+        "desc": "Phase 7: anomaly detection scores table",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS anomaly_scores (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                key             VARCHAR(255) NOT NULL,
+                ts              TIMESTAMPTZ NOT NULL,
+                value           FLOAT NOT NULL,
+                z_score         FLOAT NOT NULL,
+                is_anomaly      BOOLEAN DEFAULT false,
+                baseline_mean   FLOAT,
+                baseline_stddev FLOAT,
+                created_at      TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS ix_anomaly_scores_device_key_ts
+                ON anomaly_scores(device_id, key, ts);
+        """,
+    },
+    {
+        "id":   "031_device_baselines",
+        "desc": "Phase 7: baseline learning table",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS device_baselines (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                device_id       UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                key             VARCHAR(255) NOT NULL,
+                hour_of_day     INTEGER NOT NULL,
+                mean            FLOAT NOT NULL,
+                stddev          FLOAT NOT NULL DEFAULT 0,
+                min_val         FLOAT,
+                max_val         FLOAT,
+                sample_count    INTEGER DEFAULT 0,
+                suggested_upper FLOAT,
+                suggested_lower FLOAT,
+                updated_at      TIMESTAMPTZ DEFAULT now(),
+                CONSTRAINT uq_baseline_device_key_hour UNIQUE (device_id, key, hour_of_day)
+            );
+            CREATE INDEX IF NOT EXISTS ix_device_baselines_device_key
+                ON device_baselines(device_id, key);
+        """,
+    },
+    {
+        "id":   "032_device_health_scores",
+        "desc": "Phase 7: device health scoring + predictive maintenance table",
+        "sql":  """
+            CREATE TABLE IF NOT EXISTS device_health_scores (
+                id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                device_id             UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                scored_at             TIMESTAMPTZ NOT NULL,
+                uptime_score          FLOAT DEFAULT 100,
+                alarm_score           FLOAT DEFAULT 100,
+                stability_score       FLOAT DEFAULT 100,
+                freshness_score       FLOAT DEFAULT 100,
+                health_score          FLOAT DEFAULT 100,
+                health_label          VARCHAR(20) DEFAULT 'HEALTHY',
+                maintenance_due       BOOLEAN DEFAULT false,
+                maintenance_reason    TEXT,
+                predicted_failure_hrs FLOAT,
+                created_at            TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS ix_device_health_device_ts
+                ON device_health_scores(device_id, scored_at);
+        """,
+    },
+]

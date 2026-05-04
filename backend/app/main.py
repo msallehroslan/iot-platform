@@ -105,13 +105,45 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    purge_task = _asyncio.create_task(_daily_purge())
-    offline_task = _asyncio.create_task(_offline_check())
+    # Phase 7: Nightly baseline update
+    async def _nightly_baseline():
+        while True:
+            await _asyncio.sleep(86400)  # every 24h
+            db = SessionLocal()
+            try:
+                from app.services.baseline_service import update_all_baselines
+                result = update_all_baselines(db)
+                logger.info("Nightly baseline update: %s", result)
+            except Exception as exc:
+                logger.error("Nightly baseline failed: %s", exc)
+            finally:
+                db.close()
+
+    # Phase 7: Hourly health scoring
+    async def _hourly_health():
+        while True:
+            await _asyncio.sleep(3600)  # every 1h
+            db = SessionLocal()
+            try:
+                from app.services.health_service import score_all_devices
+                result = score_all_devices(db)
+                logger.info("Hourly health score: %s", result)
+            except Exception as exc:
+                logger.error("Hourly health score failed: %s", exc)
+            finally:
+                db.close()
+
+    purge_task     = _asyncio.create_task(_daily_purge())
+    offline_task   = _asyncio.create_task(_offline_check())
+    baseline_task  = _asyncio.create_task(_nightly_baseline())
+    health_task    = _asyncio.create_task(_hourly_health())
 
     yield
 
     purge_task.cancel()
     offline_task.cancel()
+    baseline_task.cancel()
+    health_task.cancel()
 
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):

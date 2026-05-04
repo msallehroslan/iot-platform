@@ -427,6 +427,18 @@ async def ingest_telemetry(
     except Exception:
         pass  # metric write failure never blocks ingest
 
+    # Phase 7: Anomaly scoring (non-fatal, fire-and-forget per key)
+    if numeric_values:
+        try:
+            from app.services.anomaly_service import score_telemetry_point
+            for key, value_num in numeric_values.items():
+                score_telemetry_point(db, str(device.id), key, value_num, ts)
+            db.commit()
+        except Exception as exc:
+            logger.debug("anomaly scoring skipped: %s", exc)
+            try: db.rollback()
+            except: pass
+
     # WebSocket broadcast (non-fatal)
     try:
         from app.core.websocket_manager import manager as ws_manager

@@ -596,3 +596,120 @@ Format responses clearly — use bullet points for lists, be direct."""
             "reply": f"Sorry, I encountered an error: {str(exc)}",
             "engine": "error",
         }
+
+
+# ── Phase 7: Anomaly Detection ────────────────────────────────────────────────
+
+@router.get("/anomalies/{device_id}")
+def get_anomalies(
+    device_id: UUID,
+    key: Optional[str] = None,
+    hours: int = 24,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Get anomaly scores for a device.
+    Returns anomalies only by default; pass only_anomalies=false for all scores.
+    """
+    _assert_device(device_id, current_user, db)
+    from app.services.anomaly_service import get_anomalies, get_anomaly_summary
+    return {
+        "device_id": str(device_id),
+        "summary":   get_anomaly_summary(db, str(device_id), hours=hours),
+        "anomalies": get_anomalies(db, str(device_id), key=key, hours=hours),
+    }
+
+
+# ── Phase 7: Baseline Learning ────────────────────────────────────────────────
+
+@router.get("/baseline/{device_id}")
+def get_baseline(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Get learned baselines for a device.
+    Returns per-key, per-hour-of-day statistics.
+    Status = 'learning' until enough data (30 days), then 'active'.
+    """
+    _assert_device(device_id, current_user, db)
+    from app.services.baseline_service import get_baseline_for_device, get_threshold_suggestions
+    return {
+        "device_id":   str(device_id),
+        "baseline":    get_baseline_for_device(db, str(device_id)),
+        "suggestions": get_threshold_suggestions(db, str(device_id)),
+    }
+
+
+@router.post("/baseline/{device_id}/refresh")
+def refresh_baseline(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_admin),
+):
+    """Manually trigger baseline recalculation for a device (admin only)."""
+    _assert_device(device_id, current_user, db)
+    from app.services.baseline_service import update_baselines_for_device
+    rows = update_baselines_for_device(db, str(device_id))
+    return {"device_id": str(device_id), "baseline_rows_updated": rows}
+
+
+# ── Phase 7: Health Scoring + Predictive Maintenance ─────────────────────────
+
+@router.get("/health/{device_id}")
+def get_device_health(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Get current health score and maintenance prediction for a device.
+    Includes component breakdown: uptime, alarm, stability, freshness.
+    """
+    device = _assert_device(device_id, current_user, db)
+    from app.services.health_service import get_latest_health, score_device
+    health = get_latest_health(db, str(device_id))
+    if not health:
+        # Score on-demand if no cached score exists
+        try:
+            s = score_device(db, device)
+            db.commit()
+            health = get_latest_health(db, str(device_id))
+        except Exception as exc:
+            logger.error("on-demand health score failed: %s", exc)
+    return {
+        "device_id":   str(device_id),
+        "device_name": device.name,
+        "health":      health,
+    }
+
+
+@router.get("/health")
+def get_fleet_health(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Get health scores for all devices in the tenant.
+    Sorted worst-first. Includes maintenance alerts.
+    CUSTOMER_USER sees only their customer's devices.
+    """
+    from app.services.health_service import get_fleet_health as _fleet_health
+    all_health = _fleet_health(db, str(current_user.tenant_id))
+
+    # Apply CUSTOMER_USER scoping
+    if current_user.role == "CUSTOMER_USER" and current_user.customer_id:
+        scoped_ids = {
+            str(d.id) for d in
+            _scoped_devices(current_user, db).all()
+        }
+        all_health = [h for h in all_health if h["device_id"] in scoped_ids]
+
+    maintenance_count = sum(1 for h in all_health if h["health"].get("maintenance_due"))
+    return {
+        "devices":           all_health,
+        "total":             len(all_health),
+        "maintenance_alerts": maintenance_count,
+    }

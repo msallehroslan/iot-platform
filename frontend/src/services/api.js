@@ -189,9 +189,16 @@ export const systemApi = {
 
 // ── Intelligence API ──────────────────────────────────────────────────────────
 export const intelligenceApi = {
+  // Phase 6
   trend:   (deviceId, key, minutes=30) => apiFetch(`/intelligence/trend/${deviceId}/${key}?minutes=${minutes}`),
   trends:  (deviceId, minutes=30)      => apiFetch(`/intelligence/trend/${deviceId}?minutes=${minutes}`),
   rca:     (deviceId)                  => apiFetch(`/intelligence/rca/${deviceId}`, { method: "POST" }),
   summary: (deviceId)                  => apiFetch(`/intelligence/summary/${deviceId}`),
-  chat:    (messages, deviceId=null)    => apiFetch(`/intelligence/chat`, { method:"POST", body: JSON.stringify({ messages, device_id: deviceId }) }),
+  chat:    (messages, deviceId=null)   => apiFetch(`/intelligence/chat`, { method: "POST", body: JSON.stringify({ messages, device_id: deviceId }) }),
+  // Phase 7
+  anomalies:       (deviceId, hours=24, key=null) => apiFetch(`/intelligence/anomalies/${deviceId}?hours=${hours}${key ? `&key=${encodeURIComponent(key)}` : ""}`),
+  baseline:        (deviceId)                     => apiFetch(`/intelligence/baseline/${deviceId}`),
+  refreshBaseline: (deviceId)                     => apiFetch(`/intelligence/baseline/${deviceId}/refresh`, { method: "POST" }),
+  health:          (deviceId)                     => apiFetch(`/intelligence/health/${deviceId}`),
+  fleetHealth:     ()                             => apiFetch(`/intelligence/health`),
 };

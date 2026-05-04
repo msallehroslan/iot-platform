@@ -2013,24 +2013,33 @@ function AIChatbot({ user }) {
   const [input,   setInput]   = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
 
-  const send = async () => {
-    const text = input.trim();
+  // Auto-focus input when panel opens
+  useEffect(()=>{ if (open) setTimeout(()=>inputRef.current?.focus(), 100); }, [open]);
+
+  const send = async (overrideText) => {
+    const text = (overrideText || input).trim();
     if (!text || loading) return;
     const userMsg = { role:"user", content: text };
     setMsgs(m => [...m, userMsg]);
     setInput("");
     setLoading(true);
+    // Re-focus input after clearing so next message is ready
+    setTimeout(()=>inputRef.current?.focus(), 50);
     try {
-      // Send full history for context
-      const history = [...msgs, userMsg].slice(-10); // last 10 messages only
+      const history = [...msgs, userMsg].slice(-10);
       const res = await intelligenceApi.chat(history);
       setMsgs(m => [...m, { role:"assistant", content: res.reply }]);
     } catch(e) {
       setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+      // Focus again after response arrives
+      setTimeout(()=>inputRef.current?.focus(), 50);
+    }
   };
 
   const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
@@ -2132,7 +2141,7 @@ function AIChatbot({ user }) {
           {msgs.length===1 && (
             <div style={{padding:"0 14px 10px",display:"flex",gap:6,flexWrap:"wrap"}}>
               {SUGGESTIONS.map(s=>(
-                <button key={s} onClick={()=>{setInput(s);}} style={{fontSize:10,padding:"4px 10px",borderRadius:20,border:"1px solid #D8E3F3",background:"#F4F8FF",color:"#334866",cursor:"pointer",whiteSpace:"nowrap"}}>
+                <button key={s} onClick={()=>send(s)} style={{fontSize:10,padding:"4px 10px",borderRadius:20,border:"1px solid #D8E3F3",background:"#F4F8FF",color:"#334866",cursor:"pointer",whiteSpace:"nowrap"}}>
                   {s}
                 </button>
               ))}
@@ -2142,6 +2151,7 @@ function AIChatbot({ user }) {
           {/* Input */}
           <div style={{padding:"10px 12px",borderTop:"1px solid #EAF2FF",display:"flex",gap:8,alignItems:"flex-end",flexShrink:0}}>
             <textarea
+              ref={inputRef}
               value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKey}
               placeholder="Ask about devices, alarms, trends…"
               rows={1}
