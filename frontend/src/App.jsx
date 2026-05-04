@@ -122,6 +122,13 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       </nav>
       <div className="border-t border-[#D8E3F3] p-3 space-y-2">
         {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
+        {!col && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/60 border border-[#D8E3F3]">
+            <span className="text-[9px] text-[#6B7F9F] flex-shrink-0">In collaboration with</span>
+            <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-4 w-auto flex-shrink-0" />
+            <span className="text-[9px] font-semibold text-[#0B1426] flex-shrink-0">Greenson Technology</span>
+          </div>
+        )}
         <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
     </aside>
