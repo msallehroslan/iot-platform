@@ -100,7 +100,7 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   return (
     <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
       <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
-        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis IoT</span>}
+        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis Nexus</span>}
       </div>
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
@@ -127,12 +127,12 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1.5 border-r border-[#D8E3F3] pr-3">
-                <img src="/taat-logo-2.png" alt="TriAxis" className="h-5 w-auto object-contain" />
-                <span className="text-[10px] font-bold text-[#07142F] whitespace-nowrap">TriAxis</span>
+                <img src="/taat-logo-2.png" alt="TAAT" className="h-4 w-auto object-contain" />
+                <span className="text-[10px] font-bold text-[#07142F] whitespace-nowrap">TAAT</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <img src="/greenson-logo.jpg" alt="Greenson" className="h-5 w-auto object-contain" />
-                <span className="text-[10px] font-bold text-[#0B1426] whitespace-nowrap">Greenson</span>
+                <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-4 w-auto object-contain" />
+                <span className="text-[10px] font-bold text-[#0B1426] whitespace-nowrap">Greenson Technology</span>
               </div>
             </div>
           </div>
@@ -1833,7 +1833,7 @@ function LoginPage({ onLogin }) {
         <div className="hidden lg:flex flex-col justify-center flex-shrink-0 px-16 py-16" style={{width:440,background:"#EAF3FF"}}>
           <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F] mb-5">Welcome</p>
           <h1 className="text-5xl font-extrabold leading-tight tracking-tight text-[#07142F] mb-5">
-            TriAxis Nexus<br/>Platform
+            <span className="text-[#2F80ED]">TriAxis</span> Nexus<br/>Platform
           </h1>
           <p className="text-base leading-relaxed text-[#64789B] max-w-sm">
             The unified intelligence platform by TriAxis AI Technologies, in collaboration with Greenson Technology.
