@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -169,123 +169,6 @@ function Header({ title, onRefresh, refreshing }) {
 // INTELLIGENCE LAYER — Smart Overview Cards + AI Chatbot
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Fleet Intelligence Panel ─────────────────────────────────────────────────
-// Shows AI-generated health summary for each active device.
-function FleetIntelligencePanel({ devices }) {
-  const [summaries, setSummaries] = useState({});
-  const [loading,   setLoading]   = useState(false);
-  const [loaded,    setLoaded]    = useState(false);
-
-  const fetchSummaries = async () => {
-    if (!devices.length || loading) return;
-    setLoading(true);
-    const results = {};
-    await Promise.all(
-      devices.slice(0, 6).map(async d => {
-        try {
-          const s = await intelligenceApi.summary(d.id);
-          results[d.id] = s;
-        } catch {}
-      })
-    );
-    setSummaries(results);
-    setLoaded(true);
-    setLoading(false);
-  };
-
-  useEffect(() => { if (devices.length) fetchSummaries(); }, [devices.length]);
-
-  const HEALTH_COLOR = { HEALTHY: "#10b981", WARNING: "#f59e0b", CRITICAL: "#ef4444" };
-  const HEALTH_BG    = { HEALTHY: "#f0fdf4", WARNING: "#fffbeb", CRITICAL: "#fef2f2" };
-  const TREND_ICON   = { RISING:"↑", FALLING:"↓", STABLE:"→", SPIKE:"⚡", DROP:"⬇", VOLATILE:"~", UNKNOWN:"?" };
-
-  if (!devices.length) return null;
-
-  return (
-    <div style={{ background:"#FFFFFF", borderRadius:16, border:"1px solid #D8E3F3", padding:20, boxShadow:"0 1px 4px rgba(11,20,38,0.06)" }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2" style={{width:18,height:18}}>
-            <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
-          </svg>
-          <h2 style={{ fontSize:14, fontWeight:700, color:"#0B1426", margin:0 }}>Fleet Intelligence</h2>
-          <span style={{ fontSize:10, color:"#6B7F9F", background:"#EAF2FF", padding:"2px 8px", borderRadius:4 }}>AI-powered · Groq</span>
-        </div>
-        <button onClick={fetchSummaries} disabled={loading} style={{ fontSize:11, color:"#2F8CFF", background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
-          {loading
-            ? <><div style={{width:10,height:10,border:"2px solid #2F8CFF",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/> Analysing…</>
-            : "↻ Refresh"
-          }
-        </button>
-      </div>
-
-      {!loaded && !loading && (
-        <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:12 }}>
-          Click Refresh to run AI analysis on your fleet
-        </div>
-      )}
-
-      {loading && !loaded && (
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
-          {devices.slice(0,4).map(d => (
-            <div key={d.id} style={{ background:"#F4F8FF", borderRadius:10, padding:14, animation:"pulse 2s infinite" }}>
-              <div style={{ height:8, background:"#D8E3F3", borderRadius:4, marginBottom:8, width:"60%" }}/>
-              <div style={{ height:6, background:"#D8E3F3", borderRadius:4, marginBottom:6 }}/>
-              <div style={{ height:6, background:"#D8E3F3", borderRadius:4, width:"80%" }}/>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {loaded && (
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
-          {devices.slice(0, 6).map(d => {
-            const s = summaries[d.id];
-            if (!s) return null;
-            const health = s.health || "UNKNOWN";
-            const color  = HEALTH_COLOR[health] || "#94a3b8";
-            const bg     = HEALTH_BG[health]    || "#f8fafc";
-
-            return (
-              <div key={d.id} style={{ background:bg, borderRadius:10, border:`1px solid ${color}33`, padding:14 }}>
-                {/* Device name + health */}
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
-                  <p style={{ fontSize:12, fontWeight:700, color:"#0B1426", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"65%" }}>{d.name}</p>
-                  <span style={{ fontSize:9, fontWeight:700, color:"white", background:color, padding:"2px 7px", borderRadius:10 }}>{health}</span>
-                </div>
-
-                {/* Insights */}
-                <div style={{ marginBottom:8 }}>
-                  {(s.insights || []).slice(0, 2).map((insight, i) => (
-                    <p key={i} style={{ fontSize:10, color:"#334866", margin:"2px 0", lineHeight:1.5 }}>• {insight}</p>
-                  ))}
-                </div>
-
-                {/* Trend badges */}
-                {s.trends && Object.keys(s.trends).length > 0 && (
-                  <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
-                    {Object.entries(s.trends).slice(0, 4).map(([key, trend]) => (
-                      <span key={key} style={{ fontSize:9, background:"rgba(0,0,0,0.06)", color:"#334866", padding:"1px 6px", borderRadius:6 }}>
-                        {TREND_ICON[trend] || "?"} {key}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                {/* Alarm count */}
-                {s.active_alarms > 0 && (
-                  <div style={{ marginTop:6, fontSize:10, color:"#ef4444", fontWeight:600 }}>
-                    🔔 {s.active_alarms} active alarm{s.active_alarms > 1 ? "s" : ""}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function OverviewPage({ refreshKey, onToast }) {
   const [stats,setStats]=useState(null); const [devices,setDevices]=useState([]); const [alarms,setAlarms]=useState([]); const [loading,setLoading]=useState(true);
@@ -431,7 +314,6 @@ function OverviewPage({ refreshKey, onToast }) {
       </div>
       {active.length>0&&<div><h2 className="text-sm font-semibold text-[#0B1426] mb-3">Latest Telemetry</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">{active.slice(0,8).map(d=><TelCard key={d.id} device={d}/>)}</div></div>}
       {/* Fleet Intelligence Panel */}
-      {devices.length>0 && <FleetIntelligencePanel devices={active.length>0?active:devices} />}
     </div>
   );
 }
