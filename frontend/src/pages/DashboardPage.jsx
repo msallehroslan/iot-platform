@@ -852,6 +852,7 @@ export default function DashboardPage({ device, onBack, user }) {
               userRole={user?.role}
               deviceId={device?.id}
               allDevices={allDevices||[]}
+              currentDevice={device}
             />
           )}
         />

@@ -787,7 +787,7 @@ export const WIDGET_COMPONENT_MAP = {
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null, allDevices = [] }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null, allDevices = [], currentDevice = null }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -811,7 +811,15 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
   const effectiveConfig = widget.widget_type === "fleet_map"
     ? { ...widget.config, devices: allDevices }
     : widget.widget_type === "map"
-    ? { ...widget.config, fixed_lat: widget.config?.fixed_lat ?? allDevices?.find(d=>d.id===(widget.config?.device_id||deviceId))?.latitude, fixed_lng: widget.config?.fixed_lng ?? allDevices?.find(d=>d.id===(widget.config?.device_id||deviceId))?.longitude }
+    ? {
+        ...widget.config,
+        fixed_lat: widget.config?.fixed_lat
+          ?? currentDevice?.latitude
+          ?? allDevices?.find(d => d.id === (widget.config?.device_id || deviceId))?.latitude,
+        fixed_lng: widget.config?.fixed_lng
+          ?? currentDevice?.longitude
+          ?? allDevices?.find(d => d.id === (widget.config?.device_id || deviceId))?.longitude,
+      }
     : widget.config || {};
   const props = { config: effectiveConfig, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
 
