@@ -400,7 +400,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[ChatMessage]
-    device_id: Optional[UUID] = None   # optional device context
+    device_id: Optional[UUID] = None        # optional device context
+    pending_confirm: Optional[dict] = None  # pending RPC awaiting confirmation
 
 
 async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4) -> str:
@@ -629,11 +630,57 @@ async def ai_chat(
         (m.content for m in reversed(body.messages) if m.role == "user"), ""
     )
 
-    rpc_executed = None
-    # Only TENANT_ADMIN and TENANT_USER can execute RPC via chat
-    if current_user.role != "CUSTOMER_USER" and last_user_msg:
+    rpc_executed    = None
+    alarm_actioned  = None
+    pending_confirm = body.pending_confirm if hasattr(body, "pending_confirm") else None
+
+    if current_user.role != "CUSTOMER_USER" and last_user_msg and api_key:
+        msg_lower = last_user_msg.lower()
+
+        # ── Alarm action detection ─────────────────────────────────────────
+        alarm_keywords = ["acknowledge", "ack", "clear", "dismiss", "resolve"]
+        if any(kw in msg_lower for kw in alarm_keywords):
+            try:
+                action = "ack_all" if any(w in msg_lower for w in ["all", "every"]) else None
+                if "clear" in msg_lower or "resolve" in msg_lower or "dismiss" in msg_lower:
+                    action = "clear_all" if any(w in msg_lower for w in ["all", "every"]) else "clear_all"
+                elif "ack" in msg_lower or "acknowledge" in msg_lower:
+                    action = "ack_all"
+
+                if action:
+                    sev = None
+                    for s in ["CRITICAL", "MAJOR", "MINOR", "WARNING"]:
+                        if s.lower() in msg_lower:
+                            sev = s
+                            break
+                    from app.models.models import AlarmStatus
+                    base_q = db.query(Alarm).filter(
+                        Alarm.device_id.in_([d.id for d in devices]),
+                        Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
+                    )
+                    if sev:
+                        base_q = base_q.filter(Alarm.severity == sev)
+                    target_alarms = base_q.all()
+                    now = datetime.now(timezone.utc)
+                    count = 0
+                    for a in target_alarms:
+                        if "clear" in action:
+                            a.status = AlarmStatus.CLEARED_ACK if a.ack_ts else AlarmStatus.CLEARED_UNACK
+                            a.clear_ts = now
+                            a.cleared_by = str(current_user.id)
+                        else:
+                            a.status = AlarmStatus.ACTIVE_ACK
+                            a.ack_ts = now
+                            a.ack_by = str(current_user.id)
+                        count += 1
+                    if count:
+                        db.commit()
+                        alarm_actioned = {"action": action, "count": count, "severity": sev}
+            except Exception as exc:
+                logger.debug("alarm action failed (non-fatal): %s", exc)
+
+        # ── RPC Intent Detection ───────────────────────────────────────────
         try:
-            # Fetch REAL keys from DB for every device — no hardcoding
             device_keys = _get_device_keys(db, device_list)
             intent = await _try_parse_rpc_intent(api_key, last_user_msg, device_list, device_keys)
             if intent:
@@ -672,7 +719,7 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
 
     chat_messages = [{"role": "system", "content": system_prompt}]
 
-    # If RPC was executed, inject a system note so LLM confirms it naturally
+    # Inject action confirmations so LLM responds naturally
     if rpc_executed:
         chat_messages.append({
             "role": "system",
@@ -680,7 +727,17 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
                 f"[SYSTEM: RPC command already executed — "
                 f"sent {json.dumps(rpc_executed['params'])} to {rpc_executed['device_name']} "
                 f"(cmd_id: {rpc_executed['cmd_id']}). "
-                f"Confirm this to the user naturally.]"
+                f"Confirm this to the user naturally with ✅.]"
+            )
+        })
+    if alarm_actioned:
+        chat_messages.append({
+            "role": "system",
+            "content": (
+                f"[SYSTEM: Alarm action already executed — "
+                f"{alarm_actioned['action']} on {alarm_actioned['count']} alarm(s)"
+                f"{' ('+alarm_actioned['severity']+' only)' if alarm_actioned.get('severity') else ''}. "
+                f"Confirm this to the user naturally with ✅.]"
             )
         })
 
@@ -691,9 +748,10 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
     try:
         reply = await _call_groq(api_key, chat_messages, max_tokens=512, temperature=0.4)
         return {
-            "reply":        reply,
-            "engine":       "groq-llama-3.3-70b",
-            "rpc_executed": rpc_executed,   # frontend can show a special RPC badge
+            "reply":          reply,
+            "engine":         "groq-llama-3.3-70b",
+            "rpc_executed":   rpc_executed,    # frontend shows RPC badge
+            "alarm_actioned": alarm_actioned,  # frontend shows alarm badge
         }
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
@@ -917,3 +975,408 @@ def get_fleet_health(
         "total":             len(all_health),
         "maintenance_alerts": maintenance_count,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Phase 8 — Intelligence Enhancements
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Alarm control via chat ─────────────────────────────────────────────────
+
+class AlarmActionRequest(BaseModel):
+    action: str        # "ack" | "clear" | "ack_all" | "clear_all"
+    alarm_id: Optional[UUID] = None
+    severity_filter: Optional[str] = None   # for bulk ops
+
+
+@router.post("/alarm-action")
+def alarm_action(
+    body: AlarmActionRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Perform alarm actions via chat or direct API.
+    Supports single and bulk ack/clear scoped to the current user's tenant.
+    """
+    from app.models.models import AlarmStatus
+    now = datetime.now(timezone.utc)
+
+    # Scope to tenant + customer if needed
+    base_q = db.query(Alarm).filter(
+        Alarm.device_id.in_(
+            [d.id for d in _scoped_devices(current_user, db).all()]
+        )
+    )
+
+    if body.action == "ack" and body.alarm_id:
+        alarm = base_q.filter(Alarm.id == body.alarm_id).first()
+        if not alarm:
+            raise HTTPException(404, "Alarm not found")
+        alarm.status = AlarmStatus.ACTIVE_ACK
+        alarm.ack_ts = now
+        alarm.ack_by = str(current_user.id)
+        db.commit()
+        return {"actioned": 1, "action": "ack", "alarm_id": str(body.alarm_id)}
+
+    elif body.action == "clear" and body.alarm_id:
+        alarm = base_q.filter(Alarm.id == body.alarm_id).first()
+        if not alarm:
+            raise HTTPException(404, "Alarm not found")
+        alarm.status = AlarmStatus.CLEARED_ACK if alarm.ack_ts else AlarmStatus.CLEARED_UNACK
+        alarm.clear_ts = now
+        alarm.cleared_by = str(current_user.id)
+        db.commit()
+        return {"actioned": 1, "action": "clear", "alarm_id": str(body.alarm_id)}
+
+    elif body.action == "ack_all":
+        q = base_q.filter(Alarm.status == AlarmStatus.ACTIVE_UNACK)
+        if body.severity_filter:
+            q = q.filter(Alarm.severity == body.severity_filter)
+        alarms = q.all()
+        for a in alarms:
+            a.status = AlarmStatus.ACTIVE_ACK
+            a.ack_ts = now
+            a.ack_by = str(current_user.id)
+        db.commit()
+        return {"actioned": len(alarms), "action": "ack_all"}
+
+    elif body.action == "clear_all":
+        q = base_q.filter(Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]))
+        if body.severity_filter:
+            q = q.filter(Alarm.severity == body.severity_filter)
+        alarms = q.all()
+        for a in alarms:
+            a.status = AlarmStatus.CLEARED_ACK if a.ack_ts else AlarmStatus.CLEARED_UNACK
+            a.clear_ts = now
+            a.cleared_by = str(current_user.id)
+        db.commit()
+        return {"actioned": len(alarms), "action": "clear_all"}
+
+    raise HTTPException(400, "Invalid action")
+
+
+# ── 2. Scheduled RPC ──────────────────────────────────────────────────────────
+
+class ScheduledRpcRequest(BaseModel):
+    device_id: UUID
+    params: dict
+    run_at: datetime          # UTC datetime to execute
+    repeat_hours: Optional[float] = None   # e.g. 6.0 = every 6 hours
+
+
+@router.post("/schedule-rpc")
+def schedule_rpc(
+    body: ScheduledRpcRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Schedule an RPC command to run at a future time.
+    Stored in rpc_commands with a future created_at — picked up by the scheduler.
+    """
+    _assert_device(body.device_id, current_user, db)
+    from app.models.models import RpcCommand, RpcCommandStatus
+
+    cmd = RpcCommand(
+        device_id  = body.device_id,
+        method     = "set",
+        params     = body.params,
+        status     = "SCHEDULED",
+        created_by = str(current_user.id),
+        # Store scheduled time in result field as metadata
+        result     = {
+            "scheduled_for": body.run_at.isoformat(),
+            "repeat_hours":  body.repeat_hours,
+        },
+    )
+    db.add(cmd)
+    db.commit()
+    db.refresh(cmd)
+    return {
+        "cmd_id":       str(cmd.id),
+        "device_id":    str(body.device_id),
+        "params":       body.params,
+        "scheduled_for": body.run_at.isoformat(),
+        "repeat_hours":  body.repeat_hours,
+    }
+
+
+@router.get("/schedule-rpc")
+def list_scheduled_rpc(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """List all pending scheduled RPC commands for the tenant."""
+    from app.models.models import RpcCommand
+    devices = _scoped_devices(current_user, db).all()
+    device_ids = [d.id for d in devices]
+    cmds = (
+        db.query(RpcCommand)
+        .filter(
+            RpcCommand.device_id.in_(device_ids),
+            RpcCommand.status == "SCHEDULED",
+        )
+        .order_by(RpcCommand.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "cmd_id":        str(c.id),
+            "device_id":     str(c.device_id),
+            "params":        c.params,
+            "scheduled_for": c.result.get("scheduled_for") if c.result else None,
+            "repeat_hours":  c.result.get("repeat_hours") if c.result else None,
+        }
+        for c in cmds
+    ]
+
+
+# ── 3. "Why did this alarm fire?" deep RCA ────────────────────────────────────
+
+@router.post("/alarm-explain/{alarm_id}")
+async def explain_alarm(
+    alarm_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Deep explanation of why a specific alarm fired.
+    Correlates alarm time with telemetry, trend, baseline deviation, and anomaly scores.
+    """
+    alarm = db.query(Alarm).filter(Alarm.id == alarm_id).first()
+    if not alarm:
+        raise HTTPException(404, "Alarm not found")
+
+    device = _assert_device(alarm.device_id, current_user, db)
+    api_key = os.getenv("GROQ_API_KEY")
+
+    # Telemetry around alarm time (±10 min)
+    t0 = alarm.start_ts or alarm.created_at
+    before = t0 - timedelta(minutes=10)
+    after  = t0 + timedelta(minutes=10)
+
+    rows = (
+        db.query(TelemetryData)
+        .filter(
+            TelemetryData.device_id == alarm.device_id,
+            TelemetryData.ts.between(before, after),
+            TelemetryData.value_num.isnot(None),
+        )
+        .order_by(TelemetryData.ts)
+        .limit(100)
+        .all()
+    )
+    telemetry_window = {}
+    for r in rows:
+        telemetry_window.setdefault(r.key, []).append({
+            "ts": r.ts.isoformat(), "value": float(r.value_num)
+        })
+
+    # Anomaly scores around alarm time
+    from app.services.anomaly_service import get_anomalies
+    anomalies = get_anomalies(db, str(alarm.device_id), hours=2, only_anomalies=True)
+
+    # Baseline for the alarm key at that hour
+    from app.services.baseline_service import get_baseline_for_device
+    baseline = get_baseline_for_device(db, str(alarm.device_id), current_hour=t0.hour)
+
+    context = {
+        "alarm": {
+            "type":     alarm.alarm_type,
+            "severity": alarm.severity.value if hasattr(alarm.severity, "value") else str(alarm.severity),
+            "fired_at": t0.isoformat(),
+            "details":  alarm.details,
+        },
+        "device":          {"name": device.name, "type": device.device_type},
+        "telemetry_window": telemetry_window,
+        "anomalies_nearby": anomalies[:5],
+        "baseline":         baseline,
+    }
+
+    if not api_key:
+        return {"alarm_id": str(alarm_id), "explanation": "Add GROQ_API_KEY for AI explanation.", "context": context}
+
+    prompt = f"""Explain why this IoT alarm fired based on the data below.
+
+{json.dumps(context, indent=2)}
+
+Provide:
+1. **Root Cause** — exactly what value/condition triggered it
+2. **Lead-up** — what was happening in the 10 minutes before
+3. **Anomaly Context** — was this a statistical outlier vs normal baseline?
+4. **Likely Cause** — hardware, environment, or configuration issue?
+5. **Fix** — one specific action to resolve or prevent recurrence
+
+Be concise and technical. Base everything on the actual data."""
+
+    try:
+        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.2)
+        return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": "groq"}
+    except Exception as exc:
+        return {"alarm_id": str(alarm_id), "explanation": f"AI unavailable: {exc}", "context": context}
+
+
+# ── 4. Comparative intelligence (this week vs last week) ─────────────────────
+
+@router.get("/compare/{device_id}")
+async def compare_device(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Compare device behaviour this week vs last week.
+    Uses telemetry aggregates and alarm counts.
+    """
+    device = _assert_device(device_id, current_user, db)
+    api_key = os.getenv("GROQ_API_KEY")
+
+    now  = datetime.now(timezone.utc)
+    w0_start = now - timedelta(days=7)
+    w1_start = now - timedelta(days=14)
+
+    def _period_stats(start, end):
+        rows = (
+            db.query(TelemetryData.key, TelemetryData.value_num)
+            .filter(
+                TelemetryData.device_id == device_id,
+                TelemetryData.value_num.isnot(None),
+                TelemetryData.ts.between(start, end),
+            )
+            .all()
+        )
+        from collections import defaultdict
+        import math
+        buckets = defaultdict(list)
+        for key, val in rows:
+            buckets[key].append(val)
+
+        stats = {}
+        for key, vals in buckets.items():
+            n = len(vals)
+            mean = sum(vals) / n if n else 0
+            stats[key] = {
+                "mean":    round(mean, 3),
+                "min":     round(min(vals), 3),
+                "max":     round(max(vals), 3),
+                "samples": n,
+            }
+        alarm_count = db.query(Alarm).filter(
+            Alarm.device_id == device_id,
+            Alarm.created_at.between(start, end),
+        ).count()
+        return {"telemetry": stats, "alarm_count": alarm_count}
+
+    this_week = _period_stats(w0_start, now)
+    last_week = _period_stats(w1_start, w0_start)
+
+    context = {
+        "device":    {"name": device.name, "type": device.device_type},
+        "this_week": this_week,
+        "last_week": last_week,
+    }
+
+    if not api_key:
+        return {"device_id": str(device_id), "comparison": context, "insight": "Add GROQ_API_KEY for AI insight."}
+
+    prompt = f"""Compare this IoT device's behaviour this week vs last week.
+
+{json.dumps(context, indent=2)}
+
+Provide:
+1. **Key Changes** — which metrics changed most significantly (% change)
+2. **Alarm Trend** — better or worse than last week?
+3. **Anomalies** — anything unusual in this week's data?
+4. **Verdict** — is the device improving, degrading, or stable?
+
+Be concise and data-driven."""
+
+    try:
+        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=500, temperature=0.2)
+        return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": "groq"}
+    except Exception as exc:
+        return {"device_id": str(device_id), "comparison": context, "insight": f"AI unavailable: {exc}"}
+
+
+# ── 5. Daily health report ────────────────────────────────────────────────────
+
+@router.get("/report/daily")
+async def daily_report(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Generate a daily health report for all devices in the tenant.
+    Summarises alarms, trends, health scores, and top issues.
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    devices = _scoped_devices(current_user, db).all()
+    from app.services.health_service import get_latest_health
+
+    report_data = []
+    for device in devices:
+        alarms_24h = db.query(Alarm).filter(
+            Alarm.device_id == device.id,
+            Alarm.created_at >= since_24h,
+        ).count()
+
+        active_alarms = db.query(Alarm).filter(
+            Alarm.device_id == device.id,
+            Alarm.status.in_(["ACTIVE_UNACK", "ACTIVE_ACK"]),
+        ).count()
+
+        health = get_latest_health(db, str(device.id))
+        trends = get_all_key_trends(db, str(device.id), minutes=60)
+
+        report_data.append({
+            "device":        device.name,
+            "status":        device.status.value,
+            "alarms_24h":    alarms_24h,
+            "active_alarms": active_alarms,
+            "health_score":  health["health_score"] if health else None,
+            "health_label":  health["health_label"] if health else "UNKNOWN",
+            "maintenance":   health["maintenance_due"] if health else False,
+            "trends":        {k: v["trend"] for k, v in trends.items()},
+        })
+
+    # Sort: maintenance first, then by health score
+    report_data.sort(key=lambda x: (not x["maintenance"], x["health_score"] or 100))
+
+    total_active_alarms = sum(d["active_alarms"] for d in report_data)
+    maintenance_needed  = [d["device"] for d in report_data if d["maintenance"]]
+    critical_devices    = [d for d in report_data if d["health_label"] == "CRITICAL"]
+
+    summary = {
+        "generated_at":      datetime.now(timezone.utc).isoformat(),
+        "period":            "Last 24 hours",
+        "total_devices":     len(devices),
+        "active_alarms":     total_active_alarms,
+        "maintenance_needed": maintenance_needed,
+        "critical_devices":  len(critical_devices),
+        "devices":           report_data,
+    }
+
+    if not api_key:
+        return {"report": summary, "narrative": "Add GROQ_API_KEY for AI narrative."}
+
+    prompt = f"""Generate a concise daily IoT fleet health report.
+
+Data:
+{json.dumps(summary, indent=2)}
+
+Write a professional 3-paragraph executive summary covering:
+1. Overall fleet health status
+2. Devices needing immediate attention
+3. Recommended actions for today
+
+Be direct and actionable. Use exact device names and numbers."""
+
+    try:
+        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3)
+        return {"report": summary, "narrative": narrative, "engine": "groq"}
+    except Exception as exc:
+        return {"report": summary, "narrative": f"AI unavailable: {exc}"}

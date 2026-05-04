@@ -2006,19 +2006,50 @@ const PAGE_TITLES = {
 
 // ── AI Chatbot Widget ─────────────────────────────────────────────────────────
 function AIChatbot({ user }) {
+  const STORAGE_KEY = "taat_chat_history";
+  const MAX_STORED  = 20;
+
   const [open,    setOpen]    = useState(false);
-  const [msgs,    setMsgs]    = useState([
-    { role:"assistant", content:"Hi! I'm your IoT AI assistant. Ask me anything about your devices, alarms, or trends." }
-  ]);
+  const [msgs,    setMsgs]    = useState(() => {
+    // Restore chat history from localStorage
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ role:"assistant", content:"Hi! I'm your IoT AI assistant. Ask me anything about your devices, alarms, trends — or tell me to control a device." }];
+  });
   const [input,   setInput]   = useState("");
   const [loading, setLoading] = useState(false);
+  const [tab,     setTab]     = useState("chat"); // "chat" | "report"
+  const [report,  setReport]  = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
 
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+  // Persist chat history to localStorage
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-MAX_STORED))); } catch {}
+  }, [msgs]);
 
-  // Auto-focus input when panel opens
-  useEffect(()=>{ if (open) setTimeout(()=>inputRef.current?.focus(), 100); }, [open]);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+  useEffect(()=>{ if (open && tab==="chat") setTimeout(()=>inputRef.current?.focus(), 100); }, [open, tab]);
+
+  const clearHistory = () => {
+    const fresh = [{ role:"assistant", content:"Chat history cleared. How can I help?" }];
+    setMsgs(fresh);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  };
+
+  const loadReport = async () => {
+    setReportLoading(true);
+    try {
+      const r = await intelligenceApi.dailyReport();
+      setReport(r);
+    } catch(e) { setReport({error: e.message}); }
+    finally { setReportLoading(false); }
+  };
+
+  useEffect(() => { if (tab === "report" && !report) loadReport(); }, [tab]);
 
   const send = async (overrideText) => {
     const text = (overrideText || input).trim();
@@ -2027,33 +2058,31 @@ function AIChatbot({ user }) {
     setMsgs(m => [...m, userMsg]);
     setInput("");
     setLoading(true);
-    // Re-focus input after clearing so next message is ready
     setTimeout(()=>inputRef.current?.focus(), 50);
     try {
       const history = [...msgs, userMsg].slice(-10);
       const res = await intelligenceApi.chat(history);
-      // Attach RPC badge metadata if a command was executed
       setMsgs(m => [...m, {
-        role: "assistant",
-        content: res.reply,
-        rpc_executed: res.rpc_executed || null,
+        role:           "assistant",
+        content:        res.reply,
+        rpc_executed:   res.rpc_executed   || null,
+        alarm_actioned: res.alarm_actioned || null,
       }]);
     } catch(e) {
       setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
     } finally {
       setLoading(false);
-      // Focus again after response arrives
       setTimeout(()=>inputRef.current?.focus(), 50);
     }
   };
 
   const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
-  // Quick prompt suggestions
   const SUGGESTIONS = [
-    "Which devices have active alarms?",
-    "What are the current trends?",
     "Which device is most critical?",
+    "Acknowledge all alarms",
+    "Turn on led1",
+    "Daily health report",
   ];
 
   return (
@@ -2097,16 +2126,92 @@ function AIChatbot({ user }) {
             </div>
             <div>
               <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>TriAxis AI Assistant</p>
-              <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.1</p>
+              <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.3</p>
             </div>
             <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
               <div style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+              <button onClick={clearHistory} title="Clear history" style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.5}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
               <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2.5" style={{width:14,height:14}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
           </div>
 
+          {/* Tabs */}
+          <div style={{display:"flex",borderBottom:"1px solid #EAF2FF",flexShrink:0}}>
+            {[["chat","💬 Chat"],["report","📊 Report"]].map(([t,label])=>(
+              <button key={t} onClick={()=>setTab(t)} style={{
+                flex:1, padding:"8px 0", fontSize:11, fontWeight: tab===t ? 700 : 500,
+                color: tab===t ? "#2F8CFF" : "#94a3b8",
+                background:"none", border:"none", cursor:"pointer",
+                borderBottom: tab===t ? "2px solid #2F8CFF" : "2px solid transparent",
+                transition:"all 0.15s",
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {/* Tab: Report */}
+          {tab === "report" && (
+            <div style={{flex:1,overflowY:"auto",padding:"14px"}}>
+              {reportLoading && (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {[1,2,3].map(i=><div key={i} style={{height:14,borderRadius:6,background:"#f1f5f9",animation:"pulse 1.5s infinite"}}/>)}
+                </div>
+              )}
+              {report && !reportLoading && (
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {report.error && <p style={{fontSize:11,color:"#ef4444"}}>{report.error}</p>}
+                  {report.narrative && (
+                    <div style={{padding:"10px 12px",background:"#F4F8FF",borderRadius:10,fontSize:11,lineHeight:1.7,color:"#334866",whiteSpace:"pre-wrap"}}>
+                      {report.narrative}
+                    </div>
+                  )}
+                  {report.report && (
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"flex",gap:8}}>
+                        {[
+                          {label:"Devices", val: report.report.total_devices, color:"#3b82f6"},
+                          {label:"Alarms",  val: report.report.active_alarms, color:"#f59e0b"},
+                          {label:"Critical",val: report.report.critical_devices, color:"#ef4444"},
+                        ].map(s=>(
+                          <div key={s.label} style={{flex:1,padding:"8px",background:"#F4F8FF",borderRadius:8,textAlign:"center",border:`1px solid ${s.color}22`}}>
+                            <p style={{fontSize:18,fontWeight:700,color:s.color,margin:0}}>{s.val}</p>
+                            <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {report.report.maintenance_needed?.length > 0 && (
+                        <div style={{padding:"8px 10px",background:"#fef3c7",borderRadius:8,border:"1px solid #fde68a"}}>
+                          <p style={{fontSize:10,fontWeight:700,color:"#92400e",margin:"0 0 4px"}}>⚠️ Maintenance Needed</p>
+                          {report.report.maintenance_needed.map(d=>(
+                            <p key={d} style={{fontSize:10,color:"#78350f",margin:"1px 0"}}>• {d}</p>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {report.report.devices?.slice(0,6).map(d=>(
+                          <div key={d.device} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#F4F8FF",borderRadius:6}}>
+                            <div style={{width:6,height:6,borderRadius:"50%",flexShrink:0,background:d.health_label==="HEALTHY"?"#10b981":d.health_label==="WARNING"?"#f59e0b":"#ef4444"}}/>
+                            <span style={{fontSize:10,fontWeight:600,color:"#334866",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.device}</span>
+                            <span style={{fontSize:10,color:"#94a3b8"}}>{d.health_score != null ? Math.round(d.health_score)+"%" : "–"}</span>
+                            {d.active_alarms > 0 && <span style={{fontSize:9,padding:"1px 5px",borderRadius:8,background:"#fef2f2",color:"#ef4444",fontWeight:600}}>{d.active_alarms}</span>}
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={loadReport} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
+                        🔄 Refresh Report
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab: Chat */}
+          {tab === "chat" && <>
           {/* Messages */}
           <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
             {msgs.map((m,i)=>(
@@ -2129,6 +2234,14 @@ function AIChatbot({ user }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
                       <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
                         RPC sent → {m.rpc_executed.device_name}: {JSON.stringify(m.rpc_executed.params)}
+                      </span>
+                    </div>
+                  )}
+                  {m.alarm_actioned && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#d97706",fontWeight:600}}>
+                        {m.alarm_actioned.count} alarm(s) {m.alarm_actioned.action.replace("_all","")}d{m.alarm_actioned.severity ? ` (${m.alarm_actioned.severity})` : ""}
                       </span>
                     </div>
                   )}
@@ -2185,12 +2298,14 @@ function AIChatbot({ user }) {
               <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:14,height:14}}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </div>
+          </>}
         </div>
       )}
 
       <style>{`
         @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
         @keyframes bounce  { 0%,80%,100% { transform:scale(0.6); opacity:0.4; } 40% { transform:scale(1); opacity:1; } }
+        @keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
       `}</style>
     </>
   );
