@@ -1858,7 +1858,7 @@ function LoginPage({ onLogin }) {
         <div className="hidden lg:block w-px my-8 self-stretch" style={{background:"#D8E3F3"}} />
 
         {/* RIGHT — illustration + sign-in form */}
-        <div className="relative flex-1 flex items-center justify-center p-8 overflow-hidden" style={{background:"#F4F8FF"}}>
+        <div className="relative flex-1 flex items-center justify-start pl-20 pr-8 overflow-hidden" style={{background:"#F4F8FF"}}>
           {/* Industrial illustration behind the form */}
           <img
             src="/industrial_iot_illustration.png"
@@ -1866,7 +1866,7 @@ function LoginPage({ onLogin }) {
             className="hidden lg:block pointer-events-none select-none absolute right-0 top-1/2 -translate-y-1/2 h-[85%] w-auto max-w-[55%] opacity-95 object-contain"
           />
           {/* Fade: opaque left (behind form) → transparent right (shows illustration) */}
-          <div className="hidden lg:block absolute inset-0" style={{background:"linear-gradient(to right, #F4F8FF 30%, rgba(244,248,255,0.92) 50%, rgba(244,248,255,0.3) 70%, transparent 100%)"}} />
+          <div className="hidden lg:block absolute inset-0" style={{background:"linear-gradient(to right, #F4F8FF 25%, rgba(244,248,255,0.9) 45%, rgba(244,248,255,0.2) 65%, transparent 100%)"}} />
           <div className="relative w-full max-w-md rounded-2xl border bg-white p-8 shadow-sm shadow-blue-100/40 mr-auto" style={{borderColor:"#D8E3F3"}}>
             <h2 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h2>
             <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis Nexus":"Create a new organization account"}</p>

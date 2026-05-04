@@ -78,6 +78,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
     min: 0, max: 100, decimals: 1,
     threshold_high: "", content: "",
     method: "", param_key: "", input_type: "number",
+    lat_key: "lat", lng_key: "lng",
     ...(editWidget?.config || {}),
   }));
 

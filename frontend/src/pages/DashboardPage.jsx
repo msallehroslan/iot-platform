@@ -57,8 +57,8 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
       label: "", unit: "", color: "#3b82f6",
       min: 0, max: 100, decimals: 1,
       threshold_high: "", keys: [], content: "",
-      method: "", method_on: "turnOn", method_off: "turnOff",
-      param_key: "value", input_type: "number",
+      method: "", param_key: "value", input_type: "number",
+      lat_key: "lat", lng_key: "lng",
       ...(editWidget?.config || {}),
     };
     // Auto-select all available keys for bar/pie chart when creating a new widget
