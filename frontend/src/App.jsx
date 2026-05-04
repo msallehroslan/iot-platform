@@ -123,10 +123,12 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       <div className="border-t border-[#D8E3F3] p-3 space-y-2">
         {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
         {!col && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/60 border border-[#D8E3F3]">
-            <span className="text-[9px] text-[#6B7F9F] flex-shrink-0">In collaboration with</span>
-            <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-4 w-auto flex-shrink-0" />
-            <span className="text-[9px] font-semibold text-[#0B1426] flex-shrink-0">Greenson Technology</span>
+          <div className="mx-1 px-3 py-2 rounded-xl border border-[#D8E3F3] bg-white flex flex-col items-center gap-1.5">
+            <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
+            <div className="flex items-center gap-2">
+              <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-5 w-auto object-contain" />
+              <span className="text-[11px] font-bold text-[#0B1426] whitespace-nowrap">Greenson Technology</span>
+            </div>
           </div>
         )}
         <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
@@ -1801,63 +1803,76 @@ function LoginPage({ onLogin }) {
   if (showReset) return <ResetPasswordPage onBack={() => setShowReset(false)} />;
 
   return (
-    <div className="min-h-screen flex" style={{background:"#F4F8FF"}}>
-      {/* LEFT — copy + features only */}
-      <div className="hidden lg:flex flex-col justify-between flex-shrink-0 min-h-screen px-11 py-12" style={{width:470,background:"#EAF3FF"}}>
+    <div className="min-h-screen flex flex-col" style={{background:"#ffffff"}}>
+
+      {/* ── TOP NAVBAR — matches screenshot exactly ── */}
+      <nav className="flex items-center justify-between px-10 py-5 border-b border-[#E8EDF5]" style={{background:"#ffffff"}}>
+        {/* Left: TAAT logo + TriAxis Nexus */}
         <div className="flex items-center gap-3">
-          <img src="/taat-logo-2.png" alt="TAAT" className="h-10 w-auto object-contain" />
-          <span className="text-2xl font-extrabold tracking-tight text-[#07142F]">TriAxis IoT</span>
+          <img src="/taat-logo-2.png" alt="TAAT" className="h-9 w-auto object-contain" />
+          <span className="text-xl font-bold tracking-tight text-[#07142F]">TriAxis Nexus</span>
         </div>
-        <div>
-          <h1 className="text-6xl font-extrabold leading-tight tracking-tight text-[#07142F]">
-            Connect,<br/>Monitor,<br/><span className="text-[#2F80ED]">Control.</span>
+        {/* Right: In collaboration with GT logo + Greenson Technology */}
+        <div className="flex items-center gap-2.5">
+          <span className="text-sm text-[#6B7F9F]">In collaboration with</span>
+          <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-8 w-auto object-contain" />
+          <span className="text-sm font-semibold text-[#07142F]">Greenson Technology</span>
+        </div>
+      </nav>
+
+      {/* ── BODY — welcome copy left, form right ── */}
+      <div className="flex flex-1">
+
+        {/* LEFT — welcome copy */}
+        <div className="hidden lg:flex flex-col justify-center flex-shrink-0 px-16 py-16" style={{width:520,background:"#ffffff"}}>
+          <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F] mb-5">Welcome</p>
+          <h1 className="text-5xl font-extrabold leading-tight tracking-tight text-[#07142F] mb-5">
+            TriAxis Nexus<br/>Platform
           </h1>
-          <p className="mt-8 max-w-[360px] text-lg leading-8 text-[#17345E]">
-            Industrial-grade IoT platform for real-time visibility, intelligent
-            alerts, and seamless device management — built for the factory floor.
+          <p className="text-base leading-relaxed text-[#64789B] max-w-sm">
+            The unified intelligence platform by TriAxis AI Technologies, in collaboration with Greenson Technology.
           </p>
+          <div className="mt-10 grid grid-cols-2 gap-3 max-w-sm">
+            {[["Live Devices","Fleet monitoring"],["Smart Alerts","Faster response"],["Real-time Data","Telemetry stream"],["RPC Control","Device commands"]].map(([v,l])=>(
+              <div key={l} className="rounded-xl border border-[#E8EDF5] p-4" style={{background:"#F8FAFF"}}>
+                <p className="text-sm font-bold text-[#07142F]">{v}</p>
+                <p className="mt-1 text-xs text-[#64789B]">{l}</p>
+              </div>
+            ))}
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          {[["Live Devices","Fleet status"],["Smart Alerts","Faster response"],["Telemetry","Real-time data"],["TriAxis","IoT control"]].map(([v,l])=>(
-            <div key={l} className="rounded-2xl border border-[#D8E3F3] p-4 shadow-sm shadow-blue-100/40" style={{background:"rgba(255,255,255,0.55)"}}>
-              <p className="font-bold text-[#07142F]">{v}</p>
-              <p className="mt-1 text-sm text-[#64789B]">{l}</p>
+
+        {/* DIVIDER */}
+        <div className="hidden lg:block w-px my-8 self-stretch" style={{background:"#E8EDF5"}} />
+
+        {/* RIGHT — sign-in form */}
+        <div className="flex-1 flex items-center justify-center p-8" style={{background:"#F4F8FF"}}>
+          <div className="w-full max-w-md rounded-2xl border bg-white p-8 shadow-sm shadow-blue-100/40" style={{borderColor:"#D8E3F3"}}>
+            <h2 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h2>
+            <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis Nexus":"Create a new organization account"}</p>
+            <div className="flex gap-1 p-1 rounded-lg mb-6" style={{background:"#EAF2FF"}}>
+              {[["signin","Sign In"],["register","New Organization"]].map(([id,lbl])=>(
+                <button key={id} onClick={()=>setTab(id)} className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all ${tab===id?"bg-white text-[#0B1426] shadow-sm":"text-[#334866] hover:text-[#0B1426]"}`}>{lbl}</button>
+              ))}
             </div>
-          ))}
+            {tab==="register"&&<div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 mb-4"><svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p className="text-xs text-blue-700">This creates a <strong>new organization</strong> with you as admin. To add staff to an existing org, ask your admin to invite you from <strong>Users &amp; Roles</strong>.</p></div>}
+            <div className="space-y-3">
+              {tab==="register"&&<div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-[#334866] mb-1.5">First Name</label><input className={INP} value={fname} onChange={e=>setFname(e.target.value)}/></div><div><label className="block text-xs font-medium text-[#334866] mb-1.5">Last Name</label><input className={INP} value={lname} onChange={e=>setLname(e.target.value)}/></div></div>}
+              <div><label className="block text-xs font-medium text-[#334866] mb-1.5">Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP}/></div>
+              <div><div className="flex items-center justify-between mb-1.5"><label className="block text-xs font-medium text-[#334866]">Password</label>{tab==="signin"&&<button onClick={()=>setShowReset(true)} className="text-xs font-medium text-[#2F8CFF] hover:underline">Forgot password?</button>}</div><input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP}/></div>
+            </div>
+            {error&&<p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-3 rounded-lg shadow-sm shadow-blue-500/20">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
+            <div className="flex items-center gap-3 my-5"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-[#6B7F9F]">or</span><div className="flex-1 border-t border-slate-200"/></div>
+            <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-[#D8E3F3] text-[#334866] hover:bg-[#EAF2FF] disabled:opacity-60 font-medium text-sm py-3 rounded-lg transition-colors">{loading&&<Spinner/>}🚀 Try Demo Account</button>
+          </div>
         </div>
       </div>
 
-      {/* RIGHT — illustration + sign-in form */}
-      <div className="relative flex-1 flex items-center justify-center p-8 overflow-hidden" style={{background:"#F4F8FF"}}>
-        {/* Industrial illustration — sits on the right half, behind the form */}
-        <img
-          src="/industrial_iot_illustration.png"
-          alt="Industrial IoT control system"
-          className="hidden lg:block pointer-events-none select-none absolute right-0 top-1/2 -translate-y-1/2 h-[85%] w-auto max-w-[55%] opacity-95 drop-shadow-2xl object-contain"
-        />
-        {/* Left-to-right fade: opaque on left (behind form) → transparent on right (shows illustration) */}
-        <div className="hidden lg:block absolute inset-0" style={{background:"linear-gradient(to right, #F4F8FF 30%, rgba(244,248,255,0.92) 50%, rgba(244,248,255,0.3) 70%, transparent 100%)"}} />
-        {/* Form card — shifted left so illustration is visible on the right */}
-        <div className="relative w-full max-w-md rounded-2xl border bg-white/90 backdrop-blur p-7 shadow-xl shadow-blue-200/40 mr-auto ml-8 lg:ml-16" style={{borderColor:"#D8E3F3"}}>
-          <h1 className="text-2xl font-bold text-[#0B1426] mb-1">{tab==="signin"?"Welcome back":"Create account"}</h1>
-          <p className="text-sm text-[#6B7F9F] mb-6">{tab==="signin"?"Sign in to continue to TriAxis IoT":"Create a new organization account"}</p>
-          <div className="flex gap-1 p-1 rounded-lg mb-6" style={{background:"#EAF2FF"}}>
-            {[["signin","Sign In"],["register","New Organization"]].map(([id,lbl])=>(
-              <button key={id} onClick={()=>setTab(id)} className={`flex-1 py-2 rounded-md text-xs font-semibold transition-all ${tab===id?"bg-white text-[#0B1426] shadow-sm":"text-[#334866] hover:text-[#0B1426]"}`}>{lbl}</button>
-            ))}
-          </div>
-          {tab==="register"&&<div className="flex items-start gap-2 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 mb-1"><svg className="w-3.5 h-3.5 text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><p className="text-xs text-blue-700">This creates a <strong>new organization</strong> with you as admin. To add staff to an existing org, ask your admin to invite you from <strong>Users &amp; Roles</strong>.</p></div>}
-          <div className="space-y-3">
-            {tab==="register"&&<div className="grid grid-cols-2 gap-3"><div><label className="block text-xs font-medium text-[#334866] mb-1.5">First Name</label><input className={INP} value={fname} onChange={e=>setFname(e.target.value)}/></div><div><label className="block text-xs font-medium text-[#334866] mb-1.5">Last Name</label><input className={INP} value={lname} onChange={e=>setLname(e.target.value)}/></div></div>}
-            <div><label className="block text-xs font-medium text-[#334866] mb-1.5">Email</label><input type="email" value={email} onChange={e=>setEmail(e.target.value)} className={INP}/></div>
-            <div><div className="flex items-center justify-between mb-1.5"><label className="block text-xs font-medium text-[#334866]">Password</label>{tab==="signin"&&<button onClick={()=>setShowReset(true)} className="text-xs font-medium text-[#2F8CFF] hover:underline">Forgot password?</button>}</div><input type="password" value={pw} onChange={e=>setPw(e.target.value)} className={INP}/></div>
-          </div>
-          {error&&<p className="mt-3 text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <button onClick={submit} disabled={loading} className="w-full mt-5 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-semibold text-sm py-3 rounded-lg shadow-sm shadow-blue-500/20">{loading&&<Spinner/>}{tab==="signin"?"Sign In":"Create Account"}</button>
-          <div className="flex items-center gap-3 my-5"><div className="flex-1 border-t border-slate-200"/><span className="text-xs text-[#6B7F9F]">or</span><div className="flex-1 border-t border-slate-200"/></div>
-          <button onClick={demo} disabled={loading} className="w-full flex items-center justify-center gap-2 border border-[#D8E3F3] text-[#334866] hover:bg-[#EAF2FF] disabled:opacity-60 font-medium text-sm py-3 rounded-lg transition-colors">{loading&&<Spinner/>}🚀 Try Demo Account</button>
-        </div>
-      </div>
+      {/* ── FOOTER ── */}
+      <footer className="flex items-center justify-center py-4 border-t border-[#E8EDF5]">
+        <p className="text-xs text-[#6B7F9F]">© 2026 TriAxis AI Technologies · In collaboration with Greenson Technology</p>
+      </footer>
     </div>
   );
 }
