@@ -339,8 +339,13 @@ function TelCard({ device }) {
 // ── Device List for dashboards ───────────────────────────────────────────────
 function DeviceListForDashboards({ onOpen }) {
   const [devices,setDevices]=useState([]); const [loading,setLoading]=useState(true); const [search,setSearch]=useState("");
-  useEffect(()=>{deviceApi.list({limit:50}).then(setDevices).catch(()=>{}).finally(()=>setLoading(false));},[]);
-  const filtered=devices.filter(d=>d.name.toLowerCase().includes(search.toLowerCase()));
+  useEffect(()=>{
+    deviceApi.list({limit:50})
+      .then(r=>{ const arr=Array.isArray(r)?r:(r?.items||[]); setDevices(arr); })
+      .catch(()=>{})
+      .finally(()=>setLoading(false));
+  },[]);
+  const filtered=devices.filter(d=>d?.name?.toLowerCase().includes(search.toLowerCase()));
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">

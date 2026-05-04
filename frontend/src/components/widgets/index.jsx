@@ -4,7 +4,7 @@
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
 import { useState, useEffect } from "react";
-import { telemetryApi } from "../../services/api.js";
+import { telemetryApi, API_BASE } from "../../services/api.js";
 
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
@@ -808,17 +808,15 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
+  // For map widget: find device coords from currentDevice or allDevices
+  const _mapDevice = currentDevice || allDevices?.find(d => String(d.id) === String(widget.config?.device_id || deviceId));
   const effectiveConfig = widget.widget_type === "fleet_map"
     ? { ...widget.config, devices: allDevices }
     : widget.widget_type === "map"
     ? {
         ...widget.config,
-        fixed_lat: widget.config?.fixed_lat
-          ?? currentDevice?.latitude
-          ?? allDevices?.find(d => d.id === (widget.config?.device_id || deviceId))?.latitude,
-        fixed_lng: widget.config?.fixed_lng
-          ?? currentDevice?.longitude
-          ?? allDevices?.find(d => d.id === (widget.config?.device_id || deviceId))?.longitude,
+        fixed_lat: widget.config?.fixed_lat ?? _mapDevice?.latitude,
+        fixed_lng: widget.config?.fixed_lng ?? _mapDevice?.longitude,
       }
     : widget.config || {};
   const props = { config: effectiveConfig, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
@@ -1294,15 +1292,33 @@ export function FleetMapWidget({ config }) {
 // Displays device GPS location using lat/lng telemetry keys.
 // Uses OpenStreetMap tile URL as an img src — no JS map library needed.
 
-export function MapWidget({ config, liveTelem }) {
+export function MapWidget({ config, liveTelem, deviceId }) {
   const latKey = config.lat_key || "latitude";
   const lngKey = config.lng_key || "longitude";
+  const [deviceCoords, setDeviceCoords] = useState({ lat: null, lng: null });
 
-  // Priority: 1) live telemetry, 2) fixed device coords from config, 3) nothing
+  // Fetch device coords directly if not already in config
+  useEffect(() => {
+    const id = config.device_id || deviceId;
+    if (id && config.fixed_lat == null && config.fixed_lng == null) {
+      fetch(`${API_BASE}/devices/${id}`, {
+        headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
+      })
+      .then(r => r.json())
+      .then(d => {
+        if (d.latitude != null && d.longitude != null) {
+          setDeviceCoords({ lat: d.latitude, lng: d.longitude });
+        }
+      })
+      .catch(() => {});
+    }
+  }, [deviceId, config.device_id]);
+
+  // Priority: 1) live telemetry, 2) config fixed coords, 3) fetched device coords
   const liveLat = parseFloat(liveTelem?.[latKey]);
   const liveLng = parseFloat(liveTelem?.[lngKey]);
-  const fixedLat = parseFloat(config.fixed_lat ?? config.latitude);
-  const fixedLng = parseFloat(config.fixed_lng ?? config.longitude);
+  const fixedLat = parseFloat(config.fixed_lat ?? config.latitude ?? deviceCoords.lat);
+  const fixedLng = parseFloat(config.fixed_lng ?? config.longitude ?? deviceCoords.lng);
 
   const lat = !isNaN(liveLat) ? liveLat : !isNaN(fixedLat) ? fixedLat : NaN;
   const lng = !isNaN(liveLng) ? liveLng : !isNaN(fixedLng) ? fixedLng : NaN;
