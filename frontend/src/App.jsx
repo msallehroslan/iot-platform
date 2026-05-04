@@ -2092,7 +2092,6 @@ function AIChatbot({ user }) {
               </button>
             </div>
           </div>
-          </div>
 
           {/* Messages */}
           <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
