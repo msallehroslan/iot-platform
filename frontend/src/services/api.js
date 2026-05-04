@@ -186,3 +186,12 @@ export const systemApi = {
   metrics: ()                          => apiFetch("/system/metrics"),
   audit:   (limit = 50, action = null) => apiFetch(`/system/audit?limit=${limit}${action ? `&action=${encodeURIComponent(action)}` : ""}`),
 };
+
+// ── Intelligence API ──────────────────────────────────────────────────────────
+export const intelligenceApi = {
+  trend:   (deviceId, key, minutes=30) => apiFetch(`/intelligence/trend/${deviceId}/${key}?minutes=${minutes}`),
+  trends:  (deviceId, minutes=30)      => apiFetch(`/intelligence/trend/${deviceId}?minutes=${minutes}`),
+  rca:     (deviceId)                  => apiFetch(`/intelligence/rca/${deviceId}`, { method: "POST" }),
+  summary: (deviceId)                  => apiFetch(`/intelligence/summary/${deviceId}`),
+  chat:    (messages, deviceId=null)    => apiFetch(`/intelligence/chat`, { method:"POST", body: JSON.stringify({ messages, device_id: deviceId }) }),
+};

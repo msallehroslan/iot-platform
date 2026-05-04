@@ -446,6 +446,11 @@ export default function DashboardPage({ device, onBack, user }) {
   const [layoutSaving,  setLayoutSaving]  = useState(false);
   const [error,         setError]         = useState("");
   const [wsConnected,   setWsConnected]   = useState(false);
+  const [rcaResult,     setRcaResult]     = useState(null);
+  const [rcaLoading,    setRcaLoading]    = useState(false);
+  const [allDevices,    setAllDevices]    = useState([]);
+  // Fetch all devices for Fleet Map
+  useEffect(() => { deviceApi.list({ limit:200 }).then(d=>setAllDevices(d?.items||d||[])).catch(()=>{}); }, []);
 
   // ── 1. Load dashboard list ────────────────────────────────────────────────
   useEffect(() => {
@@ -655,6 +660,16 @@ export default function DashboardPage({ device, onBack, user }) {
     </div>
   );
 
+  const handleRCA = async () => {
+    if (!device?.id || rcaLoading) return;
+    setRcaLoading(true);
+    try {
+      const result = await intelligenceApi.rca(device.id);
+      setRcaResult(result);
+    } catch(e) {}
+    finally { setRcaLoading(false); }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <style>{`@keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
@@ -681,6 +696,15 @@ export default function DashboardPage({ device, onBack, user }) {
               {wsConnected ? "Live (WebSocket)" : "Polling"}
             </span>
           </div>
+          {isAdmin && (
+            <button onClick={handleRCA} disabled={rcaLoading}
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:8, border:"1px solid #D8E3F3", background: rcaLoading ? "#EAF2FF" : "#0B1426", color:"white", cursor: rcaLoading ? "wait" : "pointer", fontSize:13, fontWeight:500 }}>
+              {rcaLoading
+                ? <><div style={{width:12,height:12,border:"2px solid white",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/> Analysing…</>
+                : <><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{width:14,height:14}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg> AI Analysis</>
+              }
+            </button>
+          )}
           {isAdmin && <button onClick={() => setEditMode(e => !e)}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: editMode ? "2px solid #3b82f6" : "1px solid #e2e8f0", background: editMode ? "#eff6ff" : "white", cursor: "pointer", fontSize: 13, fontWeight: 500, color: editMode ? "#1d4ed8" : "#475569" }}>
             <svg style={{ width: 14, height: 14 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
@@ -695,6 +719,22 @@ export default function DashboardPage({ device, onBack, user }) {
           )}
         </div>
       </div>
+
+      {/* ── RCA Result Panel ── */}
+      {rcaResult && (
+        <div style={{ background:"white", border:"1px solid #D8E3F3", borderRadius:12, padding:20, position:"relative" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background: rcaResult.engine?.includes("claude") ? "#10b981" : "#f59e0b" }}/>
+              <span style={{ fontSize:13, fontWeight:700, color:"#0B1426" }}>🧠 AI Root Cause Analysis — {device.name}</span>
+              <span style={{ fontSize:10, color:"#6B7F9F", background:"#EAF2FF", padding:"2px 8px", borderRadius:4 }}>{rcaResult.engine}</span>
+            </div>
+            <button onClick={() => setRcaResult(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"#94a3b8", fontSize:18 }}>×</button>
+          </div>
+          <div style={{ fontSize:13, color:"#334866", lineHeight:1.8, whiteSpace:"pre-wrap" }}>{rcaResult.analysis}</div>
+          <p style={{ fontSize:10, color:"#94a3b8", marginTop:8, marginBottom:0 }}>Generated: {rcaResult.generated_at ? new Date(rcaResult.generated_at).toLocaleString() : ""}</p>
+        </div>
+      )}
 
       {/* ── Error banner ── */}
       {error && (
@@ -811,6 +851,7 @@ export default function DashboardPage({ device, onBack, user }) {
               deviceLastSeen={device?.last_seen_at}
               userRole={user?.role}
               deviceId={device?.id}
+              allDevices={allDevices||[]}
             />
           )}
         />

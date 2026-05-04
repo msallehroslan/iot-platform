@@ -24,6 +24,7 @@ from app.models.models import (
     Alarm, AlarmStatus,
     Device, DeviceStatus,
     LatestTelemetry, TelemetryData, TelemetryKey, ThresholdRule, IngestMetric,
+    RpcCommand,
 )
 
 import uuid
@@ -121,6 +122,39 @@ def _load_rules_for_device(db: Session, device: Device) -> Dict[str, List[Thresh
     return result
 
 
+def _fire_auto_rpc(db: Session, device: Device, rule: "ThresholdRule", clearing: bool = False) -> None:
+    """
+    Intelligence Layer: Auto RPC on alarm.
+    When an alarm fires, automatically send an RPC command to the device.
+    When alarm clears (if auto_rpc_clear=True), send inverse params.
+    """
+    if not rule.auto_rpc_method:
+        return
+
+    params = rule.auto_rpc_params or {}
+
+    # If clearing and auto_rpc_clear is set, invert boolean params
+    if clearing and rule.auto_rpc_clear:
+        params = {k: (not v if isinstance(v, bool) else v) for k, v in params.items()}
+
+    try:
+        cmd = RpcCommand(
+            device_id  = device.id,
+            method     = rule.auto_rpc_method,
+            params     = params,
+            created_by = "auto-rule",
+            status     = "PENDING",
+        )
+        db.add(cmd)
+        logger.info(
+            "auto_rpc.queued device=%s method=%s params=%s clearing=%s",
+            device.id, rule.auto_rpc_method, params, clearing
+        )
+    except Exception as exc:
+        logger.error("auto_rpc.failed device=%s error=%s", device.id, exc)
+
+
+
 # ── Alarm engine (FIX 1 + FIX 2) ─────────────────────────────────────────────
 
 def _process_alarm_for_rule(
@@ -183,6 +217,8 @@ def _process_alarm_for_rule(
                 "alarm.triggered device=%s key=%s value=%s alarm_type=%s",
                 device.id, key, value_num, rule.alarm_type,
             )
+            # Intelligence: fire auto RPC if configured on this rule
+            _fire_auto_rpc(db, device, rule, clearing=False)
         else:
             # Active alarm exists — update details with latest reading only
             active_alarm.details = {
@@ -204,6 +240,8 @@ def _process_alarm_for_rule(
             active_alarm.end_ts     = now
             active_alarm.clear_ts   = now
             active_alarm.cleared_by = "auto-clear"
+            # Intelligence: fire inverse auto RPC on clear if configured
+            _fire_auto_rpc(db, device, rule, clearing=True)
             active_alarm.details    = {
                 **(active_alarm.details or {}),
                 "value":        value_num,

@@ -102,6 +102,8 @@ class Device(Base):
     description = Column(Text, nullable=True)
     additional_info = Column(JSON, nullable=True)
     last_seen_at = Column(DateTime(timezone=True), nullable=True)   # FIX 8: updated on every ingest
+    latitude     = Column(Float, nullable=True)   # fixed device location
+    longitude    = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -211,7 +213,15 @@ class ThresholdRule(Base):
     threshold  = Column(Float, nullable=False)
     severity   = Column(Enum(AlarmSeverity), default=AlarmSeverity.WARNING)
     alarm_type = Column(String(255), nullable=False)
-    is_active  = Column(Boolean, default=True)
+    is_active        = Column(Boolean, default=True)
+    # ── Intelligence: Auto RPC on alarm ──────────────────────────────────────
+    # When alarm fires, automatically send RPC command to device.
+    # auto_rpc_method: "set" (standard) or any custom method
+    # auto_rpc_params: JSON e.g. {"led1": true, "buzzer": true}
+    # auto_rpc_clear:  if True, send opposite params when alarm clears
+    auto_rpc_method  = Column(String(100), nullable=True)
+    auto_rpc_params  = Column(JSON, nullable=True)
+    auto_rpc_clear   = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

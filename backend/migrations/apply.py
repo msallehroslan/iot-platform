@@ -693,5 +693,30 @@ MIGRATIONS += [
 ]
 
 
+MIGRATIONS += [
+    {
+        "id":   "028_add_device_location",
+        "desc": "Add latitude/longitude columns to devices table for fixed device location",
+        "sql":  """
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS latitude  FLOAT;
+            ALTER TABLE devices ADD COLUMN IF NOT EXISTS longitude FLOAT;
+        """,
+    },
+]
+
+
+MIGRATIONS += [
+    {
+        "id":   "029_threshold_rule_auto_rpc",
+        "desc": "Add auto RPC fields to threshold_rules for intelligence actions",
+        "sql":  """
+            ALTER TABLE threshold_rules ADD COLUMN IF NOT EXISTS auto_rpc_method VARCHAR(100);
+            ALTER TABLE threshold_rules ADD COLUMN IF NOT EXISTS auto_rpc_params  JSONB;
+            ALTER TABLE threshold_rules ADD COLUMN IF NOT EXISTS auto_rpc_clear   BOOLEAN DEFAULT false;
+        """,
+    },
+]
+
+
 if __name__ == "__main__":
     run()

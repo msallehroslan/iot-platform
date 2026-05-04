@@ -164,20 +164,300 @@ function Header({ title, onRefresh, refreshing }) {
   );
 }
 // ── Overview page ────────────────────────────────────────────────────────────
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INTELLIGENCE LAYER — Smart Overview Cards + AI Chatbot
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Fleet Intelligence Panel ─────────────────────────────────────────────────
+// Shows AI-generated health summary for each active device.
+function FleetIntelligencePanel({ devices }) {
+  const [summaries, setSummaries] = useState({});
+  const [loading,   setLoading]   = useState(false);
+  const [loaded,    setLoaded]    = useState(false);
+
+  const fetchSummaries = async () => {
+    if (!devices.length || loading) return;
+    setLoading(true);
+    const results = {};
+    await Promise.all(
+      devices.slice(0, 6).map(async d => {
+        try {
+          const s = await intelligenceApi.summary(d.id);
+          results[d.id] = s;
+        } catch {}
+      })
+    );
+    setSummaries(results);
+    setLoaded(true);
+    setLoading(false);
+  };
+
+  useEffect(() => { if (devices.length) fetchSummaries(); }, [devices.length]);
+
+  const HEALTH_COLOR = { HEALTHY: "#10b981", WARNING: "#f59e0b", CRITICAL: "#ef4444" };
+  const HEALTH_BG    = { HEALTHY: "#f0fdf4", WARNING: "#fffbeb", CRITICAL: "#fef2f2" };
+  const TREND_ICON   = { RISING:"↑", FALLING:"↓", STABLE:"→", SPIKE:"⚡", DROP:"⬇", VOLATILE:"~", UNKNOWN:"?" };
+
+  if (!devices.length) return null;
+
+  return (
+    <div style={{ background:"#FFFFFF", borderRadius:16, border:"1px solid #D8E3F3", padding:20, boxShadow:"0 1px 4px rgba(11,20,38,0.06)" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2" style={{width:18,height:18}}>
+            <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+          </svg>
+          <h2 style={{ fontSize:14, fontWeight:700, color:"#0B1426", margin:0 }}>Fleet Intelligence</h2>
+          <span style={{ fontSize:10, color:"#6B7F9F", background:"#EAF2FF", padding:"2px 8px", borderRadius:4 }}>AI-powered · Groq</span>
+        </div>
+        <button onClick={fetchSummaries} disabled={loading} style={{ fontSize:11, color:"#2F8CFF", background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+          {loading
+            ? <><div style={{width:10,height:10,border:"2px solid #2F8CFF",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/> Analysing…</>
+            : "↻ Refresh"
+          }
+        </button>
+      </div>
+
+      {!loaded && !loading && (
+        <div style={{ textAlign:"center", padding:"20px 0", color:"#94a3b8", fontSize:12 }}>
+          Click Refresh to run AI analysis on your fleet
+        </div>
+      )}
+
+      {loading && !loaded && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
+          {devices.slice(0,4).map(d => (
+            <div key={d.id} style={{ background:"#F4F8FF", borderRadius:10, padding:14, animation:"pulse 2s infinite" }}>
+              <div style={{ height:8, background:"#D8E3F3", borderRadius:4, marginBottom:8, width:"60%" }}/>
+              <div style={{ height:6, background:"#D8E3F3", borderRadius:4, marginBottom:6 }}/>
+              <div style={{ height:6, background:"#D8E3F3", borderRadius:4, width:"80%" }}/>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {loaded && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))", gap:12 }}>
+          {devices.slice(0, 6).map(d => {
+            const s = summaries[d.id];
+            if (!s) return null;
+            const health = s.health || "UNKNOWN";
+            const color  = HEALTH_COLOR[health] || "#94a3b8";
+            const bg     = HEALTH_BG[health]    || "#f8fafc";
+
+            return (
+              <div key={d.id} style={{ background:bg, borderRadius:10, border:`1px solid ${color}33`, padding:14 }}>
+                {/* Device name + health */}
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+                  <p style={{ fontSize:12, fontWeight:700, color:"#0B1426", margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:"65%" }}>{d.name}</p>
+                  <span style={{ fontSize:9, fontWeight:700, color:"white", background:color, padding:"2px 7px", borderRadius:10 }}>{health}</span>
+                </div>
+
+                {/* Insights */}
+                <div style={{ marginBottom:8 }}>
+                  {(s.insights || []).slice(0, 2).map((insight, i) => (
+                    <p key={i} style={{ fontSize:10, color:"#334866", margin:"2px 0", lineHeight:1.5 }}>• {insight}</p>
+                  ))}
+                </div>
+
+                {/* Trend badges */}
+                {s.trends && Object.keys(s.trends).length > 0 && (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                    {Object.entries(s.trends).slice(0, 4).map(([key, trend]) => (
+                      <span key={key} style={{ fontSize:9, background:"rgba(0,0,0,0.06)", color:"#334866", padding:"1px 6px", borderRadius:6 }}>
+                        {TREND_ICON[trend] || "?"} {key}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Alarm count */}
+                {s.active_alarms > 0 && (
+                  <div style={{ marginTop:6, fontSize:10, color:"#ef4444", fontWeight:600 }}>
+                    🔔 {s.active_alarms} active alarm{s.active_alarms > 1 ? "s" : ""}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── AI Chatbot ────────────────────────────────────────────────────────────────
+// Floating chat widget — persists across page navigation.
+function AIChatbot({ user }) {
+  const [open,     setOpen]     = useState(false);
+  const [messages, setMessages] = useState([
+    { role: "assistant", content: "Hi! I'm your IoT intelligence assistant. Ask me anything about your devices, alarms, or telemetry data." }
+  ]);
+  const [input,    setInput]    = useState("");
+  const [sending,  setSending]  = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    if (bottomRef.current) bottomRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+
+    const userMsg = { role: "user", content: text };
+    const newMessages = [...messages, userMsg];
+    setMessages(newMessages);
+    setInput("");
+    setSending(true);
+
+    try {
+      const res = await intelligenceApi.chat(newMessages);
+      setMessages(m => [...m, { role: "assistant", content: res.reply, engine: res.engine }]);
+    } catch (e) {
+      setMessages(m => [...m, { role: "assistant", content: "Sorry, I couldn't connect to the AI service. Check your GROQ_API_KEY." }]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+
+  const SUGGESTIONS = [
+    "Which devices are offline?",
+    "Summarise active alarms",
+    "What are the latest readings?",
+    "Any anomalies detected?",
+  ];
+
+  return (
+    <div style={{ position:"fixed", bottom:24, right:24, zIndex:1000 }}>
+      {/* Chat window */}
+      {open && (
+        <div style={{ width:360, height:480, background:"white", borderRadius:16, border:"1px solid #D8E3F3", boxShadow:"0 8px 40px rgba(11,20,38,0.15)", display:"flex", flexDirection:"column", marginBottom:12, overflow:"hidden" }}>
+          {/* Header */}
+          <div style={{ background:"#0B1426", padding:"14px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background:"#10b981", boxShadow:"0 0 6px #10b981" }}/>
+              <span style={{ fontSize:13, fontWeight:700, color:"white" }}>TriAxis AI Assistant</span>
+              <span style={{ fontSize:9, color:"#6B7F9F", background:"rgba(255,255,255,0.1)", padding:"1px 6px", borderRadius:4 }}>Groq · Llama 3.1</span>
+            </div>
+            <button onClick={() => setOpen(false)} style={{ background:"none", border:"none", color:"#94a3b8", cursor:"pointer", fontSize:18, lineHeight:1, padding:0 }}>×</button>
+          </div>
+
+          {/* Messages */}
+          <div style={{ flex:1, overflowY:"auto", padding:16, display:"flex", flexDirection:"column", gap:10 }}>
+            {messages.map((m, i) => (
+              <div key={i} style={{ display:"flex", flexDirection:"column", alignItems: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div style={{
+                  maxWidth:"85%", padding:"9px 13px", borderRadius: m.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                  background: m.role === "user" ? "#2F8CFF" : "#F4F8FF",
+                  color: m.role === "user" ? "white" : "#334866",
+                  fontSize:12, lineHeight:1.6,
+                }}>
+                  {m.content}
+                </div>
+                {m.engine && <span style={{ fontSize:9, color:"#94a3b8", marginTop:2 }}>{m.engine}</span>}
+              </div>
+            ))}
+            {sending && (
+              <div style={{ display:"flex", alignItems:"flex-start" }}>
+                <div style={{ background:"#F4F8FF", borderRadius:"16px 16px 16px 4px", padding:"9px 13px" }}>
+                  <div style={{ display:"flex", gap:4 }}>
+                    {[0,1,2].map(i => (
+                      <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:"#94a3b8", animation:`bounce 1s ${i*0.2}s infinite` }}/>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef}/>
+          </div>
+
+          {/* Suggestions — shown only when just the welcome message */}
+          {messages.length === 1 && (
+            <div style={{ padding:"0 12px 8px", display:"flex", flexWrap:"wrap", gap:6 }}>
+              {SUGGESTIONS.map(s => (
+                <button key={s} onClick={() => { setInput(s); }} style={{ fontSize:10, background:"#EAF2FF", color:"#0B4BB3", border:"1px solid #D8E3F3", borderRadius:20, padding:"4px 10px", cursor:"pointer" }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input */}
+          <div style={{ padding:"12px 12px 14px", borderTop:"1px solid #E8EDF5", display:"flex", gap:8, flexShrink:0 }}>
+            <textarea
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder="Ask anything about your devices…"
+              rows={1}
+              style={{ flex:1, resize:"none", border:"1px solid #D8E3F3", borderRadius:10, padding:"8px 12px", fontSize:12, color:"#334866", outline:"none", fontFamily:"inherit", lineHeight:1.5, background:"#F4F8FF" }}
+            />
+            <button onClick={send} disabled={sending || !input.trim()} style={{ width:36, height:36, borderRadius:10, background: input.trim() ? "#2F8CFF" : "#EAF2FF", border:"none", cursor: input.trim() ? "pointer" : "default", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, alignSelf:"flex-end" }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke={input.trim() ? "white" : "#94a3b8"} strokeWidth="2" style={{width:16,height:16}}>
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Toggle button */}
+      <div style={{ display:"flex", justifyContent:"flex-end" }}>
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{ width:52, height:52, borderRadius:"50%", background: open ? "#334866" : "#0B1426", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 4px 20px rgba(11,20,38,0.3)", transition:"all 0.2s" }}
+        >
+          {open ? (
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:22,height:22}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OverviewPage({ refreshKey, onToast }) {
   const [stats,setStats]=useState(null); const [devices,setDevices]=useState([]); const [alarms,setAlarms]=useState([]); const [loading,setLoading]=useState(true);
   const [chartDev,setChartDev]=useState(null); const [chartKey,setChartKey]=useState("temperature"); const [chartData,setChartData]=useState([]); const [chartKeys,setChartKeys]=useState([]);
+  const [summaries,setSummaries]=useState({}); const [summaryLoading,setSummaryLoading]=useState(false);
   const sparkRef=useRef(Array.from({length:20},(_,i)=>i));
-  const fetchAll=useCallback(async()=>{try{const[s,d,a]=await Promise.all([statsApi.get(),deviceApi.list({limit:20}),alarmApi.list({limit:5})]);setStats(s);setDevices(d);setAlarms(a);if(!chartDev&&d.length>0)setChartDev(d[0]);}catch(e){onToast(e.message,"error");}finally{setLoading(false);}}, [chartDev]);
+
+  const fetchAll=useCallback(async()=>{
+    try{
+      const[s,d,a]=await Promise.all([statsApi.get(),deviceApi.list({limit:20}),alarmApi.list({limit:5})]);
+      setStats(s);setDevices(d);setAlarms(a);
+      if(!chartDev&&d.length>0)setChartDev(d[0]);
+    }catch(e){onToast(e.message,"error");}
+    finally{setLoading(false);}
+  }, [chartDev]);
+
   useEffect(()=>{fetchAll();},[refreshKey]);
+
+  // Fetch AI summaries for active devices
+  useEffect(()=>{
+    const activeDevs = devices.filter(d=>d.status==="ACTIVE").slice(0,6);
+    if(!activeDevs.length) return;
+    setSummaryLoading(true);
+    Promise.allSettled(activeDevs.map(d=>intelligenceApi.summary(d.id).then(r=>({id:d.id,data:r}))))
+      .then(results=>{
+        const map={};
+        results.forEach(r=>{ if(r.status==="fulfilled") map[r.value.id]=r.value.data; });
+        setSummaries(map);
+      })
+      .finally(()=>setSummaryLoading(false));
+  },[devices.length]);
+
   useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{const ks=r?.keys||[];setChartKeys(ks);if(ks.length>0&&!ks.includes(chartKey))setChartKey(ks[0]);}).catch(()=>{});},[chartDev?.id]);
-  // Chart data: fetch on device/key change. WS subscription appends live points.
   useEffect(()=>{
     if(!chartDev||!chartKey)return;
     telemetryApi.history(chartDev.id,chartKey,50).then(setChartData).catch(()=>setChartData([]));
   },[chartDev?.id,chartKey]);
-
-  // Append live WS data to chart when the selected device+key updates
   useEffect(()=>{
     if(!chartDev?.id||!chartKey)return;
     const unsub = TelemetrySocket.subscribe(chartDev.id,[chartKey],(vals,ts)=>{
@@ -186,17 +466,88 @@ function OverviewPage({ refreshKey, onToast }) {
     });
     return ()=>unsub();
   },[chartDev?.id,chartKey]);
+
   const active=devices.filter(d=>d.status==="ACTIVE");
+  const HEALTH_COLOR = { HEALTHY:"#10b981", WARNING:"#f59e0b", CRITICAL:"#ef4444" };
+  const HEALTH_BG    = { HEALTHY:"#f0fdf4", WARNING:"#fffbeb", CRITICAL:"#fef2f2" };
+  const TREND_ICON   = { RISING:"↑", FALLING:"↓", STABLE:"→", SPIKE:"⚡", DROP:"⬇", VOLATILE:"〜", UNKNOWN:"?" };
+
   return (
     <div className="space-y-6">
+      {/* ── Stat cards ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
-          <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md hover:shadow-blue-100/70 transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+          <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
             <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
             <Sparkline data={sparkRef.current.map(i=>(value||5)+Math.sin(i*.5+label.length)*2)} color={color} height={36}/>
           </div>
         ))}
       </div>
+
+      {/* ── Intelligence Panel ── */}
+      {active.length>0&&(
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-[#0B1426]">Fleet Intelligence</h2>
+              <span className="text-[10px] font-medium bg-[#EAF2FF] text-[#2F8CFF] px-2 py-0.5 rounded-full">AI</span>
+            </div>
+            {summaryLoading&&<div className="flex items-center gap-1.5 text-[11px] text-[#6B7F9F]"><div style={{width:10,height:10,border:"1.5px solid #6B7F9F",borderTopColor:"transparent",borderRadius:"50%",animation:"spin 1s linear infinite"}}/> Analysing…</div>}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {active.slice(0,6).map(d=>{
+              const s=summaries[d.id];
+              const health=s?.health||"UNKNOWN";
+              const hc=HEALTH_COLOR[health]||"#94a3b8";
+              const hbg=HEALTH_BG[health]||"#f8fafc";
+              const trends=s?.trends||{};
+              const insights=s?.insights||[];
+              return (
+                <div key={d.id} className="rounded-2xl border p-4 shadow-sm hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div style={{width:8,height:8,borderRadius:"50%",background:hc,flexShrink:0}}/>
+                      <p className="text-xs font-semibold text-[#0B1426] truncate">{d.name}</p>
+                    </div>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex-shrink-0" style={{background:hbg,color:hc}}>{health}</span>
+                  </div>
+                  {/* Trend pills */}
+                  {Object.keys(trends).length>0&&(
+                    <div className="flex flex-wrap gap-1 mb-3">
+                      {Object.entries(trends).slice(0,4).map(([key,trend])=>(
+                        <span key={key} className="text-[9px] px-1.5 py-0.5 rounded-md font-medium" style={{background:"#F4F8FF",color:"#334866"}}>
+                          {TREND_ICON[trend]||"?"} {key}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {/* Insights */}
+                  {summaryLoading&&!s?(
+                    <div className="space-y-1.5">{[1,2].map(i=><div key={i} className="h-3 bg-slate-100 rounded animate-pulse" style={{width:i===1?"80%":"60%"}}/>)}</div>
+                  ):(
+                    <div className="space-y-1">
+                      {insights.slice(0,2).map((ins,i)=>(
+                        <p key={i} className="text-[10px] text-[#6B7F9F] leading-relaxed">{ins}</p>
+                      ))}
+                      {!s&&<p className="text-[10px] text-[#94a3b8]">Waiting for analysis…</p>}
+                    </div>
+                  )}
+                  {/* Alarms badge */}
+                  {s?.active_alarms>0&&(
+                    <div className="mt-3 flex items-center gap-1.5 text-[10px] text-red-600 bg-red-50 px-2 py-1 rounded-lg">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{width:10,height:10}}><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"/></svg>
+                      {s.active_alarms} active alarm{s.active_alarms>1?"s":""}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Telemetry + Alarms ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
         <div className="col-span-2 rounded-2xl border shadow-sm shadow-blue-100/40 p-5" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
           <div className="flex items-start justify-between mb-5"><div><h2 className="text-sm font-semibold text-[#0B1426]">Telemetry History</h2><p className="text-xs text-[#6B7F9F] mt-0.5">Last 50 points</p></div>
@@ -214,6 +565,8 @@ function OverviewPage({ refreshKey, onToast }) {
         </div>
       </div>
       {active.length>0&&<div><h2 className="text-sm font-semibold text-[#0B1426] mb-3">Latest Telemetry</h2><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">{active.slice(0,8).map(d=><TelCard key={d.id} device={d}/>)}</div></div>}
+      {/* Fleet Intelligence Panel */}
+      {devices.length>0 && <FleetIntelligencePanel devices={active.length>0?active:devices} />}
     </div>
   );
 }
@@ -1904,6 +2257,159 @@ const PAGE_TITLES = {
   "rule-chains":"Rule Chains (Threshold Rules)", customers:"Customers", users:"Users & Roles", settings:"Settings", "api-keys":"API Keys", "system-metrics":"System Metrics", "audit-log":"Audit Log",
 };
 
+// ── AI Chatbot Widget ─────────────────────────────────────────────────────────
+function AIChatbot({ user }) {
+  const [open,    setOpen]    = useState(false);
+  const [msgs,    setMsgs]    = useState([
+    { role:"assistant", content:"Hi! I'm your IoT AI assistant. Ask me anything about your devices, alarms, or trends." }
+  ]);
+  const [input,   setInput]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef(null);
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    const userMsg = { role:"user", content: text };
+    setMsgs(m => [...m, userMsg]);
+    setInput("");
+    setLoading(true);
+    try {
+      // Send full history for context
+      const history = [...msgs, userMsg].slice(-10); // last 10 messages only
+      const res = await intelligenceApi.chat(history);
+      setMsgs(m => [...m, { role:"assistant", content: res.reply }]);
+    } catch(e) {
+      setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
+    } finally { setLoading(false); }
+  };
+
+  const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+
+  // Quick prompt suggestions
+  const SUGGESTIONS = [
+    "Which devices have active alarms?",
+    "What are the current trends?",
+    "Which device is most critical?",
+  ];
+
+  return (
+    <>
+      {/* Floating button */}
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        position:"fixed", bottom:24, right:24, zIndex:50,
+        width:52, height:52, borderRadius:"50%",
+        background: open ? "#334866" : "linear-gradient(135deg,#2F8CFF,#0B4BB3)",
+        border:"none", cursor:"pointer", boxShadow:"0 4px 20px rgba(47,140,255,0.4)",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        transition:"all 0.2s",
+      }}>
+        {open ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:22,height:22}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        )}
+      </button>
+
+      {/* Chat panel */}
+      {open && (
+        <div style={{
+          position:"fixed", bottom:88, right:24, zIndex:50,
+          width:360, height:480,
+          background:"white", borderRadius:20,
+          border:"1px solid #D8E3F3",
+          boxShadow:"0 12px 48px rgba(11,20,38,0.15)",
+          display:"flex", flexDirection:"column",
+          overflow:"hidden",
+          animation:"slideUp 0.2s ease",
+        }}>
+          {/* Header */}
+          <div style={{padding:"14px 16px", background:"linear-gradient(135deg,#0B1426,#1a2e5a)", display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+            <div style={{width:32,height:32,borderRadius:"50%",background:"rgba(47,140,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2" style={{width:16,height:16}}><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            </div>
+            <div>
+              <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>TriAxis AI Assistant</p>
+              <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.1</p>
+            </div>
+            <div style={{marginLeft:"auto",width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+          </div>
+
+          {/* Messages */}
+          <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+            {msgs.map((m,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+                <div style={{
+                  maxWidth:"82%", padding:"8px 12px", borderRadius: m.role==="user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                  background: m.role==="user" ? "linear-gradient(135deg,#2F8CFF,#0B4BB3)" : "#F4F8FF",
+                  color: m.role==="user" ? "white" : "#334866",
+                  fontSize:12, lineHeight:1.6,
+                  whiteSpace:"pre-wrap",
+                }}>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div style={{display:"flex",justifyContent:"flex-start"}}>
+                <div style={{padding:"10px 14px",background:"#F4F8FF",borderRadius:"16px 16px 16px 4px",display:"flex",gap:4,alignItems:"center"}}>
+                  {[0,1,2].map(i=>(
+                    <div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#94a3b8",animation:`bounce 1s ${i*0.2}s infinite`}}/>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef}/>
+          </div>
+
+          {/* Suggestions (shown when only 1 message) */}
+          {msgs.length===1 && (
+            <div style={{padding:"0 14px 10px",display:"flex",gap:6,flexWrap:"wrap"}}>
+              {SUGGESTIONS.map(s=>(
+                <button key={s} onClick={()=>{setInput(s);}} style={{fontSize:10,padding:"4px 10px",borderRadius:20,border:"1px solid #D8E3F3",background:"#F4F8FF",color:"#334866",cursor:"pointer",whiteSpace:"nowrap"}}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Input */}
+          <div style={{padding:"10px 12px",borderTop:"1px solid #EAF2FF",display:"flex",gap:8,alignItems:"flex-end",flexShrink:0}}>
+            <textarea
+              value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKey}
+              placeholder="Ask about devices, alarms, trends…"
+              rows={1}
+              style={{
+                flex:1, padding:"8px 12px", border:"1px solid #D8E3F3", borderRadius:12,
+                fontSize:12, color:"#334866", resize:"none", outline:"none",
+                background:"#F8FAFF", fontFamily:"inherit", lineHeight:1.5,
+                maxHeight:80, overflow:"auto",
+              }}
+            />
+            <button onClick={send} disabled={loading||!input.trim()} style={{
+              width:36,height:36,borderRadius:"50%",border:"none",
+              background: input.trim() ? "linear-gradient(135deg,#2F8CFF,#0B4BB3)" : "#e2e8f0",
+              cursor: input.trim() ? "pointer" : "default",
+              display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+              transition:"background 0.2s",
+            }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:14,height:14}}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes bounce  { 0%,80%,100% { transform:scale(0.6); opacity:0.4; } 40% { transform:scale(1); opacity:1; } }
+      `}</style>
+    </>
+  );
+}
+
+
 export default function App() {
   const [user,       setUser]       = useState(() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } });
   const [authed,     setAuthed]     = useState(() => !!localStorage.getItem("access_token"));
@@ -1964,6 +2470,7 @@ export default function App() {
       </div>
       {drawer && <DeviceDrawer device={drawer} onClose={() => setDrawer(null)} refreshKey={refreshKey} onToast={showToast} user={user} />}
       {toast  && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
+      {user?.role !== "CUSTOMER_USER" && <AIChatbot user={user} />}
     </div>
   );
 }

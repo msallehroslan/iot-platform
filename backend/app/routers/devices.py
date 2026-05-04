@@ -128,6 +128,8 @@ def create_device(
         additional_info=device_in.additional_info,
         tenant_id=current_user.tenant_id,
         customer_id=device_in.customer_id,
+        latitude=device_in.latitude,
+        longitude=device_in.longitude,
         token=str(uuid.uuid4()),
         status=DeviceStatus.INACTIVE,
     )

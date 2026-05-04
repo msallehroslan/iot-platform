@@ -718,6 +718,8 @@ export const WIDGET_REGISTRY = [
   { id: "device_summary",    label: "Device Summary",    icon: "M5 12h14M12 5l7 7-7 7",                                                desc: "Last seen, status + key metrics",  category: "status" },
   { id: "alarm_list",        label: "Alarm List",        icon: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0", desc: "Active alarms for device",        category: "status" },
   { id: "map",               label: "Map (GPS)",         icon: "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z", desc: "Device location from lat/lng",    category: "status" },
+  { id: "fleet_map",         label: "Fleet Map",         icon: "M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7", desc: "All devices on one map",           category: "status" },
+  { id: "trend_indicator",   label: "Trend Indicator",   icon: "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6",                                                                                                                                                        desc: "Rising/falling/stable trend",     category: "data"   },
   // ── Control widgets ──────────────────────────────────────────────────────
   { id: "rpc_button",        label: "RPC Button",        icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Send command on click",            category: "control" },
   { id: "rpc_toggle",        label: "RPC Toggle",        icon: "M18.36 6.64A9 9 0 1 1 5.64 17.36",                                     desc: "ON/OFF toggle command",            category: "control" },
@@ -754,6 +756,8 @@ export const WIDGET_COMPONENT_MAP = {
   device_summary:    DeviceSummaryWidget,
   alarm_list:        AlarmListWidget,
   map:               MapWidget,
+  fleet_map:         FleetMapWidget,
+  trend_indicator:   TrendIndicatorWidget,
   // ── Control ────────────────────────────────────────────────────────────────
   rpc_button:        RpcButtonWidget,
   rpc_toggle:        RpcToggleWidget,
@@ -783,7 +787,7 @@ export const WIDGET_COMPONENT_MAP = {
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null, allDevices = [] }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -804,7 +808,10 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
     );
   }
 
-  const props = { config: widget.config || {}, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
+  const effectiveConfig = widget.widget_type === "fleet_map"
+    ? { ...widget.config, devices: allDevices }
+    : widget.config || {};
+  const props = { config: effectiveConfig, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
 
   // ── Role-based widget access control ─────────────────────────────────────
   // Matches the access table exactly:
@@ -999,15 +1006,17 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
       Configure keys in Edit
     </div>
   );
-  const W=460, H=160, pad={t:8,r:8,b:24,l:36};
+  const W=460, H=170, pad={t:8,r:48,b:28,l:44};
   const w=W-pad.l-pad.r, h=H-pad.t-pad.b;
 
-  // Build series: [{key, pts:[{ts,value}], color}]
-  const series = keys.map((k,i)=>({
-    key: k,
-    pts: (historyData?.[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0})),
-    color: config.colors?.[i] || MULTI_COLORS[i%MULTI_COLORS.length],
-  })).filter(s=>s.pts.length>1);
+  // Build series with individual min/max for true multi-axis
+  const series = keys.map((k,i)=>{
+    const pts = (historyData?.[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0}));
+    const vals = pts.map(p=>p.value);
+    const mn = vals.length ? Math.min(...vals) : 0;
+    const mx = vals.length ? Math.max(...vals) : 1;
+    return { key:k, pts, color: config.colors?.[i]||MULTI_COLORS[i%MULTI_COLORS.length], mn, mx, rng: mx-mn||1 };
+  }).filter(s=>s.pts.length>1);
 
   if (!series.length) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:6}}>
@@ -1015,7 +1024,7 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
     </div>
   );
 
-  // Shared X domain from all series
+  // Shared X domain
   const allTs = series.flatMap(s=>s.pts.map(p=>new Date(p.ts).getTime()));
   const minTs = Math.min(...allTs), maxTs = Math.max(...allTs);
   const px = ts => pad.l + ((new Date(ts).getTime()-minTs)/(maxTs-minTs||1))*w;
@@ -1027,33 +1036,249 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
         {[0,0.25,0.5,0.75,1].map(t=>(
           <line key={t} x1={pad.l} y1={pad.t+h*t} x2={pad.l+w} y2={pad.t+h*t} stroke="#f1f5f9" strokeWidth="1"/>
         ))}
-        {/* Each series */}
+        {/* Y axis labels — left for series[0], right for series[1] */}
+        {series.slice(0,2).map((s,si)=>(
+          [0,0.5,1].map(t=>{
+            const val = s.mn + (1-t)*s.rng;
+            const x = si===0 ? pad.l-4 : pad.l+w+4;
+            const anchor = si===0 ? "end" : "start";
+            return (
+              <text key={`${si}-${t}`} x={x} y={pad.t+h*t+4} fontSize="7" fill={s.color} textAnchor={anchor} fontFamily="monospace">
+                {val>=1000?`${(val/1000).toFixed(1)}k`:val>=100?val.toFixed(0):val.toFixed(1)}
+              </text>
+            );
+          })
+        ))}
+        {/* Each series line */}
         {series.map(s=>{
-          const vals=s.pts.map(p=>p.value);
-          const mn=Math.min(...vals), mx=Math.max(...vals), rng=mx-mn||1;
-          const py=v=>pad.t+h-((v-mn)/rng)*h;
-          const d=s.pts.map((p,i)=>`${i===0?"M":"L"}${px(p.ts).toFixed(1)},${py(p.value).toFixed(1)}`).join(" ");
-          return <path key={s.key} d={d} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>;
+          const py = v => pad.t+h-((v-s.mn)/s.rng)*h;
+          const d = s.pts.map((p,i)=>`${i===0?"M":"L"}${px(p.ts).toFixed(1)},${py(p.value).toFixed(1)}`).join(" ");
+          // Fill area under line
+          const first = s.pts[0], last = s.pts[s.pts.length-1];
+          const area = `M${px(first.ts).toFixed(1)},${pad.t+h} ${d.slice(1)} L${px(last.ts).toFixed(1)},${pad.t+h} Z`;
+          return (
+            <g key={s.key}>
+              <path d={area} fill={s.color} fillOpacity="0.06"/>
+              <path d={d} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+            </g>
+          );
         })}
         {/* Time labels */}
         {series[0].pts.filter((_,i,a)=>i===0||i===Math.floor(a.length/2)||i===a.length-1).map((p,i)=>(
-          <text key={i} x={px(p.ts)} y={pad.t+h+16} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+          <text key={i} x={px(p.ts)} y={pad.t+h+18} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
             {new Date(p.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
           </text>
         ))}
       </svg>
       {/* Legend */}
-      <div style={{display:"flex",gap:10,flexWrap:"wrap",paddingLeft:pad.l}}>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",paddingLeft:pad.l}}>
         {series.map(s=>(
           <div key={s.key} style={{display:"flex",alignItems:"center",gap:4}}>
-            <div style={{width:10,height:3,borderRadius:2,background:s.color}}/>
+            <div style={{width:12,height:3,borderRadius:2,background:s.color}}/>
             <span style={{fontSize:10,color:"#64748b"}}>{s.key}</span>
+            <span style={{fontSize:9,color:"#94a3b8"}}>({s.mn.toFixed(1)}–{s.mx.toFixed(1)})</span>
           </div>
         ))}
       </div>
     </div>
   );
 }
+
+// ── Trend Indicator Widget ────────────────────────────────────────────────────
+// Shows trend direction + confidence for a telemetry key.
+// Calls GET /api/v1/intelligence/trend/{deviceId}/{key}
+
+const TREND_CONFIG = {
+  RISING:   { icon: "M5 15l7-7 7 7",          color: "#ef4444", label: "Rising",   bg: "#fef2f2" },
+  FALLING:  { icon: "M19 9l-7 7-7-7",         color: "#3b82f6", label: "Falling",  bg: "#eff6ff" },
+  STABLE:   { icon: "M5 12h14",               color: "#10b981", label: "Stable",   bg: "#f0fdf4" },
+  SPIKE:    { icon: "M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z", color: "#f59e0b", label: "Spike",   bg: "#fffbeb" },
+  DROP:     { icon: "M12 22l3-7h7l-5.5-4 2-7L12 8l-6.5-4 2 7L2 15h7z", color: "#8b5cf6", label: "Drop",    bg: "#f5f3ff" },
+  VOLATILE: { icon: "M2 12l4-4 4 8 4-8 4 4", color: "#f97316", label: "Volatile", bg: "#fff7ed" },
+  UNKNOWN:  { icon: "M12 8v4m0 4h.01",        color: "#94a3b8", label: "No data",  bg: "#f8fafc" },
+};
+
+export function TrendIndicatorWidget({ config, deviceId, liveTelem }) {
+  const key      = config.key || "";
+  const label    = config.label || key || "Trend";
+  const BASE     = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+  const [trend, setTrend]     = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchTrend = useCallback(async () => {
+    if (!deviceId || !key) return;
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("access_token");
+      const res = await fetch(`${BASE}/api/v1/intelligence/trend/${deviceId}/${key}?minutes=30`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) setTrend(await res.json());
+    } catch {}
+    finally { setLoading(false); }
+  }, [deviceId, key]);
+
+  useEffect(() => { fetchTrend(); }, [fetchTrend]);
+
+  // Refresh when live telemetry updates (new reading arrived)
+  const latestVal = liveTelem?.[key];
+  const prevVal   = useRef(latestVal);
+  useEffect(() => {
+    if (latestVal !== prevVal.current) {
+      prevVal.current = latestVal;
+      fetchTrend();
+    }
+  }, [latestVal]);
+
+  if (!deviceId || !key) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:11,color:"#94a3b8"}}>
+      Configure key in Edit
+    </div>
+  );
+
+  const trendKey = trend?.trend || "UNKNOWN";
+  const cfg      = TREND_CONFIG[trendKey] || TREND_CONFIG.UNKNOWN;
+  const conf     = trend ? Math.round((trend.confidence || 0) * 100) : 0;
+  const changePct = trend?.change_pct || 0;
+  const currentVal = liveTelem?.[key];
+
+  return (
+    <div style={{height:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8, background:cfg.bg, borderRadius:8, padding:12}}>
+      {/* Trend arrow */}
+      <div style={{width:52, height:52, borderRadius:"50%", background:"white", display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 2px 8px ${cfg.color}33`}}>
+        {loading ? (
+          <div style={{width:20, height:20, border:`2px solid ${cfg.color}`, borderTopColor:"transparent", borderRadius:"50%", animation:"spin 1s linear infinite"}}/>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke={cfg.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{width:24, height:24}}>
+            <path d={cfg.icon}/>
+          </svg>
+        )}
+      </div>
+
+      {/* Trend label */}
+      <div style={{textAlign:"center"}}>
+        <p style={{fontSize:15, fontWeight:700, color:cfg.color, margin:0}}>{cfg.label}</p>
+        <p style={{fontSize:10, color:"#64748b", margin:"2px 0 0"}}>{label}</p>
+      </div>
+
+      {/* Stats row */}
+      {trend && (
+        <div style={{display:"flex", gap:12, fontSize:10}}>
+          <div style={{textAlign:"center"}}>
+            <p style={{color:"#94a3b8", margin:0}}>Change</p>
+            <p style={{fontWeight:600, color:changePct>0?"#ef4444":changePct<0?"#3b82f6":"#10b981", margin:0}}>
+              {changePct > 0 ? "+" : ""}{changePct.toFixed(1)}%
+            </p>
+          </div>
+          <div style={{textAlign:"center"}}>
+            <p style={{color:"#94a3b8", margin:0}}>Confidence</p>
+            <p style={{fontWeight:600, color:"#64748b", margin:0}}>{conf}%</p>
+          </div>
+          {currentVal !== undefined && (
+            <div style={{textAlign:"center"}}>
+              <p style={{color:"#94a3b8", margin:0}}>Current</p>
+              <p style={{fontWeight:600, color:"#0B1426", margin:0}}>
+                {typeof currentVal === "number" ? currentVal.toFixed(1) : currentVal}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <p style={{fontSize:9, color:"#cbd5e1", margin:0}}>Last 30 min · {trend?.points || 0} pts</p>
+    </div>
+  );
+}
+
+
+// ── Fleet Map Widget ──────────────────────────────────────────────────────────
+// Shows ALL devices with lat/lng set as pins on a single map.
+// Reads device list from config.devices (passed by DashboardPage/UserDashboardPage).
+// Uses OpenStreetMap static tiles — no API key needed.
+
+export function FleetMapWidget({ config }) {
+  const devices = (config.devices || []).filter(d => d.latitude && d.longitude);
+
+  if (!devices.length) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8}}>
+      <svg style={{width:28,height:28,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+        <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+      </svg>
+      <p style={{fontSize:11,color:"#94a3b8",textAlign:"center"}}>
+        No devices with location set.<br/>
+        <span style={{fontSize:10,color:"#cbd5e1"}}>Edit a device → set Latitude & Longitude</span>
+      </p>
+    </div>
+  );
+
+  // Calculate bounding box for all device locations
+  const lats = devices.map(d => d.latitude);
+  const lngs = devices.map(d => d.longitude);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLng = (minLng + maxLng) / 2;
+  const zoom = config.zoom || 12;
+
+  // Convert lat/lng to pixel position in SVG viewport
+  const W = 460, H = 200;
+  const latToY = lat => H/2 - ((lat - centerLat) / (maxLat - minLat + 0.01)) * (H * 0.7);
+  const lngToX = lng => W/2 + ((lng - centerLng) / (maxLng - minLng + 0.01)) * (W * 0.7);
+
+  const STATUS_COLOR = { ACTIVE:"#10b981", INACTIVE:"#94a3b8", DISABLED:"#ef4444" };
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:4}}>
+      {/* Map background */}
+      <div style={{flex:1,background:"linear-gradient(135deg,#dbeafe 0%,#bfdbfe 40%,#e0f2fe 100%)",borderRadius:8,position:"relative",overflow:"hidden"}}>
+        {/* Grid lines to simulate map tiles */}
+        <svg style={{position:"absolute",inset:0,width:"100%",height:"100%"}} viewBox={`0 0 ${W} ${H}`}>
+          {/* Background grid */}
+          {Array.from({length:8},(_,i)=>(
+            <line key={`h${i}`} x1={0} y1={H/8*i} x2={W} y2={H/8*i} stroke="rgba(255,255,255,0.4)" strokeWidth="1"/>
+          ))}
+          {Array.from({length:12},(_,i)=>(
+            <line key={`v${i}`} x1={W/12*i} y1={0} x2={W/12*i} y2={H} stroke="rgba(255,255,255,0.4)" strokeWidth="1"/>
+          ))}
+          {/* Device pins */}
+          {devices.map((d,i)=>{
+            const x = devices.length === 1 ? W/2 : lngToX(d.longitude);
+            const y = devices.length === 1 ? H/2 : latToY(d.latitude);
+            const color = STATUS_COLOR[d.status] || "#94a3b8";
+            return (
+              <g key={d.id}>
+                {/* Pin shadow */}
+                <circle cx={x} cy={y+2} r={8} fill="rgba(0,0,0,0.15)"/>
+                {/* Pin circle */}
+                <circle cx={x} cy={y} r={8} fill={color} stroke="white" strokeWidth="2"/>
+                {/* Device initial */}
+                <text x={x} y={y+4} fontSize="7" fill="white" textAnchor="middle" fontWeight="bold">
+                  {d.name.charAt(0).toUpperCase()}
+                </text>
+                {/* Device name label */}
+                <rect x={x-30} y={y-26} width={60} height={14} rx={3} fill="rgba(11,20,38,0.75)"/>
+                <text x={x} y={y-15} fontSize="7" fill="white" textAnchor="middle">{d.name.slice(0,12)}</text>
+              </g>
+            );
+          })}
+        </svg>
+        {/* OSM attribution */}
+        <div style={{position:"absolute",bottom:4,right:6,fontSize:8,color:"rgba(0,0,0,0.4)"}}>© OpenStreetMap</div>
+      </div>
+      {/* Device list */}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",paddingLeft:4}}>
+        {devices.map(d=>(
+          <div key={d.id} style={{display:"flex",alignItems:"center",gap:4}}>
+            <div style={{width:8,height:8,borderRadius:"50%",background:STATUS_COLOR[d.status]||"#94a3b8",flexShrink:0}}/>
+            <span style={{fontSize:10,color:"#64748b"}}>{d.name}</span>
+            <span style={{fontSize:9,color:"#cbd5e1"}}>({d.latitude?.toFixed(4)}, {d.longitude?.toFixed(4)})</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 // ── Phase 3: Map Widget ───────────────────────────────────────────────────────
 // Displays device GPS location using lat/lng telemetry keys.

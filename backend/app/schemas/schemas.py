@@ -113,6 +113,8 @@ class DeviceBase(BaseModel):
     label: Optional[str] = None
     description: Optional[str] = None
     additional_info: Optional[Dict[str, Any]] = None
+    latitude:  Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class DeviceCreate(DeviceBase):
@@ -128,6 +130,8 @@ class DeviceUpdate(BaseModel):
     status: Optional[DeviceStatus] = None
     additional_info: Optional[Dict[str, Any]] = None
     customer_id: Optional[UUID] = None
+    latitude:  Optional[float] = None
+    longitude: Optional[float] = None
 
 
 # token included — all read routes require JWT + tenant ownership check
@@ -140,6 +144,8 @@ class DeviceOut(DeviceBase):
     updated_at: Optional[datetime] = None
     tenant_id: Optional[UUID] = None
     customer_id: Optional[UUID] = None
+    latitude:  Optional[float] = None
+    longitude: Optional[float] = None
     class Config:
         from_attributes = True
 
@@ -320,6 +326,10 @@ class ThresholdRuleCreate(BaseModel):
     severity: AlarmSeverity = AlarmSeverity.WARNING
     alarm_type: str
     is_active: bool = True
+    # Intelligence: Auto RPC on alarm
+    auto_rpc_method: Optional[str] = None
+    auto_rpc_params: Optional[Dict[str, Any]] = None
+    auto_rpc_clear:  bool = False
 
     @field_validator("condition")
     @classmethod
