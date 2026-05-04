@@ -123,11 +123,17 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       <div className="border-t border-[#D8E3F3] p-3 space-y-2">
         {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
         {!col && (
-          <div className="mx-1 px-3 py-2 rounded-xl border border-[#D8E3F3] bg-white flex flex-col items-center gap-1.5">
+          <div className="mx-1 px-3 py-2.5 rounded-xl border border-[#D8E3F3] bg-white flex flex-col items-center gap-2">
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
-            <div className="flex items-center gap-2">
-              <img src="/greenson-logo.jpg" alt="Greenson Technology" className="h-5 w-auto object-contain" />
-              <span className="text-[11px] font-bold text-[#0B1426] whitespace-nowrap">Greenson Technology</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 border-r border-[#D8E3F3] pr-3">
+                <img src="/taat-logo-2.png" alt="TriAxis" className="h-5 w-auto object-contain" />
+                <span className="text-[10px] font-bold text-[#07142F] whitespace-nowrap">TriAxis</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <img src="/greenson-logo.jpg" alt="Greenson" className="h-5 w-auto object-contain" />
+                <span className="text-[10px] font-bold text-[#0B1426] whitespace-nowrap">Greenson</span>
+              </div>
             </div>
           </div>
         )}
@@ -1810,7 +1816,7 @@ function LoginPage({ onLogin }) {
         {/* Left: TAAT logo + TriAxis Nexus */}
         <div className="flex items-center gap-3">
           <img src="/taat-logo-2.png" alt="TAAT" className="h-9 w-auto object-contain" />
-          <span className="text-xl font-bold tracking-tight text-[#07142F]">TriAxis Nexus</span>
+          <span className="text-xl font-bold tracking-tight text-[#07142F]">TriAxis AI Technologies</span>
         </div>
         {/* Right: In collaboration with GT logo + Greenson Technology */}
         <div className="flex items-center gap-2.5">
