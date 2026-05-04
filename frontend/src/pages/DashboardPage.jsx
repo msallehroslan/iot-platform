@@ -25,7 +25,7 @@ import {
 import {
   persistLayout, applyLayoutToWidgets, getDefaultPositionForType,
 } from "../services/widgetService.js";
-import { dashboardsHttp, telemetryApi } from "../services/api.js";       // injected into persistLayout
+import { dashboardsHttp, telemetryApi, deviceApi, intelligenceApi } from "../services/api.js";       // injected into persistLayout
 import { TelemetrySocket } from "../services/websocket.js";
 import GridLayout from "../components/dashboard/GridLayout.jsx";
 import { WidgetRenderer, WIDGET_REGISTRY } from "../components/widgets/index.jsx";

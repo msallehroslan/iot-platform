@@ -1295,7 +1295,7 @@ export function FleetMapWidget({ config }) {
 export function MapWidget({ config, liveTelem, deviceId }) {
   const latKey = config.lat_key || "latitude";
   const lngKey = config.lng_key || "longitude";
-  const [deviceCoords, setDeviceCoords] = useState({ lat: null, lng: null });
+  const [deviceCoords, setDeviceCoords] = useState({ lat: null, lng: null, lastSeen: null, name: null });
 
   // Fetch device coords directly if not already in config
   useEffect(() => {
@@ -1306,9 +1306,12 @@ export function MapWidget({ config, liveTelem, deviceId }) {
       })
       .then(r => r.json())
       .then(d => {
-        if (d.latitude != null && d.longitude != null) {
-          setDeviceCoords({ lat: d.latitude, lng: d.longitude });
-        }
+        setDeviceCoords({
+          lat:      d.latitude  ?? null,
+          lng:      d.longitude ?? null,
+          lastSeen: d.last_seen_at ?? null,
+          name:     d.name ?? null,
+        });
       })
       .catch(() => {});
     }
@@ -1325,13 +1328,28 @@ export function MapWidget({ config, liveTelem, deviceId }) {
   const isLive = !isNaN(liveLat) && !isNaN(liveLng);
   const zoom = config.zoom || 15;
 
+  // Device status
+  const OFFLINE_MS = 5 * 60 * 1000;
+  const lastSeen = deviceCoords.lastSeen;
+  const isOnline = lastSeen ? (Date.now() - new Date(lastSeen).getTime()) < OFFLINE_MS : null;
+  const statusColor = isOnline === true ? "#10b981" : isOnline === false ? "#94a3b8" : "#f59e0b";
+  const statusLabel = isOnline === true ? "ONLINE" : isOnline === false ? "OFFLINE" : "UNKNOWN";
+
   if (isNaN(lat) || isNaN(lng)) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8,padding:12}}>
-      <svg style={{width:28,height:28,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+      {/* Status header even without location */}
+      {deviceCoords.name && (
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+          <div style={{width:7,height:7,borderRadius:"50%",background:statusColor}}/>
+          <span style={{fontSize:11,fontWeight:600,color:"#334866"}}>{deviceCoords.name}</span>
+          <span style={{fontSize:10,color:statusColor,fontWeight:600}}>{statusLabel}</span>
+        </div>
+      )}
+      <svg style={{width:24,height:24,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 14 8 14s8-8.75 8-14a8 8 0 0 0-8-8z"/>
       </svg>
       <p style={{fontSize:11,color:"#94a3b8",textAlign:"center"}}>
-        No location data.<br/>Set Latitude/Longitude on the device, or send <code style={{background:"#f1f5f9",padding:"1px 4px",borderRadius:3}}>latitude</code>/<code style={{background:"#f1f5f9",padding:"1px 4px",borderRadius:3}}>longitude</code> as telemetry.
+        No location set.<br/>Edit the device and add Latitude/Longitude.
       </p>
     </div>
   );
@@ -1340,6 +1358,18 @@ export function MapWidget({ config, liveTelem, deviceId }) {
 
   return (
     <div style={{height:"100%",display:"flex",flexDirection:"column",borderRadius:8,overflow:"hidden",position:"relative"}}>
+      {/* Status bar */}
+      <div style={{padding:"5px 10px",background:"#0B1426",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+        <div style={{width:6,height:6,borderRadius:"50%",background:statusColor,flexShrink:0}}/>
+        <span style={{fontSize:11,fontWeight:600,color:"white",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+          {deviceCoords.name || "Device"}
+        </span>
+        <span style={{fontSize:9,color:statusColor,fontWeight:700}}>{statusLabel}</span>
+        {isLive && (
+          <span style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:"rgba(16,185,129,0.3)",color:"#6ee7b7",fontWeight:700}}>LIVE GPS</span>
+        )}
+      </div>
+      {/* Map */}
       <div style={{flex:1,position:"relative",overflow:"hidden"}}>
         <iframe
           src={mapUrl}
@@ -1347,13 +1377,9 @@ export function MapWidget({ config, liveTelem, deviceId }) {
           title="Device Location"
           loading="lazy"
         />
-        {isLive && (
-          <div style={{position:"absolute",top:6,right:6,background:"rgba(16,185,129,0.9)",borderRadius:20,padding:"2px 8px",fontSize:9,color:"white",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
-            <div style={{width:5,height:5,borderRadius:"50%",background:"white",animation:"pulse 1.5s infinite"}}/>LIVE
-          </div>
-        )}
       </div>
-      <div style={{padding:"5px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+      {/* Coordinates footer */}
+      <div style={{padding:"4px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
         <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
         <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=${zoom}/${lat}/${lng}`}
            target="_blank" rel="noopener noreferrer"
