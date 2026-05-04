@@ -810,6 +810,8 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
 
   const effectiveConfig = widget.widget_type === "fleet_map"
     ? { ...widget.config, devices: allDevices }
+    : widget.widget_type === "map"
+    ? { ...widget.config, fixed_lat: widget.config?.fixed_lat ?? allDevices?.find(d=>d.id===(widget.config?.device_id||deviceId))?.latitude, fixed_lng: widget.config?.fixed_lng ?? allDevices?.find(d=>d.id===(widget.config?.device_id||deviceId))?.longitude }
     : widget.config || {};
   const props = { config: effectiveConfig, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
 
@@ -1285,43 +1287,53 @@ export function FleetMapWidget({ config }) {
 // Uses OpenStreetMap tile URL as an img src — no JS map library needed.
 
 export function MapWidget({ config, liveTelem }) {
-  const latKey = config.lat_key || "lat";
-  const lngKey = config.lng_key || "lng";
-  const lat = parseFloat(liveTelem?.[latKey]);
-  const lng = parseFloat(liveTelem?.[lngKey]);
-  const zoom = config.zoom || 14;
+  const latKey = config.lat_key || "latitude";
+  const lngKey = config.lng_key || "longitude";
+
+  // Priority: 1) live telemetry, 2) fixed device coords from config, 3) nothing
+  const liveLat = parseFloat(liveTelem?.[latKey]);
+  const liveLng = parseFloat(liveTelem?.[lngKey]);
+  const fixedLat = parseFloat(config.fixed_lat ?? config.latitude);
+  const fixedLng = parseFloat(config.fixed_lng ?? config.longitude);
+
+  const lat = !isNaN(liveLat) ? liveLat : !isNaN(fixedLat) ? fixedLat : NaN;
+  const lng = !isNaN(liveLng) ? liveLng : !isNaN(fixedLng) ? fixedLng : NaN;
+  const isLive = !isNaN(liveLat) && !isNaN(liveLng);
+  const zoom = config.zoom || 15;
 
   if (isNaN(lat) || isNaN(lng)) return (
-    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8}}>
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8,padding:12}}>
       <svg style={{width:28,height:28,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="10" r="3"/><path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 14 8 14s8-8.75 8-14a8 8 0 0 0-8-8z"/>
       </svg>
-      <p style={{fontSize:11,color:"#94a3b8"}}>
-        {config.lat_key ? `Waiting for ${latKey}/${lngKey}…` : "Configure lat_key and lng_key"}
+      <p style={{fontSize:11,color:"#94a3b8",textAlign:"center"}}>
+        No location data.<br/>Set Latitude/Longitude on the device, or send <code style={{background:"#f1f5f9",padding:"1px 4px",borderRadius:3}}>latitude</code>/<code style={{background:"#f1f5f9",padding:"1px 4px",borderRadius:3}}>longitude</code> as telemetry.
       </p>
     </div>
   );
 
-  // Static map tile via OpenStreetMap (no API key needed)
-  const tileUrl = `https://tile.openstreetmap.org/${zoom}/${Math.floor((lng+180)/360*Math.pow(2,zoom))}/${Math.floor((1-Math.log(Math.tan(lat*Math.PI/180)+1/Math.cos(lat*Math.PI/180))/Math.PI)/2*Math.pow(2,zoom))}.png`;
+  const mapUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.01},${lat-0.01},${lng+0.01},${lat+0.01}&layer=mapnik&marker=${lat},${lng}`;
 
   return (
-    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:0,borderRadius:8,overflow:"hidden",position:"relative"}}>
-      <div style={{flex:1,background:"#e2e8f0",position:"relative",overflow:"hidden"}}>
-        {/* Fallback colored map with pin */}
-        <div style={{width:"100%",height:"100%",background:"linear-gradient(135deg,#dbeafe 0%,#bfdbfe 50%,#93c5fd 100%)",display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{textAlign:"center"}}>
-            <svg style={{width:24,height:24,color:"#ef4444"}} viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 2a8 8 0 0 0-8 8c0 5.25 8 14 8 14s8-8.75 8-14a8 8 0 0 0-8-8zm0 11a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/>
-            </svg>
+    <div style={{height:"100%",display:"flex",flexDirection:"column",borderRadius:8,overflow:"hidden",position:"relative"}}>
+      <div style={{flex:1,position:"relative",overflow:"hidden"}}>
+        <iframe
+          src={mapUrl}
+          style={{width:"100%",height:"100%",border:"none"}}
+          title="Device Location"
+          loading="lazy"
+        />
+        {isLive && (
+          <div style={{position:"absolute",top:6,right:6,background:"rgba(16,185,129,0.9)",borderRadius:20,padding:"2px 8px",fontSize:9,color:"white",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
+            <div style={{width:5,height:5,borderRadius:"50%",background:"white",animation:"pulse 1.5s infinite"}}/>LIVE
           </div>
-        </div>
+        )}
       </div>
-      <div style={{padding:"6px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between"}}>
-        <span style={{fontSize:11,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
+      <div style={{padding:"5px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+        <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
         <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=${zoom}/${lat}/${lng}`}
            target="_blank" rel="noopener noreferrer"
-           style={{fontSize:10,color:"#3b82f6",textDecoration:"none"}}>Open Map ↗</a>
+           style={{fontSize:10,color:"#3b82f6",textDecoration:"none"}}>Open ↗</a>
       </div>
     </div>
   );

@@ -417,6 +417,80 @@ async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temper
         return resp.json()["choices"][0]["message"]["content"]
 
 
+# ── Groq rate limiter ─────────────────────────────────────────────────────────
+# 20 chat requests per user per hour — prevents one user burning the shared quota.
+# Uses the existing rate_limits table (token = "groq:<user_id>", window = 1 hour).
+
+GROQ_CHAT_LIMIT    = int(os.getenv("GROQ_CHAT_LIMIT", "20"))     # requests per window
+GROQ_CHAT_WINDOW_H = int(os.getenv("GROQ_CHAT_WINDOW_H", "1"))   # window size in hours
+
+
+# Users excluded from Groq rate limiting (superadmins / platform owners)
+GROQ_RATE_LIMIT_EXCLUDED = {
+    "msallehroslan@gmail.com",
+}
+
+
+def _check_groq_rate_limit(db: Session, user_id: str, user_email: str = "") -> dict:
+    """
+    Check and increment the Groq chat rate limit for a user.
+    Returns {"allowed": bool, "used": int, "limit": int, "resets_in_mins": int}
+    Raises HTTP 429 if over limit.
+    Excluded emails bypass the limit entirely.
+    """
+    # Bypass for excluded accounts
+    if user_email.lower() in GROQ_RATE_LIMIT_EXCLUDED:
+        return {"allowed": True, "used": 0, "limit": 999999, "resets_in_mins": 0, "excluded": True}
+
+    from app.models.models import RateLimit
+    from datetime import timedelta
+
+    window_duration = timedelta(hours=GROQ_CHAT_WINDOW_H)
+    now             = datetime.now(timezone.utc)
+    window_start    = now - window_duration
+    token           = f"groq:{user_id}"
+
+    # Find existing window row
+    row = (
+        db.query(RateLimit)
+        .filter(
+            RateLimit.token == token,
+            RateLimit.window_start >= window_start,
+        )
+        .order_by(RateLimit.window_start.desc())
+        .first()
+    )
+
+    if row is None:
+        # First request in this window — create row
+        row = RateLimit(
+            token         = token,
+            request_count = 1,
+            window_start  = now,
+        )
+        db.add(row)
+        db.commit()
+        return {"allowed": True, "used": 1, "limit": GROQ_CHAT_LIMIT, "resets_in_mins": GROQ_CHAT_WINDOW_H * 60}
+
+    if row.request_count >= GROQ_CHAT_LIMIT:
+        resets_at   = row.window_start + window_duration
+        resets_mins = max(1, int((resets_at - now).total_seconds() / 60))
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error":          "rate_limit_exceeded",
+                "message":        f"You've used {row.request_count}/{GROQ_CHAT_LIMIT} AI requests this hour. Resets in {resets_mins} minute(s).",
+                "used":           row.request_count,
+                "limit":          GROQ_CHAT_LIMIT,
+                "resets_in_mins": resets_mins,
+            }
+        )
+
+    row.request_count += 1
+    db.commit()
+    return {"allowed": True, "used": row.request_count, "limit": GROQ_CHAT_LIMIT, "resets_in_mins": GROQ_CHAT_WINDOW_H * 60}
+
+
 def _get_device_keys(db: Session, devices: list) -> dict:
     """
     Fetch actual telemetry keys for each device from the DB.
@@ -624,6 +698,9 @@ async def ai_chat(
             reply = "Add **GROQ_API_KEY** to your Render environment variables (free at console.groq.com) to enable AI chat."
         return {"reply": reply, "engine": "rule-based"}
 
+    # ── Groq rate limit check ─────────────────────────────────────────────────
+    rate_info = _check_groq_rate_limit(db, str(current_user.id), getattr(current_user, "email", ""))
+
     # ── RPC Intent Detection ─────────────────────────────────────────────────
     # Check if user wants to control a device before generating a chat reply
     last_user_msg = next(
@@ -750,8 +827,9 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
         return {
             "reply":          reply,
             "engine":         "groq-llama-3.3-70b",
-            "rpc_executed":   rpc_executed,    # frontend shows RPC badge
-            "alarm_actioned": alarm_actioned,  # frontend shows alarm badge
+            "rpc_executed":   rpc_executed,
+            "alarm_actioned": alarm_actioned,
+            "rate":           rate_info,       # frontend can show usage counter
         }
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
@@ -1380,3 +1458,56 @@ Be direct and actionable. Use exact device names and numbers."""
         return {"report": summary, "narrative": narrative, "engine": "groq"}
     except Exception as exc:
         return {"report": summary, "narrative": f"AI unavailable: {exc}"}
+
+
+# ── Groq usage endpoint ───────────────────────────────────────────────────────
+
+@router.get("/usage")
+def get_groq_usage(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Get current Groq API usage for the authenticated user.
+    Returns requests used, limit, and reset time.
+    """
+    # Excluded accounts have unlimited access
+    if getattr(current_user, "email", "").lower() in GROQ_RATE_LIMIT_EXCLUDED:
+        return {
+            "used": 0, "limit": 999999, "remaining": 999999,
+            "resets_in_mins": 0, "window_hours": GROQ_CHAT_WINDOW_H,
+            "pct_used": 0.0, "excluded": True,
+        }
+
+    from app.models.models import RateLimit
+    from datetime import timedelta
+
+    window_duration = timedelta(hours=GROQ_CHAT_WINDOW_H)
+    now             = datetime.now(timezone.utc)
+    window_start    = now - window_duration
+    token           = f"groq:{current_user.id}"
+
+    row = (
+        db.query(RateLimit)
+        .filter(
+            RateLimit.token == token,
+            RateLimit.window_start >= window_start,
+        )
+        .order_by(RateLimit.window_start.desc())
+        .first()
+    )
+
+    used = row.request_count if row else 0
+    resets_in_mins = GROQ_CHAT_WINDOW_H * 60
+    if row:
+        resets_at      = row.window_start + window_duration
+        resets_in_mins = max(0, int((resets_at - now).total_seconds() / 60))
+
+    return {
+        "used":           used,
+        "limit":          GROQ_CHAT_LIMIT,
+        "remaining":      max(0, GROQ_CHAT_LIMIT - used),
+        "resets_in_mins": resets_in_mins,
+        "window_hours":   GROQ_CHAT_WINDOW_H,
+        "pct_used":       round((used / GROQ_CHAT_LIMIT) * 100, 1),
+    }

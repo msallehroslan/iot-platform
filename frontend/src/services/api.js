@@ -208,4 +208,5 @@ export const intelligenceApi = {
   explainAlarm:    (alarmId)                      => apiFetch(`/intelligence/alarm-explain/${alarmId}`, { method: "POST" }),
   compareDevice:   (deviceId)                     => apiFetch(`/intelligence/compare/${deviceId}`),
   dailyReport:     ()                             => apiFetch(`/intelligence/report/daily`),
+  usage:           ()                             => apiFetch(`/intelligence/usage`),
 };

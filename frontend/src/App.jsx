@@ -405,7 +405,7 @@ function DevicesPage({ onOpenDrawer, onToast, user }) {
 
 function DeviceModal({ device, onSaved, onClose, onToast }) {
   const isEdit=!!device;
-  const [form,setForm]=useState({name:device?.name||"",device_type:device?.device_type||"DEFAULT",label:device?.label||"",description:device?.description||"",status:device?.status||"INACTIVE",customer_id:device?.customer_id||""});
+  const [form,setForm]=useState({name:device?.name||"",device_type:device?.device_type||"DEFAULT",label:device?.label||"",description:device?.description||"",status:device?.status||"INACTIVE",customer_id:device?.customer_id||"",latitude:device?.latitude||"",longitude:device?.longitude||""});
   const [saving,setSaving]=useState(false); const [err,setErr]=useState("");
   const [customers,setCustomers]=useState([]);
   useEffect(()=>{ customerApi.list().then(setCustomers).catch(()=>{}); },[]);
@@ -414,7 +414,7 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
     if(!form.name.trim()){setErr("Name required");return;}
     setSaving(true);setErr("");
     try{
-      const payload={name:form.name,device_type:form.device_type,label:form.label,description:form.description,customer_id:form.customer_id||null};
+      const payload={name:form.name,device_type:form.device_type,label:form.label,description:form.description,customer_id:form.customer_id||null,latitude:form.latitude!===""?parseFloat(form.latitude):null,longitude:form.longitude!===""?parseFloat(form.longitude):null};
       const s=isEdit?await deviceApi.update(device.id,{...payload,status:form.status}):await deviceApi.create(payload);
       onSaved(s);
     }catch(e){setErr(e.message);}finally{setSaving(false);}
@@ -429,6 +429,10 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Assign to Customer <span className="text-slate-300 font-normal">(optional)</span></label><select className={INP+" cursor-pointer"} value={form.customer_id||""} onChange={e=>set("customer_id",e.target.value)}><option value="">— No customer (tenant-wide) —</option>{customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Label</label><input className={INP} placeholder="Building A" value={form.label} onChange={e=>set("label",e.target.value)}/></div>
           <div><label className="block text-xs font-medium text-slate-500 mb-1.5">Description</label><textarea className={INP+" resize-none"} rows={2} value={form.description} onChange={e=>set("description",e.target.value)}/></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">📍 Latitude <span className="text-slate-300 font-normal">(fixed location)</span></label><input className={INP} placeholder="e.g. 1.4927" type="number" step="any" value={form.latitude} onChange={e=>set("latitude",e.target.value)}/></div>
+            <div><label className="block text-xs font-medium text-slate-500 mb-1.5">📍 Longitude</label><input className={INP} placeholder="e.g. 103.7414" type="number" step="any" value={form.longitude} onChange={e=>set("longitude",e.target.value)}/></div>
+          </div>
           {err&&<p className="text-xs text-red-500 bg-red-50 px-3 py-2 rounded-lg">{err}</p>}
           <div className="flex gap-2 pt-1"><button onClick={submit} disabled={saving} className="flex-1 flex items-center justify-center gap-2 bg-[#2F8CFF] hover:bg-[#0B4BB3] disabled:opacity-60 text-white font-medium text-sm py-2.5 rounded-lg">{saving&&<Spinner/>}{isEdit?"Update":"Create"}</button><button onClick={onClose} className="px-4 border border-slate-200 text-sm text-slate-500 rounded-lg hover:bg-slate-50">Cancel</button></div>
         </div>
@@ -2016,13 +2020,14 @@ function AIChatbot({ user }) {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) return JSON.parse(saved);
     } catch {}
-    return [{ role:"assistant", content:"Hi! I'm your IoT AI assistant. Ask me anything about your devices, alarms, trends — or tell me to control a device." }];
+    return [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
   });
   const [input,   setInput]   = useState("");
   const [loading, setLoading] = useState(false);
   const [tab,     setTab]     = useState("chat"); // "chat" | "report"
   const [report,  setReport]  = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [usage,   setUsage]   = useState(null);  // Groq rate limit usage
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
 
@@ -2032,10 +2037,15 @@ function AIChatbot({ user }) {
   }, [msgs]);
 
   useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
-  useEffect(()=>{ if (open && tab==="chat") setTimeout(()=>inputRef.current?.focus(), 100); }, [open, tab]);
+  useEffect(() => { if (open && tab==="chat") setTimeout(()=>inputRef.current?.focus(), 100); }, [open, tab]);
+
+  // Fetch usage when panel opens
+  useEffect(() => {
+    if (open) intelligenceApi.usage().then(setUsage).catch(()=>{});
+  }, [open]);
 
   const clearHistory = () => {
-    const fresh = [{ role:"assistant", content:"Chat history cleared. How can I help?" }];
+    const fresh = [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
     setMsgs(fresh);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   };
@@ -2068,8 +2078,17 @@ function AIChatbot({ user }) {
         rpc_executed:   res.rpc_executed   || null,
         alarm_actioned: res.alarm_actioned || null,
       }]);
+      // Update usage counter from response
+      if (res.rate) setUsage(res.rate);
     } catch(e) {
-      setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
+      // Handle 429 rate limit gracefully
+      if (e.message?.includes("rate_limit_exceeded") || e.message?.includes("429")) {
+        const detail = (() => { try { return JSON.parse(e.message); } catch { return null; } })();
+        setMsgs(m => [...m, { role:"assistant", content: detail?.message || `⏳ You've reached the AI request limit for this hour. Please wait before sending more messages.` }]);
+        intelligenceApi.usage().then(setUsage).catch(()=>{});
+      } else {
+        setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
+      }
     } finally {
       setLoading(false);
       setTimeout(()=>inputRef.current?.focus(), 50);
@@ -2078,12 +2097,98 @@ function AIChatbot({ user }) {
 
   const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
-  const SUGGESTIONS = [
-    "Which device is most critical?",
-    "Acknowledge all alarms",
-    "Turn on led1",
-    "Daily health report",
-  ];
+  // ── Dynamic suggestions based on live platform data ───────────────────────
+  const [suggestions, setSuggestions] = useState([]);
+  const [usedSuggestions, setUsedSuggestions] = useState(new Set());
+
+  const buildSuggestions = async () => {
+    try {
+      const chips = [];
+
+      // Fetch live data in parallel
+      const [alarmsRes, devicesRes] = await Promise.allSettled([
+        alarmApi.list({ status: "ACTIVE_UNACK", limit: 20 }),
+        deviceApi.list(),
+      ]);
+
+      const alarms  = alarmsRes.status  === "fulfilled" ? (alarmsRes.value  || []) : [];
+      const devices = devicesRes.status === "fulfilled" ? (Array.isArray(devicesRes.value) ? devicesRes.value : devicesRes.value?.items || []) : [];
+
+      // 🔴 Urgent — alarms
+      const critical = alarms.filter(a => a.severity === "CRITICAL");
+      const major    = alarms.filter(a => a.severity === "MAJOR");
+
+      if (critical.length > 0) {
+        chips.push({ label: `🔴 Ack ${critical.length} critical alarm${critical.length>1?"s":""}`, msg: `Acknowledge all critical alarms`, priority: 1 });
+        if (critical[0].device_name) {
+          chips.push({ label: `🔍 Why did ${critical[0].device_name} alarm?`, msg: `Why did ${critical[0].device_name} trigger a critical alarm?`, priority: 1 });
+        }
+      } else if (major.length > 0) {
+        chips.push({ label: `🟠 Ack ${major.length} major alarm${major.length>1?"s":""}`, msg: `Acknowledge all major alarms`, priority: 2 });
+      } else if (alarms.length > 0) {
+        chips.push({ label: `⚠️ Acknowledge ${alarms.length} alarm${alarms.length>1?"s":""}`, msg: `Acknowledge all alarms`, priority: 2 });
+      }
+
+      // 🔌 Offline devices
+      const offline = devices.filter(d => d.status === "INACTIVE");
+      if (offline.length === 1) {
+        chips.push({ label: `🔌 Why is ${offline[0].name} offline?`, msg: `Why is ${offline[0].name} offline?`, priority: 1 });
+      } else if (offline.length > 1) {
+        chips.push({ label: `🔌 ${offline.length} devices offline`, msg: `Which devices are offline and why?`, priority: 2 });
+      }
+
+      // 📊 Insights — always available
+      if (alarms.length === 0 && offline.length === 0) {
+        chips.push({ label: "✅ Fleet all clear — what's next?", msg: "All systems look healthy. What should I monitor?", priority: 3 });
+      }
+
+      // Fetch fleet health for maintenance alerts
+      try {
+        const health = await intelligenceApi.fleetHealth();
+        const maintenance = (health.devices || []).filter(d => d.health?.maintenance_due);
+        if (maintenance.length > 0) {
+          chips.push({ label: `🔧 ${maintenance[0].device_name} needs maintenance`, msg: `What maintenance does ${maintenance[0].device_name} need?`, priority: 1 });
+        }
+        const critical_health = (health.devices || []).filter(d => d.health?.health_label === "CRITICAL");
+        if (critical_health.length > 0 && !chips.find(c=>c.priority===1)) {
+          chips.push({ label: `🚨 ${critical_health[0].device_name} health critical`, msg: `What is wrong with ${critical_health[0].device_name}?`, priority: 1 });
+        }
+      } catch {}
+
+      // 📈 Always-useful actions
+      chips.push({ label: "📊 Daily health report", msg: "Daily health report", priority: 4 });
+      chips.push({ label: "🏭 Fleet overview", msg: "Give me a fleet overview — all devices, alarms and status", priority: 4 });
+
+      // Controllable device — show a control chip
+      const activeDevice = devices.find(d => d.status === "ACTIVE");
+      if (activeDevice) {
+        chips.push({ label: `⚡ Control ${activeDevice.name}`, msg: `What can I control on ${activeDevice.name}?`, priority: 3 });
+      }
+
+      // Sort by priority, limit to 5, filter already used
+      const sorted = chips
+        .filter(c => !usedSuggestions.has(c.label))
+        .sort((a,b) => a.priority - b.priority)
+        .slice(0, 5);
+
+      setSuggestions(sorted);
+    } catch {
+      // Fallback static chips if fetch fails
+      setSuggestions([
+        { label: "🏭 Fleet overview",      msg: "Give me a fleet overview" },
+        { label: "📊 Daily health report", msg: "Daily health report" },
+        { label: "⚠️ Check alarms",        msg: "Are there any active alarms?" },
+      ]);
+    }
+  };
+
+  // Build suggestions when chat opens or after each message
+  useEffect(() => { if (open && msgs.length <= 1) buildSuggestions(); }, [open]);
+
+  const handleSuggestion = (chip) => {
+    setUsedSuggestions(s => new Set([...s, chip.label]));
+    send(chip.msg);
+  };
 
   return (
     <>
@@ -2129,6 +2234,17 @@ function AIChatbot({ user }) {
               <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.3</p>
             </div>
             <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+              {/* Usage pill — hidden for unlimited users */}
+              {usage && !usage.excluded && (
+                <div title={`${usage.used}/${usage.limit} requests used this hour. Resets in ${usage.resets_in_mins} min.`} style={{
+                  fontSize:9, padding:"2px 7px", borderRadius:20, fontWeight:600,
+                  background: usage.pct_used >= 90 ? "rgba(239,68,68,0.3)" : usage.pct_used >= 70 ? "rgba(245,158,11,0.3)" : "rgba(16,185,129,0.2)",
+                  color:      usage.pct_used >= 90 ? "#fca5a5" : usage.pct_used >= 70 ? "#fcd34d" : "#6ee7b7",
+                  cursor:"help",
+                }}>
+                  {usage.used}/{usage.limit}
+                </div>
+              )}
               <div style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
               <button onClick={clearHistory} title="Clear history" style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.5}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -2263,14 +2379,28 @@ function AIChatbot({ user }) {
             <div ref={bottomRef}/>
           </div>
 
-          {/* Suggestions (shown when only 1 message) */}
+          {/* Dynamic Suggestions (shown when only 1 message) */}
           {msgs.length===1 && (
             <div style={{padding:"0 14px 10px",display:"flex",gap:6,flexWrap:"wrap"}}>
-              {SUGGESTIONS.map(s=>(
-                <button key={s} onClick={()=>send(s)} style={{fontSize:10,padding:"4px 10px",borderRadius:20,border:"1px solid #D8E3F3",background:"#F4F8FF",color:"#334866",cursor:"pointer",whiteSpace:"nowrap"}}>
-                  {s}
-                </button>
-              ))}
+              {suggestions.length === 0 ? (
+                // Loading skeleton
+                [1,2,3].map(i=>(
+                  <div key={i} style={{height:26,width:i===1?140:i===2?120:100,borderRadius:20,background:"#f1f5f9",animation:"pulse 1.5s infinite"}}/>
+                ))
+              ) : (
+                suggestions.map(chip=>(
+                  <button key={chip.label} onClick={()=>handleSuggestion(chip)} style={{
+                    fontSize:10, padding:"5px 11px", borderRadius:20,
+                    border:"1px solid #D8E3F3", background:"#F4F8FF",
+                    color:"#334866", cursor:"pointer", whiteSpace:"nowrap",
+                    transition:"all 0.15s", lineHeight:1.4,
+                  }}
+                  onMouseEnter={e=>{e.target.style.background="#EAF2FF";e.target.style.borderColor="#2F8CFF";}}
+                  onMouseLeave={e=>{e.target.style.background="#F4F8FF";e.target.style.borderColor="#D8E3F3";}}>
+                    {chip.label}
+                  </button>
+                ))
+              )}
             </div>
           )}
 
