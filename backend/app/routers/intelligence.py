@@ -237,7 +237,7 @@ Format your response with clear sections using the numbered headers above."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.1-70b-versatile",
+                    "model": "llama-3.3-70b-versatile",
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 1024,
                     "temperature": 0.3,
@@ -252,7 +252,7 @@ Format your response with clear sections using the numbered headers above."""
             "device_name":  device.name,
             "analysis":     analysis,
             "context":      context,
-            "engine":       "groq/llama-3.1-70b",
+            "engine":       "groq/llama-3.3-70b",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -486,7 +486,7 @@ Today is {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}.
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.1-70b-versatile",
+                    "model": "llama-3.3-70b-versatile",
                     "max_tokens": 512,
                     "messages": messages,
                     "temperature": 0.4,
@@ -495,7 +495,7 @@ Today is {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}.
             resp.raise_for_status()
             data = resp.json()
             reply = data["choices"][0]["message"]["content"]
-        return {"reply": reply, "engine": "groq-llama-3.1-70b"}
+        return {"reply": reply, "engine": "groq-llama-3.3-70b"}
 
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
@@ -578,7 +578,7 @@ Format responses clearly — use bullet points for lists, be direct."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.1-70b-versatile",
+                    "model": "llama-3.3-70b-versatile",
                     "messages": groq_messages,
                     "max_tokens": 512,
                     "temperature": 0.4,
@@ -588,7 +588,7 @@ Format responses clearly — use bullet points for lists, be direct."""
             data = resp.json()
             reply = data["choices"][0]["message"]["content"]
 
-        return {"reply": reply, "engine": "groq/llama-3.1-70b"}
+        return {"reply": reply, "engine": "groq/llama-3.3-70b"}
 
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
