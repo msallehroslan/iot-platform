@@ -1354,31 +1354,85 @@ export function MapWidget({ config, liveTelem, deviceId }) {
     </div>
   );
 
-  const mapUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${lng-0.01},${lat-0.01},${lng+0.01},${lat+0.01}&layer=mapnik&marker=${lat},${lng}`;
+  // Convert lat/lng to tile pixel position for overlay dot
+  const tileZ = zoom;
+  const tileX = Math.floor((lng + 180) / 360 * Math.pow(2, tileZ));
+  const tileY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, tileZ));
+
+  // Use static tile image + SVG overlay instead of iframe
+  // 3x3 tile grid centered on device for better context
+  const tileSize = 256;
+  const tiles = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      tiles.push({ tx: tileX + dx, ty: tileY + dy, dx, dy });
+    }
+  }
+
+  // Device pixel position within the 3x3 grid (center tile is at 256,256)
+  const lngToX = (l) => ((l + 180) / 360 * Math.pow(2, tileZ) - tileX + 1) * tileSize;
+  const latToY = (l) => ((1 - Math.log(Math.tan(l * Math.PI / 180) + 1 / Math.cos(l * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, tileZ) - tileY + 1) * tileSize;
+  const dotX = lngToX(lng);
+  const dotY = latToY(lat);
+  const mapW = tileSize * 3;
+  const mapH = tileSize * 3;
+
+  const dotColor = isOnline === true ? "#10b981" : isOnline === false ? "#ef4444" : "#f59e0b";
+  const ringColor = isOnline === true ? "rgba(16,185,129,0.3)" : isOnline === false ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)";
 
   return (
     <div style={{height:"100%",display:"flex",flexDirection:"column",borderRadius:8,overflow:"hidden",position:"relative"}}>
       {/* Status bar */}
       <div style={{padding:"5px 10px",background:"#0B1426",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-        <div style={{width:6,height:6,borderRadius:"50%",background:statusColor,flexShrink:0}}/>
+        <div style={{width:7,height:7,borderRadius:"50%",background:dotColor,flexShrink:0,
+          boxShadow: isOnline ? `0 0 6px ${dotColor}` : "none"}}/>
         <span style={{fontSize:11,fontWeight:600,color:"white",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
           {deviceCoords.name || "Device"}
         </span>
-        <span style={{fontSize:9,color:statusColor,fontWeight:700}}>{statusLabel}</span>
-        {isLive && (
-          <span style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:"rgba(16,185,129,0.3)",color:"#6ee7b7",fontWeight:700}}>LIVE GPS</span>
-        )}
+        <span style={{fontSize:9,fontWeight:700,color:dotColor}}>{statusLabel}</span>
+        {isLive && <span style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:"rgba(16,185,129,0.2)",color:"#6ee7b7",fontWeight:700}}>LIVE</span>}
       </div>
-      {/* Map */}
-      <div style={{flex:1,position:"relative",overflow:"hidden"}}>
-        <iframe
-          src={mapUrl}
-          style={{width:"100%",height:"100%",border:"none"}}
-          title="Device Location"
-          loading="lazy"
-        />
+
+      {/* Map tiles + custom dot overlay */}
+      <div style={{flex:1,position:"relative",overflow:"hidden",background:"#e8f4f0"}}>
+        <div style={{position:"absolute",top:"50%",left:"50%",
+          width:mapW,height:mapH,
+          transform:`translate(${-(dotX)}px, ${-(dotY)}px)`}}>
+          {/* OSM tiles */}
+          {tiles.map(({tx,ty,dx,dy})=>(
+            <img key={`${tx},${ty}`}
+              src={`https://tile.openstreetmap.org/${tileZ}/${tx}/${ty}.png`}
+              style={{position:"absolute",left:(dx+1)*tileSize,top:(dy+1)*tileSize,width:tileSize,height:tileSize,display:"block"}}
+              alt=""
+            />
+          ))}
+          {/* Pulsing ring */}
+          <div style={{
+            position:"absolute",
+            left:dotX, top:dotY,
+            width:22, height:22,
+            borderRadius:"50%",
+            background:ringColor,
+            transform:"translate(-50%,-50%)",
+            animation:"mapPulse 2s ease-out infinite",
+          }}/>
+          {/* Dot */}
+          <div style={{
+            position:"absolute",
+            left:dotX, top:dotY,
+            width:12, height:12,
+            borderRadius:"50%",
+            background:dotColor,
+            border:"2px solid white",
+            transform:"translate(-50%,-50%)",
+            boxShadow:`0 2px 6px rgba(0,0,0,0.3), 0 0 8px ${dotColor}`,
+            zIndex:10,
+          }}/>
+        </div>
+        <style>{`@keyframes mapPulse{0%{transform:translate(-50%,-50%) scale(1);opacity:0.8}100%{transform:translate(-50%,-50%) scale(3);opacity:0}}`}</style>
       </div>
-      {/* Coordinates footer */}
+
+      {/* Footer */}
       <div style={{padding:"4px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
         <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
         <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=${zoom}/${lat}/${lng}`}
