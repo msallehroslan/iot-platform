@@ -123,13 +123,13 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       <div className="border-t border-[#D8E3F3] p-3 space-y-2">
         {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
         {!col && (
-          <div className="mx-1 px-3 py-2.5 rounded-xl border border-[#D8E3F3] bg-white flex flex-col items-center gap-2">
+          <div className="mx-1 px-2 py-2 flex flex-col items-center gap-2">
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
             <div className="flex items-center justify-center gap-2.5 w-full">
-              <div className="flex items-center gap-1.5 border-r border-[#D8E3F3] pr-2.5">
+              <div className="flex items-center gap-1.5 border-r border-[#C5D5E8] pr-2.5">
                 <img src="/taat-logo-2.png" alt="TAAT" className="h-6 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
-                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis <span className="font-bold">AI</span></span>
+                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis AI</span>
                   <span className="text-[7px] text-[#6B7F9F]">Technologies</span>
                 </div>
               </div>
