@@ -2032,7 +2032,12 @@ function AIChatbot({ user }) {
     try {
       const history = [...msgs, userMsg].slice(-10);
       const res = await intelligenceApi.chat(history);
-      setMsgs(m => [...m, { role:"assistant", content: res.reply }]);
+      // Attach RPC badge metadata if a command was executed
+      setMsgs(m => [...m, {
+        role: "assistant",
+        content: res.reply,
+        rpc_executed: res.rpc_executed || null,
+      }]);
     } catch(e) {
       setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
     } finally {
@@ -2119,6 +2124,14 @@ function AIChatbot({ user }) {
                   whiteSpace:"pre-wrap",
                 }}>
                   {m.content}
+                  {m.rpc_executed && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
+                        RPC sent → {m.rpc_executed.device_name}: {JSON.stringify(m.rpc_executed.params)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
