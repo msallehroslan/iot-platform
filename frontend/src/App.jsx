@@ -414,7 +414,7 @@ function DeviceModal({ device, onSaved, onClose, onToast }) {
     if(!form.name.trim()){setErr("Name required");return;}
     setSaving(true);setErr("");
     try{
-      const payload={name:form.name,device_type:form.device_type,label:form.label,description:form.description,customer_id:form.customer_id||null,latitude:form.latitude!===""?parseFloat(form.latitude):null,longitude:form.longitude!===""?parseFloat(form.longitude):null};
+      const lat=form.latitude&&form.latitude!==""?parseFloat(form.latitude):null;const lng=form.longitude&&form.longitude!==""?parseFloat(form.longitude):null;const payload={name:form.name,device_type:form.device_type,label:form.label,description:form.description,customer_id:form.customer_id||null,latitude:lat,longitude:lng};
       const s=isEdit?await deviceApi.update(device.id,{...payload,status:form.status}):await deviceApi.create(payload);
       onSaved(s);
     }catch(e){setErr(e.message);}finally{setSaving(false);}
