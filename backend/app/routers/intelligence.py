@@ -885,6 +885,15 @@ async def _try_parse_rule_intent(
     if any(ex in msg_lower for ex in RULE_EXCLUSION):
         return None
 
+    # Fast path for DELETE — no Groq, parse key from message directly
+    if any(w in msg_lower for w in ["delete", "remove", "clear"]):
+        if any(w in msg_lower for w in ["all rules", "rules chain", "rule chain"]):
+            return {"action": "delete", "delete_all": True}
+        for k in ["temperature","humidity","distance","pressure","glucose","motion"]:
+            if k in msg_lower:
+                dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+                return {"action": "delete", "key": k, "device_name": dn}
+
     device_names = [{"name": d["name"], "id": d["id"]} for d in devices]
     rules_summary = [
         {
