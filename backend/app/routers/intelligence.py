@@ -237,7 +237,7 @@ Format your response with clear sections using the numbered headers above."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.1-8b-instant",
+                    "model": GROQ_MODEL_DEEP,
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 1024,
                     "temperature": 0.3,
@@ -252,7 +252,7 @@ Format your response with clear sections using the numbered headers above."""
             "device_name":  device.name,
             "analysis":     analysis,
             "context":      context,
-            "engine":       "groq/llama-3.3-70b",
+            "engine":       f"groq/{GROQ_MODEL_DEEP}",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -404,18 +404,25 @@ class ChatRequest(BaseModel):
     pending_confirm: Optional[dict] = None  # pending RPC awaiting confirmation
 
 
-async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4) -> str:
-    """Helper: call Groq and return text reply."""
-    async with httpx.AsyncClient(timeout=20) as client:
+async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
+    """Helper: call Groq and return text reply. Defaults to FAST model."""
+    use_model = model or GROQ_MODEL_FAST
+    async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.1-8b-instant", "max_tokens": max_tokens,
+            json={"model": use_model, "max_tokens": max_tokens,
                   "messages": messages, "temperature": temperature},
         )
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"]
 
+
+# ── Groq model strategy ──────────────────────────────────────────────────────
+# 8b: high quota (14,400/day) — chat, RPC parsing, summaries, comparisons
+# 70b: low quota (1,000/day)  — RCA, alarm explanation, daily report
+GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
+GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.1-8b-instant")
 
 # ── Groq rate limiter ─────────────────────────────────────────────────────────
 # 20 chat requests per user per hour — prevents one user burning the shared quota.
@@ -522,13 +529,39 @@ async def _try_parse_rpc_intent(
     Uses REAL telemetry keys from the DB — no hardcoding.
     Only triggers for clear control intent keywords.
     """
+    # Strict control keywords — must be very specific device action phrases
+    # Deliberately excludes: "set threshold", "enable alarm", "disable rule", etc.
     control_keywords = [
-        "turn on", "turn off", "switch on", "switch off",
-        "set ", "enable", "disable", "activate", "deactivate",
-        "toggle", "open", "close", "start", "stop", "run", "pause",
+        "turn on", "turn off",
+        "switch on", "switch off",
+        "toggle ",
+        "start the ", "stop the ",
+        "activate the ", "deactivate the ",
+        "run the ", "pause the ",
     ]
+    # Additional patterns that must include a device key word context
+    loose_keywords = ["set ", "enable ", "disable ", "open the ", "close the "]
+
+    # Exclusion patterns — if any of these appear, skip RPC intent entirely
+    exclusion_keywords = [
+        "threshold", "alarm", "rule", "alert", "standard deviation",
+        "baseline", "warning", "critical", "configuration", "setting",
+        "i've set", "i have set", "i set", "you set", "was set",
+        "updated", "configured", "report", "analysis", "trend",
+        "acknowledge", "clear", "resolve",
+    ]
+
     msg_lower = user_message.lower()
-    if not any(kw in msg_lower for kw in control_keywords):
+
+    # Immediately bail if exclusion keywords found
+    if any(ex in msg_lower for ex in exclusion_keywords):
+        return None
+
+    # Check for strict or loose control keywords
+    has_strict = any(kw in msg_lower for kw in control_keywords)
+    has_loose  = any(kw in msg_lower for kw in loose_keywords)
+
+    if not has_strict and not has_loose:
         return None
 
     device_names = [d["name"] for d in devices]
@@ -544,25 +577,32 @@ async def _try_parse_rpc_intent(
     else:
         keys_context = "\nNo telemetry keys known yet — infer from user message."
 
-    parse_prompt = f"""You are an IoT RPC command parser. Extract the device control intent from the user message.
+    parse_prompt = f"""You are an IoT RPC command parser. Your ONLY job is to detect if the user wants to physically control a device actuator RIGHT NOW.
 
 Available devices: {json.dumps(device_names)}
 {keys_context}
 User message: "{user_message}"
 
-Respond ONLY with valid JSON in this exact format (no explanation, no markdown):
-{{"device_name": "<exact device name from list>", "params": {{"<key>": <true/false or number>}}}}
+STRICT RULES — respond with null unless ALL conditions are met:
+1. The user is giving a DIRECT command to control a physical device output (LED, relay, motor, pump, fan, valve, buzzer)
+2. The key being set MUST exist in the device's actual key list above
+3. Do NOT respond to: threshold changes, alarm settings, rule configurations, reports, questions, or analysis requests
+4. Do NOT invent keys that don't exist in the device's key list
+5. If the message is about viewing/checking/reporting — respond null
 
-Rules:
-- Use the EXACT key names from the device's actual key list above.
-- "turn on motor1" on a device with key "motor1" → {{"params": {{"motor1": true}}}}
-- "turn off pump_main" → {{"params": {{"pump_main": false}}}}
-- "start the fan" on device with key "fan" → {{"params": {{"fan": true}}}}
-- "set motor_speed to 75" → {{"params": {{"motor_speed": 75}}}}
-- For boolean keys: on/start/enable/open/activate = true, off/stop/disable/close/deactivate = false
-- If no device is mentioned and only one device exists, use that device.
-- If the key name is ambiguous, pick the closest match from the device's actual key list.
-- If intent is unclear or not a control command, respond with: null"""
+Valid examples:
+- "turn on led1" → {{"device_name": "ESP32-001", "params": {{"led1": true}}}}
+- "stop the pump" → {{"device_name": "ESP32-Pump", "params": {{"pump_main": false}}}}
+- "set motor speed to 80" → {{"device_name": "ESP32-Motor", "params": {{"motor_speed": 80}}}}
+
+Invalid — respond null:
+- "set the threshold to 410" → null (threshold change, not RPC)
+- "enable the alarm" → null (alarm config, not device control)
+- "I've set the distance rule" → null (reporting, not commanding)
+- "what is the temperature" → null (question, not command)
+
+Respond ONLY with valid JSON or the word null:
+{{"device_name": "<exact name>", "params": {{"<exact key>": <value>}}}}"""
 
     try:
         result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=150, temperature=0.1)
@@ -639,6 +679,220 @@ async def _execute_rpc_from_chat(
         return None
 
 
+# ── Rule chain intent detection + execution ───────────────────────────────────
+
+RULE_KEYWORDS = [
+    "set alarm", "create alarm", "add alarm", "create rule", "add rule",
+    "set rule", "update rule", "change rule", "delete rule", "remove rule",
+    "set threshold", "change threshold", "update threshold",
+    "when temperature", "when humidity", "when distance", "when pressure",
+    "alert me", "notify me", "alarm when", "trigger when",
+    "above ", "below ", "greater than", "less than", "exceeds", "drops below",
+]
+
+RULE_EXCLUSION = [
+    "what is", "what are", "show me", "list", "which rules", "current rules",
+    "existing rules", "how many rules", "do i have",
+]
+
+
+async def _try_parse_rule_intent(
+    api_key: str,
+    user_message: str,
+    devices: list,
+    existing_rules: list,
+) -> Optional[dict]:
+    """
+    Use LLM to detect if user wants to create/update/delete a threshold rule.
+    Returns action dict or None.
+    """
+    msg_lower = user_message.lower()
+
+    # Must have at least one rule keyword
+    if not any(kw in msg_lower for kw in RULE_KEYWORDS):
+        return None
+
+    # Skip if it's just a question about rules
+    if any(ex in msg_lower for ex in RULE_EXCLUSION):
+        return None
+
+    device_names = [{"name": d["name"], "id": d["id"]} for d in devices]
+    rules_summary = [
+        {
+            "id": str(r.id),
+            "device": next((d["name"] for d in devices if str(d["id"]) == str(r.device_id)), "tenant-wide"),
+            "key": r.key,
+            "condition": r.condition,
+            "threshold": r.threshold,
+            "severity": r.severity.value if hasattr(r.severity, "value") else str(r.severity),
+            "alarm_type": r.alarm_type,
+        }
+        for r in existing_rules
+    ]
+
+    parse_prompt = f"""You are an IoT alarm rule parser. Extract the rule action from the user message.
+
+Available devices: {json.dumps(device_names)}
+Existing rules: {json.dumps(rules_summary)}
+
+User message: "{user_message}"
+
+Valid conditions: gt (greater than), lt (less than), gte (>=), lte (<=), eq (equals)
+Valid severities: CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE
+
+Respond ONLY with valid JSON or null. No explanation, no markdown.
+
+For CREATE:
+{{"action": "create", "device_name": "<name or null for tenant-wide>", "key": "<telemetry key>", "condition": "<gt|lt|gte|lte|eq>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<descriptive name>"}}
+
+For UPDATE (when user says "change", "update", "modify" an existing rule):
+{{"action": "update", "rule_id": "<id from existing rules>", "key": "<key>", "condition": "<condition>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<alarm_type>"}}
+
+For DELETE (when user says "delete", "remove", "disable" a rule):
+{{"action": "delete", "rule_id": "<id from existing rules>"}}
+
+Examples:
+- "set distance alarm on Temperature above 410 warning" → {{"action":"create","device_name":"Temperature","key":"distance","condition":"gt","threshold":410,"severity":"WARNING","alarm_type":"High Distance"}}
+- "create critical alarm when temperature exceeds 80" → {{"action":"create","device_name":null,"key":"temperature","condition":"gt","threshold":80,"severity":"CRITICAL","alarm_type":"High Temperature"}}
+- "change the humidity rule to 75" → {{"action":"update","rule_id":"<matching id>","threshold":75,...}}
+- "delete the distance rule" → {{"action":"delete","rule_id":"<matching id>"}}
+- If unclear or just a question → null"""
+
+    try:
+        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=200, temperature=0.1)
+        result = result.strip()
+        if result.lower() == "null" or not result.startswith("{"):
+            return None
+        parsed = json.loads(result)
+        if "action" in parsed:
+            return parsed
+    except Exception as exc:
+        logger.debug("rule intent parse failed: %s", exc)
+    return None
+
+
+async def _execute_rule_from_chat(
+    db: Session,
+    current_user,
+    devices: list,
+    intent: dict,
+) -> Optional[dict]:
+    """
+    Execute a rule create/update/delete based on parsed intent.
+    Returns result dict or None on failure.
+    """
+    from app.models.models import ThresholdRule, AlarmSeverity as AS
+    from app.services.audit import audit
+
+    action = intent.get("action")
+
+    try:
+        if action == "create":
+            # Find device_id from name
+            device_id = None
+            if intent.get("device_name"):
+                matched = next(
+                    (d for d in devices if d["name"].lower() == intent["device_name"].lower()),
+                    None
+                )
+                if not matched:
+                    matched = next(
+                        (d for d in devices if intent["device_name"].lower() in d["name"].lower()),
+                        None
+                    )
+                if matched:
+                    device_id = matched["id"]
+
+            severity_str = intent.get("severity", "WARNING").upper()
+            try:
+                severity = AS[severity_str]
+            except KeyError:
+                severity = AS.WARNING
+
+            rule = ThresholdRule(
+                tenant_id  = current_user.tenant_id,
+                device_id  = device_id,
+                key        = intent.get("key", "value"),
+                condition  = intent.get("condition", "gt"),
+                threshold  = float(intent.get("threshold", 0)),
+                severity   = severity,
+                alarm_type = intent.get("alarm_type", f"{intent.get('key','value')} alarm"),
+                is_active  = True,
+            )
+            db.add(rule)
+            db.commit()
+            db.refresh(rule)
+            audit(db, tenant_id=current_user.tenant_id, user=current_user,
+                  action="rule.create", resource="threshold_rule", resource_id=str(rule.id),
+                  detail={"key": rule.key, "threshold": rule.threshold, "source": "chat"}, commit=True)
+
+            device_name = intent.get("device_name") or "all devices"
+            return {
+                "action":      "created",
+                "rule_id":     str(rule.id),
+                "device":      device_name,
+                "key":         rule.key,
+                "condition":   rule.condition,
+                "threshold":   rule.threshold,
+                "severity":    severity_str,
+                "alarm_type":  rule.alarm_type,
+            }
+
+        elif action == "update":
+            rule_id = intent.get("rule_id")
+            rule = db.query(ThresholdRule).filter(
+                ThresholdRule.id == rule_id,
+                ThresholdRule.tenant_id == current_user.tenant_id,
+            ).first()
+            if not rule:
+                return None
+
+            if "threshold" in intent:  rule.threshold  = float(intent["threshold"])
+            if "condition" in intent:  rule.condition  = intent["condition"]
+            if "severity"  in intent:
+                try:    rule.severity = AS[intent["severity"].upper()]
+                except: pass
+            if "alarm_type" in intent: rule.alarm_type = intent["alarm_type"]
+            if "key" in intent:        rule.key        = intent["key"]
+
+            db.commit()
+            audit(db, tenant_id=current_user.tenant_id, user=current_user,
+                  action="rule.update", resource="threshold_rule", resource_id=str(rule.id),
+                  detail={"source": "chat"}, commit=True)
+
+            return {
+                "action":    "updated",
+                "rule_id":   str(rule.id),
+                "key":       rule.key,
+                "threshold": rule.threshold,
+                "severity":  rule.severity.value if hasattr(rule.severity, "value") else str(rule.severity),
+            }
+
+        elif action == "delete":
+            rule_id = intent.get("rule_id")
+            rule = db.query(ThresholdRule).filter(
+                ThresholdRule.id == rule_id,
+                ThresholdRule.tenant_id == current_user.tenant_id,
+            ).first()
+            if not rule:
+                return None
+
+            key = rule.key
+            audit(db, tenant_id=current_user.tenant_id, user=current_user,
+                  action="rule.delete", resource="threshold_rule", resource_id=str(rule.id),
+                  detail={"source": "chat"})
+            db.delete(rule)
+            db.commit()
+
+            return {"action": "deleted", "rule_id": str(rule_id), "key": key}
+
+    except Exception as exc:
+        logger.error("rule execution failed: %s", exc)
+        db.rollback()
+
+    return None
+
+
 @router.post("/chat")
 async def ai_chat(
     body: ChatRequest,
@@ -709,10 +963,25 @@ async def ai_chat(
 
     rpc_executed    = None
     alarm_actioned  = None
+    rule_actioned   = None
     pending_confirm = body.pending_confirm if hasattr(body, "pending_confirm") else None
 
     if current_user.role != "CUSTOMER_USER" and last_user_msg and api_key:
         msg_lower = last_user_msg.lower()
+
+        # ── Rule chain intent detection ────────────────────────────────────
+        try:
+            existing_rules = db.query(Alarm.__class__).filter(False).all()  # placeholder
+            from app.models.models import ThresholdRule as TR
+            existing_rules = db.query(TR).filter(
+                TR.tenant_id == current_user.tenant_id,
+                TR.is_active == True,
+            ).all()
+            rule_intent = await _try_parse_rule_intent(api_key, last_user_msg, device_list, existing_rules)
+            if rule_intent:
+                rule_actioned = await _execute_rule_from_chat(db, current_user, device_list, rule_intent)
+        except Exception as exc:
+            logger.debug("rule intent check failed (non-fatal): %s", exc)
 
         # ── Alarm action detection ─────────────────────────────────────────
         alarm_keywords = ["acknowledge", "ack", "clear", "dismiss", "resolve"]
@@ -826,7 +1095,7 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
         reply = await _call_groq(api_key, chat_messages, max_tokens=512, temperature=0.4)
         return {
             "reply":          reply,
-            "engine":         "groq-llama-3.3-70b",
+            "engine":         f"groq/{GROQ_MODEL_FAST}",
             "rpc_executed":   rpc_executed,
             "alarm_actioned": alarm_actioned,
             "rate":           rate_info,       # frontend can show usage counter
@@ -918,7 +1187,7 @@ Format responses clearly — use bullet points for lists, be direct."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.1-8b-instant",
+                    "model": GROQ_MODEL_FAST,
                     "messages": groq_messages,
                     "max_tokens": 512,
                     "temperature": 0.4,
@@ -928,7 +1197,7 @@ Format responses clearly — use bullet points for lists, be direct."""
             data = resp.json()
             reply = data["choices"][0]["message"]["content"]
 
-        return {"reply": reply, "engine": "groq/llama-3.3-70b"}
+        return {"reply": reply, "engine": f"groq/{GROQ_MODEL_FAST}"}
 
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
@@ -1290,8 +1559,8 @@ Provide:
 Be concise and technical. Base everything on the actual data."""
 
     try:
-        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.2)
-        return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": "groq"}
+        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.2, model=GROQ_MODEL_DEEP)
+        return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": f"groq/{GROQ_MODEL_DEEP}"}
     except Exception as exc:
         return {"alarm_id": str(alarm_id), "explanation": f"AI unavailable: {exc}", "context": context}
 
@@ -1372,8 +1641,8 @@ Provide:
 Be concise and data-driven."""
 
     try:
-        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=500, temperature=0.2)
-        return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": "groq"}
+        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=500, temperature=0.2, model=GROQ_MODEL_FAST)
+        return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": f"groq/{GROQ_MODEL_FAST}"}
     except Exception as exc:
         return {"device_id": str(device_id), "comparison": context, "insight": f"AI unavailable: {exc}"}
 
@@ -1454,8 +1723,8 @@ Write a professional 3-paragraph executive summary covering:
 Be direct and actionable. Use exact device names and numbers."""
 
     try:
-        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3)
-        return {"report": summary, "narrative": narrative, "engine": "groq"}
+        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3, model=GROQ_MODEL_DEEP)
+        return {"report": summary, "narrative": narrative, "engine": f"groq/{GROQ_MODEL_DEEP}"}
     except Exception as exc:
         return {"report": summary, "narrative": f"AI unavailable: {exc}"}
 

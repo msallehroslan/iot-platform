@@ -2082,6 +2082,7 @@ function AIChatbot({ user }) {
         content:        res.reply,
         rpc_executed:   res.rpc_executed   || null,
         alarm_actioned: res.alarm_actioned || null,
+        rule_actioned:  res.rule_actioned  || null,
       }]);
       // Update usage counter from response
       if (res.rate) setUsage(res.rate);
@@ -2363,6 +2364,14 @@ function AIChatbot({ user }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
                       <span style={{fontSize:10,color:"#d97706",fontWeight:600}}>
                         {m.alarm_actioned.count} alarm(s) {m.alarm_actioned.action.replace("_all","")}d{m.alarm_actioned.severity ? ` (${m.alarm_actioned.severity})` : ""}
+                      </span>
+                    </div>
+                  )}
+                  {m.rule_actioned && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(99,102,241,0.12)",border:"1px solid rgba(99,102,241,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#4f46e5",fontWeight:600}}>
+                        Rule {m.rule_actioned.action} — {m.rule_actioned.key} {m.rule_actioned.condition || ""} {m.rule_actioned.threshold ?? ""} ({m.rule_actioned.severity || ""})
                       </span>
                     </div>
                   )}
