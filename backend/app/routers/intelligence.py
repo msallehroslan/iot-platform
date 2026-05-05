@@ -699,7 +699,8 @@ USER_KEYWORDS = [
     "invite user", "add user", "create user", "new user",
     "delete user", "remove user", "deactivate user",
     "change role", "update role", "make admin", "make tenant user",
-    "list users", "show users", "who has access",
+    "list users", "list all users", "show users", "show all users",
+    "who has access", "all users", "view users", "get users",
 ]
 
 
@@ -715,6 +716,9 @@ async def _try_parse_user_intent(
     msg_lower = user_message.lower()
     if not any(kw in msg_lower for kw in USER_KEYWORDS):
         return None
+    # Fast path for list — no Groq needed
+    if any(kw in msg_lower for kw in ["list", "show", "view", "all users", "who has"]):
+        return {"action": "list"}
 
     users_summary = [
         {"email": u.email, "id": str(u.id), "role": u.role,
@@ -1194,161 +1198,6 @@ async def ai_chat(
         except Exception as exc:
             logger.error("user intent check failed: %s", exc)
 
-        # ── Scheduled RPC intent detection ───────────────────────────────
-        SCHEDULE_KEYWORDS = [
-            "schedule", "at midnight", "at noon", "every ", "pm", "am",
-            "tonight", "tomorrow", "show scheduled", "list scheduled",
-            "cancel scheduled", "cancel all scheduled", "remove scheduled",
-            "what is scheduled", "pending schedule",
-        ]
-        if not rpc_executed and any(kw in msg_lower for kw in SCHEDULE_KEYWORDS):
-            try:
-                from datetime import datetime, timezone, timedelta
-
-                # Handle cancel/list first — no Groq needed
-                from app.models.models import RpcCommand as _RpcCmd
-
-                if any(kw in msg_lower for kw in ["show scheduled", "list scheduled", "what is scheduled", "pending schedule"]):
-                    pending = db.query(_RpcCmd).filter(
-                        _RpcCmd.status == "SCHEDULED",
-                        _RpcCmd.device_id.in_([d.id for d in devices]),
-                    ).all()
-                    sched_list = []
-                    for c in pending:
-                        sf = c.result.get("scheduled_for") if isinstance(c.result, dict) else None
-                        rh = c.result.get("repeat_hours") if isinstance(c.result, dict) else None
-                        dev_name = next((d.name for d in devices if str(d.id) == str(c.device_id)), str(c.device_id))
-                        sched_list.append({
-                            "cmd_id": str(c.id),
-                            "device": dev_name,
-                            "params": c.params,
-                            "scheduled_for": sf,
-                            "repeat_hours": rh,
-                        })
-                    rpc_executed = {
-                        "is_schedule_list": True,
-                        "schedules": sched_list,
-                        "count": len(sched_list),
-                    }
-                    continue_to_schedule_parse = False
-                elif any(kw in msg_lower for kw in ["cancel all scheduled", "remove all scheduled"]):
-                    deleted = db.query(_RpcCmd).filter(
-                        _RpcCmd.status == "SCHEDULED",
-                        _RpcCmd.device_id.in_([d.id for d in devices]),
-                    ).all()
-                    count = len(deleted)
-                    for c in deleted:
-                        db.delete(c)
-                    db.commit()
-                    rpc_executed = {"is_schedule_cancel": True, "cancelled": count}
-                    continue_to_schedule_parse = False
-                elif any(kw in msg_lower for kw in ["cancel scheduled", "remove scheduled"]):
-                    # Cancel by device/key match
-                    pending = db.query(_RpcCmd).filter(
-                        _RpcCmd.status == "SCHEDULED",
-                        _RpcCmd.device_id.in_([d.id for d in devices]),
-                    ).all()
-                    cancelled = 0
-                    for c in pending:
-                        # Check if any key in params matches message
-                        for key in (c.params or {}).keys():
-                            if key.lower() in msg_lower:
-                                db.delete(c)
-                                cancelled += 1
-                                break
-                    db.commit()
-                    rpc_executed = {"is_schedule_cancel": True, "cancelled": cancelled}
-                    continue_to_schedule_parse = False
-                else:
-                    continue_to_schedule_parse = True
-
-                if continue_to_schedule_parse:
-
-                  now_utc = datetime.now(timezone.utc)
-                schedule_prompt = f"""Parse a scheduled RPC command from this message.
-
-Available devices: {json.dumps(device_list)}
-Device keys: {json.dumps(_get_device_keys(db, device_list))}
-Current time (UTC): {now_utc.strftime("%Y-%m-%d %H:%M")}
-User message: "{last_user_msg}"
-
-Respond ONLY with JSON or null. Use EXACT ISO format for run_at: YYYY-MM-DDTHH:MM:SS+00:00
-{{"device_name":"<name>","params":{{"<key>":<value>}},"run_at":"<ISO datetime UTC>","repeat_hours":<number or null>}}
-
-Rules for run_at calculation based on current time {now_utc.strftime("%Y-%m-%d %H:%M")} UTC:
-- "in 3 minutes" → {(now_utc + __import__('datetime').timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}
-- "in 1 hour" → {(now_utc + __import__('datetime').timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}
-- "at midnight" → {now_utc.strftime("%Y-%m-%d")}T00:00:00+00:00 (or next day if past midnight)
-- "at 10pm" → {now_utc.strftime("%Y-%m-%d")}T22:00:00+00:00
-- "every 6 hours" → run_at = now, repeat_hours = 6
-
-Examples:
-- "turn on led1 in 3 minutes" → {{"device_name":"ESP32","params":{{"led1":true}},"run_at":"{(now_utc + __import__('datetime').timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}","repeat_hours":null}}
-- "run pump every 6 hours" → {{"device_name":"ESP32","params":{{"pump":true}},"run_at":"{now_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00")}","repeat_hours":6}}
-- "turn off fan at 10pm" → {{"device_name":"ESP32","params":{{"fan":false}},"run_at":"{now_utc.strftime("%Y-%m-%d")}T22:00:00+00:00","repeat_hours":null}}
-If not a schedule command → null"""
-
-                sched_result = await _call_groq(api_key, [{"role":"user","content":schedule_prompt}], max_tokens=200, temperature=0.1)
-                sched_result = sched_result.strip()
-                if sched_result and sched_result != "null" and sched_result.startswith("{"):
-                    try:
-                        sched_parsed = json.loads(sched_result)
-                    except json.JSONDecodeError:
-                        sched_parsed = {}
-
-                    if "device_name" in sched_parsed and "params" in sched_parsed and "run_at" in sched_parsed:
-                        matched = next((d for d in devices if d.name.lower() == sched_parsed["device_name"].lower()), None)
-                        if not matched:
-                            matched = next((d for d in devices if sched_parsed["device_name"].lower() in d.name.lower()), None)
-                        if matched:
-                            from app.models.models import RpcCommand as _SchedRpcCmd
-                            # Robust datetime parsing
-                            run_at_str = sched_parsed["run_at"]
-                            try:
-                                run_at = datetime.fromisoformat(run_at_str.replace("Z", "+00:00"))
-                            except (ValueError, TypeError):
-                                # Fallback: parse relative times like "now + 3 minutes"
-                                now_utc = datetime.now(timezone.utc)
-                                if "minute" in run_at_str.lower():
-                                    import re as _re
-                                    mins = _re.search("([0-9]+)", run_at_str)
-                                    run_at = now_utc + timedelta(minutes=int(mins.group(1)) if mins else 5)
-                                elif "hour" in run_at_str.lower():
-                                    import re as _re
-                                    hrs = _re.search("([0-9]+)", run_at_str)
-                                    run_at = now_utc + timedelta(hours=int(hrs.group(1)) if hrs else 1)
-                                else:
-                                    run_at = now_utc + timedelta(minutes=5)
-
-                            if run_at.tzinfo is None:
-                                run_at = run_at.replace(tzinfo=timezone.utc)
-
-                            sched_cmd = _SchedRpcCmd(
-                                device_id  = matched.id,
-                                method     = "set",
-                                params     = sched_parsed["params"],
-                                status     = "SCHEDULED",
-                                created_by = str(current_user.id),
-                                result     = {
-                                    "scheduled_for": run_at.isoformat(),
-                                    "repeat_hours":  sched_parsed.get("repeat_hours"),
-                                },
-                            )
-                            db.add(sched_cmd)
-                            db.commit()
-                            rpc_executed = {
-                                "device_id":   str(matched.id),
-                                "device_name": matched.name,
-                                "cmd_id":      str(sched_cmd.id),
-                                "params":      sched_parsed["params"],
-                                "scheduled_for": run_at.strftime("%Y-%m-%d %H:%M UTC"),
-                                "repeat_hours":  sched_parsed.get("repeat_hours"),
-                                "is_scheduled":  True,
-                            }
-            except Exception as exc:
-                logger.error("scheduled RPC failed: %s", exc)
-                # Don't let schedule errors break the chat response
-
         # ── Alarm action detection ─────────────────────────────────────────
         alarm_keywords = ["acknowledge", "ack", "clear", "dismiss", "resolve"]
         if any(kw in msg_lower for kw in alarm_keywords):
@@ -1435,7 +1284,7 @@ LATEST TELEMETRY:
 {device_context}
 {rpc_capability}
 
-Be concise and technical. Use bullet points for lists. Today is {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}.
+Be concise and technical. Use bullet points for lists. Today is {__import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M UTC")}.
 """
 
     chat_messages = [{"role": "system", "content": system_prompt}]

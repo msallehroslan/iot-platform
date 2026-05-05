@@ -2400,18 +2400,7 @@ function AIChatbot({ user }) {
                     "Make john@example.com admin",
                   ]
                 },
-                {
-                  cat: "⏰ Scheduled RPC",
-                  color: "#f59e0b",
-                  cmds: [
-                    "Turn on led1 at midnight",
-                    "Run pump every 6 hours",
-                    "Turn off fan at 10pm",
-                    "Show scheduled commands",
-                    "Cancel scheduled led1",
-                    "Cancel all scheduled",
-                  ]
-                },
+
               ].map(section=>(
                 <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
                   <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
