@@ -728,12 +728,14 @@ export function AnomalyWidget({ config, deviceId }) {
   );
 
   // API returns {summary, anomalies}
+  // API returns {summary: {status, samples_available, anomaly_count, ...}, anomalies: [...]}
   const summary = data?.summary || {};
   const anomalies = data?.anomalies || [];
   const allScores = label === "all" ? anomalies : anomalies.filter(s => s.key === label);
   const recent = allScores.slice(0, 20);
-  const sampleCount = summary?.sample_count || 0;
-  const hasData = sampleCount >= 20;
+  const sampleCount = summary?.samples_available || 0;
+  const minNeeded = summary?.min_samples_needed || 20;
+  const hasData = summary?.status === "active" || sampleCount >= minNeeded;
   const learning = !hasData;
 
   if (learning) return (
@@ -742,16 +744,17 @@ export function AnomalyWidget({ config, deviceId }) {
       <p style={{fontSize:12,fontWeight:700,color:"#334866",margin:0}}>Learning Mode</p>
       <p style={{fontSize:10,color:"#94a3b8",textAlign:"center",margin:0}}>Collecting baseline data.<br/>Anomaly scoring starts after 20 readings.</p>
       <div style={{width:"80%",height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
-        <div style={{width:`${Math.min(100,sampleCount/20*100)}%`,height:"100%",background:"linear-gradient(90deg,#667eea,#764ba2)",borderRadius:2,transition:"width 1s"}}/>
+        <div style={{width:`${Math.min(100,sampleCount/minNeeded*100)}%`,height:"100%",background:"linear-gradient(90deg,#667eea,#764ba2)",borderRadius:2,transition:"width 1s"}}/>
       </div>
-      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{sampleCount} / 20 readings</p>
+      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{sampleCount} / {minNeeded} readings</p>
     </div>
   );
 
-  // Find max anomaly score
-  const maxScore = recent.length > 0 ? Math.max(...recent.map(s => Math.abs(s.z_score || 0))) : 0;
-  const anomalyColor = maxScore > 3 ? "#ef4444" : maxScore > 2 ? "#f59e0b" : "#10b981";
-  const anomalyLabel = maxScore > 3 ? "ANOMALY" : maxScore > 2 ? "UNUSUAL" : "NORMAL";
+  const anomalyCount = summary?.anomaly_count || 0;
+  const mostAnomalous = summary?.most_anomalous_key || "";
+  const maxScore = recent.length > 0 ? Math.max(...recent.map(s => Math.abs(s.z_score || s.score || 0))) : 0;
+  const anomalyColor = anomalyCount > 0 ? "#ef4444" : "#10b981";
+  const anomalyLabel = anomalyCount > 0 ? `${anomalyCount} ANOMALIES` : "NORMAL";
 
   return (
     <div style={{height:"100%",display:"flex",flexDirection:"column",padding:"10px 12px",gap:8}}>
@@ -816,10 +819,27 @@ export function BaselineWidget({ config, deviceId }) {
     </div>
   );
 
-  const baselines = data?.baseline || data?.baselines || {};
+  // API returns {status, baselines: {key: [{hour, mean, std, min, max}, ...]}}
+  const baselineData = data?.baselines || data?.baseline || {};
+  // Aggregate per-key stats (average across hours)
+  const baselines = {};
+  Object.entries(baselineData).forEach(([k, hours]) => {
+    if (Array.isArray(hours) && hours.length > 0) {
+      const means = hours.map(h => h.mean).filter(v => v != null);
+      const stds = hours.map(h => h.std).filter(v => v != null);
+      if (means.length > 0) {
+        baselines[k] = {
+          mean: means.reduce((a,b)=>a+b,0)/means.length,
+          std: stds.length > 0 ? stds.reduce((a,b)=>a+b,0)/stds.length : 0,
+        };
+      }
+    } else if (hours && typeof hours === 'object' && !Array.isArray(hours)) {
+      baselines[k] = hours;
+    }
+  });
   const keyData = key ? baselines[key] : null;
   const hasData = Object.keys(baselines).length > 0;
-  const daysCovered = data?.days_covered || data?.baseline_days || 0;
+  const daysCovered = data?.days_covered || data?.baseline_days || (hasData ? 1 : 0);
   const needed = 30;
 
   if (!hasData) return (
@@ -886,11 +906,18 @@ export function HealthScoreWidget({ config, deviceId }) {
     </div>
   );
 
-  // API returns {health: {score, components, maintenance_due, ...}}
+  // API returns flat: {health_score, health_label, uptime_score, alarm_score, stability_score, freshness_score, maintenance_due}
+  // or nested: {health: {...}}
   const healthData = data?.health || data || {};
-  const score = healthData?.score ?? null;
-  const components = healthData?.components || {};
-  const status = score === null ? "UNKNOWN" : score >= 80 ? "HEALTHY" : score >= 60 ? "WARNING" : "CRITICAL";
+  const score = healthData?.health_score ?? healthData?.score ?? null;
+  const components = {
+    uptime: healthData?.uptime_score,
+    alarm: healthData?.alarm_score,
+    stability: healthData?.stability_score,
+    freshness: healthData?.freshness_score,
+    ...( healthData?.components || {} )
+  };
+  const status = healthData?.health_label || (score === null ? "UNKNOWN" : score >= 80 ? "HEALTHY" : score >= 60 ? "WARNING" : "CRITICAL");
   const color = status === "HEALTHY" ? "#10b981" : status === "WARNING" ? "#f59e0b" : status === "UNKNOWN" ? "#94a3b8" : "#ef4444";
   const maintenance = healthData?.maintenance_due;
 
@@ -942,7 +969,7 @@ export function HealthScoreWidget({ config, deviceId }) {
 
       {maintenance && (
         <div style={{padding:"4px 8px",borderRadius:6,background:"#fef3c7",border:"1px solid #fde68a"}}>
-          <p style={{margin:0,fontSize:9,color:"#92400e"}}>⚠️ Maintenance recommended — {healthData?.maintenance_reason || "health score low"}</p>
+          <p style={{margin:0,fontSize:9,color:"#92400e"}}>⚠️ {healthData?.maintenance_reason || "Maintenance recommended"}</p>
         </div>
       )}
     </div>
