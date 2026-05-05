@@ -721,20 +721,74 @@ export default function DashboardPage({ device, onBack, user }) {
       </div>
 
       {/* ── RCA Result Panel ── */}
-      {rcaResult && (
-        <div style={{ background:"white", border:"1px solid #D8E3F3", borderRadius:12, padding:20, position:"relative" }}>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <div style={{ width:8, height:8, borderRadius:"50%", background: rcaResult.engine?.includes("claude") ? "#10b981" : "#f59e0b" }}/>
-              <span style={{ fontSize:13, fontWeight:700, color:"#0B1426" }}>🧠 AI Root Cause Analysis — {device.name}</span>
-              <span style={{ fontSize:10, color:"#6B7F9F", background:"#EAF2FF", padding:"2px 8px", borderRadius:4 }}>{rcaResult.engine}</span>
+      {rcaResult && (() => {
+        // Parse the 5 sections from the analysis text
+        const text = rcaResult.analysis || "";
+        const sections = [
+          { key:"1", icon:"🏥", label:"Health Status",       color:"#3b82f6", bg:"#eff6ff" },
+          { key:"2", icon:"🔍", label:"Root Cause Analysis", color:"#ef4444", bg:"#fef2f2" },
+          { key:"3", icon:"📈", label:"Trend Insights",      color:"#8b5cf6", bg:"#f5f3ff" },
+          { key:"4", icon:"⚠️", label:"Risk Assessment",     color:"#f59e0b", bg:"#fffbeb" },
+          { key:"5", icon:"✅", label:"Recommended Actions", color:"#10b981", bg:"#f0fdf4" },
+        ];
+
+        // Split text by section headers
+        const parsedSections = sections.map((s, i) => {
+          const next = sections[i + 1];
+          const startRe = new RegExp(`\\*?\\*?${s.key}[.:].*?\\*?\\*?`, "i");
+          const endRe   = next ? new RegExp(`\\*?\\*?${next.key}[.:]`, "i") : null;
+          const startIdx = text.search(startRe);
+          if (startIdx === -1) return { ...s, content: "" };
+          const afterStart = text.slice(startIdx).replace(startRe, "").trim();
+          const endIdx = endRe ? afterStart.search(endRe) : -1;
+          const content = (endIdx === -1 ? afterStart : afterStart.slice(0, endIdx))
+            .replace(/\*\*/g, "").trim();
+          return { ...s, content };
+        }).filter(s => s.content);
+
+        const healthColor = text.toLowerCase().includes("critical") ? "#ef4444"
+          : text.toLowerCase().includes("warning") ? "#f59e0b" : "#10b981";
+        const healthLabel = text.toLowerCase().includes("critical") ? "CRITICAL"
+          : text.toLowerCase().includes("warning") ? "WARNING" : "HEALTHY";
+
+        return (
+          <div style={{background:"linear-gradient(135deg,#0B1426,#1a2e5a)",borderRadius:16,overflow:"hidden",boxShadow:"0 8px 32px rgba(11,20,38,0.3)"}}>
+            {/* Header */}
+            <div style={{padding:"16px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div style={{width:36,height:36,borderRadius:"50%",background:"rgba(47,140,255,0.2)",border:"1px solid rgba(47,140,255,0.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>🧠</div>
+                <div>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:"white"}}>AI Root Cause Analysis</p>
+                  <p style={{margin:0,fontSize:10,color:"rgba(255,255,255,0.5)"}}>{device.name} · {rcaResult.generated_at ? new Date(rcaResult.generated_at).toLocaleString() : new Date().toLocaleString()}</p>
+                </div>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{padding:"3px 10px",borderRadius:20,background:`${healthColor}22`,border:`1px solid ${healthColor}44`,fontSize:10,fontWeight:700,color:healthColor}}>{healthLabel}</div>
+                <span style={{fontSize:9,color:"rgba(255,255,255,0.3)",background:"rgba(255,255,255,0.05)",padding:"2px 8px",borderRadius:4}}>{rcaResult.engine}</span>
+                <button onClick={()=>setRcaResult(null)} style={{background:"none",border:"none",cursor:"pointer",color:"rgba(255,255,255,0.4)",fontSize:18,lineHeight:1}}>×</button>
+              </div>
             </div>
-            <button onClick={() => setRcaResult(null)} style={{ background:"none", border:"none", cursor:"pointer", color:"#94a3b8", fontSize:18 }}>×</button>
+
+            {/* Sections */}
+            <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:12}}>
+              {parsedSections.length > 0 ? parsedSections.map(s => (
+                <div key={s.key} style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"12px 14px",border:`1px solid rgba(255,255,255,0.06)`,borderLeft:`3px solid ${s.color}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                    <span style={{fontSize:14}}>{s.icon}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:s.color,textTransform:"uppercase",letterSpacing:"0.5px"}}>{s.label}</span>
+                  </div>
+                  <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.8)",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{s.content}</p>
+                </div>
+              )) : (
+                // Fallback if sections can't be parsed
+                <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"12px 14px",border:"1px solid rgba(255,255,255,0.06)"}}>
+                  <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,0.8)",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{text.replace(/\*\*/g,"")}</p>
+                </div>
+              )}
+            </div>
           </div>
-          <div style={{ fontSize:13, color:"#334866", lineHeight:1.8, whiteSpace:"pre-wrap" }}>{rcaResult.analysis}</div>
-          <p style={{ fontSize:10, color:"#94a3b8", marginTop:8, marginBottom:0 }}>Generated: {rcaResult.generated_at ? new Date(rcaResult.generated_at).toLocaleString() : ""}</p>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Error banner ── */}
       {error && (

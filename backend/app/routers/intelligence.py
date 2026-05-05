@@ -538,17 +538,30 @@ async def _try_parse_rpc_intent(
 
     # Hard exclusions — never trigger RPC for these
     exclusion_keywords = [
-        "threshold", "alarm rule", "rule chain", "set alarm",
-        "create alarm", "delete rule", "remove rule", "delete all",
-        "remove all", "standard deviation", "baseline",
-        "i've set", "i have set", "was set", "report", "analysis",
-        "acknowledge", "clear alarm",
+        "threshold", "alarm rule", "rule chain",
+        "set alarm", "set distance alarm", "set temperature alarm",
+        "set humidity alarm", "set pressure alarm",
+        "create alarm", "create rule", "add alarm", "add rule",
+        "delete rule", "remove rule", "delete all", "remove all",
+        "standard deviation", "baseline",
+        "i've set", "i have set", "was set",
+        "report", "analysis", "acknowledge", "clear alarm",
+        " alarm ", " alarm on ", "alarm above", "alarm below",
+        "warning alarm", "critical alarm", "major alarm",
     ]
 
     msg_lower = user_message.lower()
 
     # Bail if exclusion keyword found
     if any(ex in msg_lower for ex in exclusion_keywords):
+        return None
+
+    # Also bail if message contains alarm/rule creation patterns
+    alarm_creation_words = ["above", "below", "greater than", "less than", "exceeds", "drops below"]
+    alarm_subject_words = ["alarm", "rule", "warning", "critical", "threshold"]
+    has_alarm_subject = any(w in msg_lower for w in alarm_subject_words)
+    has_comparison = any(w in msg_lower for w in alarm_creation_words)
+    if has_alarm_subject and has_comparison:
         return None
 
     if not any(kw in msg_lower for kw in control_keywords):
