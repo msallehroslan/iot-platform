@@ -885,6 +885,32 @@ async def _try_parse_rule_intent(
     if any(ex in msg_lower for ex in RULE_EXCLUSION):
         return None
 
+    # Smart fast path for DELETE/UPDATE — no Groq, match against actual existing rules
+    import re as _re
+    if any(w in msg_lower for w in ["delete", "remove", "clear"]):
+        if any(w in msg_lower for w in ["all rules", "rules chain", "rule chain", "all rule"]):
+            return {"action": "delete", "delete_all": True}
+        # Match against actual rule keys that exist in DB
+        for rule in existing_rules:
+            if rule.key.lower() in msg_lower:
+                dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+                return {"action": "delete", "key": rule.key, "device_name": dn}
+        # Fallback: extract word before "rule" or "alarm"
+        m = _re.search(r'(\w+)\s+(?:rule|alarm)', msg_lower)
+        if m and m.group(1) not in ["the","a","an","this","that","all","any"]:
+            return {"action": "delete", "key": m.group(1), "device_name": None}
+
+    if any(w in msg_lower for w in ["change", "update", "modify", "change the", "update the", "set"]):
+        for rule in existing_rules:
+            if rule.key.lower() in msg_lower:
+                nums = _re.findall(r'\d+\.?\d*', user_message)
+                threshold = float(nums[0]) if nums else None
+                dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+                if threshold is not None:
+                    return {"action": "update", "key": rule.key, "device_name": dn,
+                            "threshold": threshold, "condition": rule.condition,
+                            "severity": rule.severity.value if hasattr(rule.severity,"value") else str(rule.severity)}
+
     # Fast path for DELETE — no Groq, parse key from message directly
     if any(w in msg_lower for w in ["delete", "remove", "clear"]):
         if any(w in msg_lower for w in ["all rules", "rules chain", "rule chain"]):
