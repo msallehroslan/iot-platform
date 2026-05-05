@@ -727,11 +727,14 @@ export function AnomalyWidget({ config, deviceId }) {
     </div>
   );
 
-  const scores = data?.scores || [];
-  const keyScores = label === "all" ? scores : scores.filter(s => s.key === label);
-  const recent = keyScores.slice(0, 20);
-  const hasData = recent.length > 0;
-  const learning = data?.learning || !hasData;
+  // API returns {summary, anomalies}
+  const summary = data?.summary || {};
+  const anomalies = data?.anomalies || [];
+  const allScores = label === "all" ? anomalies : anomalies.filter(s => s.key === label);
+  const recent = allScores.slice(0, 20);
+  const sampleCount = summary?.sample_count || 0;
+  const hasData = sampleCount >= 20;
+  const learning = !hasData;
 
   if (learning) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10,padding:16}}>
@@ -739,14 +742,14 @@ export function AnomalyWidget({ config, deviceId }) {
       <p style={{fontSize:12,fontWeight:700,color:"#334866",margin:0}}>Learning Mode</p>
       <p style={{fontSize:10,color:"#94a3b8",textAlign:"center",margin:0}}>Collecting baseline data.<br/>Anomaly scoring starts after 20 readings.</p>
       <div style={{width:"80%",height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
-        <div style={{width:`${Math.min(100,(data?.sample_count||0)/20*100)}%`,height:"100%",background:"linear-gradient(90deg,#667eea,#764ba2)",borderRadius:2,transition:"width 1s"}}/>
+        <div style={{width:`${Math.min(100,sampleCount/20*100)}%`,height:"100%",background:"linear-gradient(90deg,#667eea,#764ba2)",borderRadius:2,transition:"width 1s"}}/>
       </div>
-      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{data?.sample_count||0} / 20 readings</p>
+      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{sampleCount} / 20 readings</p>
     </div>
   );
 
   // Find max anomaly score
-  const maxScore = Math.max(...recent.map(s => s.z_score || 0));
+  const maxScore = recent.length > 0 ? Math.max(...recent.map(s => Math.abs(s.z_score || 0))) : 0;
   const anomalyColor = maxScore > 3 ? "#ef4444" : maxScore > 2 ? "#f59e0b" : "#10b981";
   const anomalyLabel = maxScore > 3 ? "ANOMALY" : maxScore > 2 ? "UNUSUAL" : "NORMAL";
 
@@ -763,7 +766,7 @@ export function AnomalyWidget({ config, deviceId }) {
         {[...new Set(recent.map(s => s.key))].slice(0,4).map(k => {
           const kScores = recent.filter(s => s.key === k);
           const latest = kScores[0];
-          const z = Math.abs(latest?.z_score || 0);
+          const z = Math.abs(latest?.z_score || latest?.score || 0);
           const pct = Math.min(100, z / 5 * 100);
           const col = z > 3 ? "#ef4444" : z > 2 ? "#f59e0b" : "#10b981";
           return (
@@ -813,10 +816,10 @@ export function BaselineWidget({ config, deviceId }) {
     </div>
   );
 
-  const baselines = data?.baselines || {};
+  const baselines = data?.baseline || data?.baselines || {};
   const keyData = key ? baselines[key] : null;
   const hasData = Object.keys(baselines).length > 0;
-  const daysCovered = data?.days_covered || 0;
+  const daysCovered = data?.days_covered || data?.baseline_days || 0;
   const needed = 30;
 
   if (!hasData) return (
@@ -883,11 +886,13 @@ export function HealthScoreWidget({ config, deviceId }) {
     </div>
   );
 
-  const score = data?.score ?? null;
-  const components = data?.components || {};
+  // API returns {health: {score, components, maintenance_due, ...}}
+  const healthData = data?.health || data || {};
+  const score = healthData?.score ?? null;
+  const components = healthData?.components || {};
   const status = score === null ? "UNKNOWN" : score >= 80 ? "HEALTHY" : score >= 60 ? "WARNING" : "CRITICAL";
   const color = status === "HEALTHY" ? "#10b981" : status === "WARNING" ? "#f59e0b" : status === "UNKNOWN" ? "#94a3b8" : "#ef4444";
-  const maintenance = data?.maintenance_due;
+  const maintenance = healthData?.maintenance_due;
 
   // Gauge arc calculation
   const radius = 40;
@@ -937,7 +942,7 @@ export function HealthScoreWidget({ config, deviceId }) {
 
       {maintenance && (
         <div style={{padding:"4px 8px",borderRadius:6,background:"#fef3c7",border:"1px solid #fde68a"}}>
-          <p style={{margin:0,fontSize:9,color:"#92400e"}}>⚠️ Maintenance recommended — {data?.maintenance_reason || "health score low"}</p>
+          <p style={{margin:0,fontSize:9,color:"#92400e"}}>⚠️ Maintenance recommended — {healthData?.maintenance_reason || "health score low"}</p>
         </div>
       )}
     </div>
