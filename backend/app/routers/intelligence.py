@@ -906,12 +906,14 @@ Existing rules: {json.dumps(rules_summary)}
 
 User message: "{user_message}"
 
-CRITICAL RULE: The "key" field must be the EXACT telemetry key name mentioned by the user.
-- "distance alarm" → key = "distance"
-- "temperature alarm" → key = "temperature"  
-- "humidity alarm" → key = "humidity"
-- "glucose alarm" → key = "glucose"
-- NEVER substitute one key for another
+CRITICAL RULES:
+1. The "key" field must be the EXACT telemetry key name mentioned by the user
+   - "distance alarm" → key = "distance"
+   - "temperature alarm" → key = "temperature"
+   - "humidity alarm" → key = "humidity"
+   - NEVER substitute one key for another
+2. NEVER include "rule_id" in your response — the system will find the rule by key name
+3. For device_name — use EXACT name from the available devices list, or null for all devices
 
 Valid conditions: gt (greater than), lt (less than), gte (>=), lte (<=), eq (equals)
 Valid severities: CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE
@@ -919,25 +921,26 @@ Valid severities: CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE
 Respond ONLY with valid JSON or null. No explanation, no markdown.
 
 For CREATE:
-{{"action": "create", "device_name": "<name or null for tenant-wide>", "key": "<telemetry key>", "condition": "<gt|lt|gte|lte|eq>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<descriptive name>"}}
+{{"action": "create", "device_name": "<exact name or null>", "key": "<telemetry key>", "condition": "<gt|lt|gte|lte|eq>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<descriptive name>"}}
 
-For UPDATE (when user says "change", "update", "modify" an existing rule):
-{{"action": "update", "rule_id": "<id from existing rules>", "key": "<key>", "condition": "<condition>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<alarm_type>"}}
+For UPDATE:
+{{"action": "update", "key": "<telemetry key>", "device_name": "<exact name or null>", "threshold": <number>, "condition": "<condition>", "severity": "<severity>"}}
 
-For DELETE ONE (when user says "delete", "remove" a specific rule):
-{{"action": "delete", "rule_id": "<id from existing rules>"}}
+For DELETE ONE:
+{{"action": "delete", "key": "<telemetry key>", "device_name": "<exact name or null>"}}
 
-For DELETE ALL (when user says "delete all rules", "remove all rules", "clear all rules", "delete all rules chain"):
+For DELETE ALL:
 {{"action": "delete", "delete_all": true}}
 
 Examples:
 - "set distance alarm on Temperature above 410 warning" → {{"action":"create","device_name":"Temperature","key":"distance","condition":"gt","threshold":410,"severity":"WARNING","alarm_type":"High Distance"}}
 - "create critical alarm when temperature exceeds 80" → {{"action":"create","device_name":null,"key":"temperature","condition":"gt","threshold":80,"severity":"CRITICAL","alarm_type":"High Temperature"}}
-- "change the humidity rule to 75" → {{"action":"update","rule_id":"<matching id>","threshold":75,...}}
-- "delete the distance rule" → {{"action":"delete","rule_id":"<matching id>"}}
+- "change the humidity rule to 75" → {{"action":"update","key":"humidity","device_name":null,"threshold":75,"condition":"gt","severity":"WARNING"}}
+- "update temperature alarm on Temperature device to 85 critical" → {{"action":"update","key":"temperature","device_name":"Temperature","threshold":85,"condition":"gt","severity":"CRITICAL"}}
+- "delete the distance rule on Temperature" → {{"action":"delete","key":"distance","device_name":"Temperature"}}
+- "delete the humidity rule" → {{"action":"delete","key":"humidity","device_name":null}}
 - "delete all rules chain" → {{"action":"delete","delete_all":true}}
-- "remove all rules" → {{"action":"delete","delete_all":true}}
-- If unclear or just a question → null"""
+- If unclear → null"""
 
     try:
         result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=200, temperature=0.1)
@@ -1020,19 +1023,21 @@ async def _execute_rule_from_chat(
             }
 
         elif action == "update":
-            rule_id = intent.get("rule_id")
-            # Try by rule_id first
-            rule = db.query(ThresholdRule).filter(
-                ThresholdRule.id == rule_id,
-                ThresholdRule.tenant_id == current_user.tenant_id,
-            ).first()
-            # Fallback: match by key name if rule_id not found
-            if not rule and intent.get("key"):
-                rule = db.query(ThresholdRule).filter(
+            # Always find by key + device name — never trust Groq's rule_id
+            key = intent.get("key")
+            device_name = intent.get("device_name")
+            rule = None
+            if key:
+                q = db.query(ThresholdRule).filter(
                     ThresholdRule.tenant_id == current_user.tenant_id,
-                    ThresholdRule.key == intent["key"],
+                    ThresholdRule.key == key,
                     ThresholdRule.is_active == True,
-                ).first()
+                )
+                if device_name:
+                    matched_dev = next((d for d in devices if d["name"].lower() == device_name.lower()), None)
+                    if matched_dev:
+                        q = q.filter(ThresholdRule.device_id == matched_dev["id"])
+                rule = q.first()
             if not rule:
                 return None
 
@@ -1075,23 +1080,30 @@ async def _execute_rule_from_chat(
                 db.commit()
                 return {"action": "deleted_all", "count": count}
 
-            elif rule_id:
-                rule = db.query(ThresholdRule).filter(
-                    ThresholdRule.id == rule_id,
-                    ThresholdRule.tenant_id == current_user.tenant_id,
-                ).first()
+            else:
+                key = intent.get("key")
+                device_name = intent.get("device_name")
+                rule = None
+                if key:
+                    q = db.query(ThresholdRule).filter(
+                        ThresholdRule.tenant_id == current_user.tenant_id,
+                        ThresholdRule.key == key,
+                        ThresholdRule.is_active == True,
+                    )
+                    if device_name:
+                        matched_dev = next((d for d in devices if d["name"].lower() == device_name.lower()), None)
+                        if matched_dev:
+                            q = q.filter(ThresholdRule.device_id == matched_dev["id"])
+                    rule = q.first()
                 if not rule:
                     return None
-                key = rule.key
+                rule_key = rule.key
                 audit(db, tenant_id=current_user.tenant_id, user=current_user,
                       action="rule.delete", resource="threshold_rule", resource_id=str(rule.id),
-                      detail={"source": "chat"})
+                      detail={"key": rule_key, "source": "chat"})
                 db.delete(rule)
                 db.commit()
-                return {"action": "deleted", "rule_id": str(rule_id), "key": key}
-
-            else:
-                return None
+                return {"action": "deleted", "key": rule_key}
 
     except Exception as exc:
         logger.error("rule execution failed: %s", exc)
