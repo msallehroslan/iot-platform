@@ -544,11 +544,11 @@ async def _try_parse_rpc_intent(
 
     # Exclusion patterns — if any of these appear, skip RPC intent entirely
     exclusion_keywords = [
-        "threshold", "alarm", "rule", "alert", "standard deviation",
-        "baseline", "warning", "critical", "configuration", "setting",
-        "i've set", "i have set", "i set", "you set", "was set",
-        "updated", "configured", "report", "analysis", "trend",
-        "acknowledge", "clear", "resolve",
+        "threshold", "alert", "standard deviation",
+        "baseline", "configuration",
+        "i've set", "i have set", "was set",
+        "configured", "report", "analysis",
+        "acknowledge",
     ]
 
     msg_lower = user_message.lower()
@@ -684,6 +684,8 @@ async def _execute_rpc_from_chat(
 RULE_KEYWORDS = [
     "set alarm", "create alarm", "add alarm", "create rule", "add rule",
     "set rule", "update rule", "change rule", "delete rule", "remove rule",
+    "delete all rules", "remove all rules", "clear all rules",
+    "delete rules chain", "clear rules chain", "remove rules chain",
     "set threshold", "change threshold", "update threshold",
     "when temperature", "when humidity", "when distance", "when pressure",
     "alert me", "notify me", "alarm when", "trigger when",
@@ -748,14 +750,19 @@ For CREATE:
 For UPDATE (when user says "change", "update", "modify" an existing rule):
 {{"action": "update", "rule_id": "<id from existing rules>", "key": "<key>", "condition": "<condition>", "threshold": <number>, "severity": "<severity>", "alarm_type": "<alarm_type>"}}
 
-For DELETE (when user says "delete", "remove", "disable" a rule):
+For DELETE ONE (when user says "delete", "remove" a specific rule):
 {{"action": "delete", "rule_id": "<id from existing rules>"}}
+
+For DELETE ALL (when user says "delete all rules", "remove all rules", "clear all rules", "delete all rules chain"):
+{{"action": "delete", "delete_all": true}}
 
 Examples:
 - "set distance alarm on Temperature above 410 warning" → {{"action":"create","device_name":"Temperature","key":"distance","condition":"gt","threshold":410,"severity":"WARNING","alarm_type":"High Distance"}}
 - "create critical alarm when temperature exceeds 80" → {{"action":"create","device_name":null,"key":"temperature","condition":"gt","threshold":80,"severity":"CRITICAL","alarm_type":"High Temperature"}}
 - "change the humidity rule to 75" → {{"action":"update","rule_id":"<matching id>","threshold":75,...}}
 - "delete the distance rule" → {{"action":"delete","rule_id":"<matching id>"}}
+- "delete all rules chain" → {{"action":"delete","delete_all":true}}
+- "remove all rules" → {{"action":"delete","delete_all":true}}
 - If unclear or just a question → null"""
 
     try:
@@ -870,21 +877,39 @@ async def _execute_rule_from_chat(
 
         elif action == "delete":
             rule_id = intent.get("rule_id")
-            rule = db.query(ThresholdRule).filter(
-                ThresholdRule.id == rule_id,
-                ThresholdRule.tenant_id == current_user.tenant_id,
-            ).first()
-            if not rule:
+            delete_all = intent.get("delete_all", False)
+
+            if delete_all:
+                # Bulk delete all rules for this tenant
+                rules = db.query(ThresholdRule).filter(
+                    ThresholdRule.tenant_id == current_user.tenant_id,
+                ).all()
+                count = len(rules)
+                for r in rules:
+                    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+                          action="rule.delete", resource="threshold_rule", resource_id=str(r.id),
+                          detail={"source": "chat_bulk"})
+                    db.delete(r)
+                db.commit()
+                return {"action": "deleted_all", "count": count}
+
+            elif rule_id:
+                rule = db.query(ThresholdRule).filter(
+                    ThresholdRule.id == rule_id,
+                    ThresholdRule.tenant_id == current_user.tenant_id,
+                ).first()
+                if not rule:
+                    return None
+                key = rule.key
+                audit(db, tenant_id=current_user.tenant_id, user=current_user,
+                      action="rule.delete", resource="threshold_rule", resource_id=str(rule.id),
+                      detail={"source": "chat"})
+                db.delete(rule)
+                db.commit()
+                return {"action": "deleted", "rule_id": str(rule_id), "key": key}
+
+            else:
                 return None
-
-            key = rule.key
-            audit(db, tenant_id=current_user.tenant_id, user=current_user,
-                  action="rule.delete", resource="threshold_rule", resource_id=str(rule.id),
-                  detail={"source": "chat"})
-            db.delete(rule)
-            db.commit()
-
-            return {"action": "deleted", "rule_id": str(rule_id), "key": key}
 
     except Exception as exc:
         logger.error("rule execution failed: %s", exc)
