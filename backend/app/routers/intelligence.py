@@ -734,6 +734,13 @@ Existing rules: {json.dumps(rules_summary)}
 
 User message: "{user_message}"
 
+CRITICAL RULE: The "key" field must be the EXACT telemetry key name mentioned by the user.
+- "distance alarm" → key = "distance"
+- "temperature alarm" → key = "temperature"  
+- "humidity alarm" → key = "humidity"
+- "glucose alarm" → key = "glucose"
+- NEVER substitute one key for another
+
 Valid conditions: gt (greater than), lt (less than), gte (>=), lte (<=), eq (equals)
 Valid severities: CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE
 
@@ -1059,13 +1066,16 @@ async def ai_chat(
     # ── Build chat system prompt ──────────────────────────────────────────────
     rpc_capability = (
         (
-            "\n\nACTIONS YOU CAN TAKE (these are already wired to the database):\n"
-            "- Send RPC commands to devices (turn on/off physical outputs)\n"
-            "- Acknowledge or clear alarms\n"
-            "- Create, update or delete threshold rules\n"
-            "IMPORTANT: Only confirm an action if you see a [SYSTEM: ... already executed] message above. "
-            "If there is no such message, do NOT claim you performed any action. "
-            "Instead say what the user should do or ask them to rephrase their command."
+            "\n\nACTIONS YOU CAN TAKE (already wired to database — NO confirmation needed):\n"
+            "- RPC commands: turn on/off device outputs\n"
+            "- Alarm actions: acknowledge or clear alarms\n"
+            "- Rule management: create, update, delete threshold rules\n"
+            "RULES:\n"
+            "1. NEVER ask the user to confirm before acting — just execute and report\n"
+            "2. NEVER show [SYSTEM...] messages to the user\n"
+            "3. Only confirm actions that appear as CONFIRMED: messages above\n"
+            "4. If no CONFIRMED message exists, say the action could not be completed\n"
+            "5. Be brief — one line confirmation is enough"
         )
         if current_user.role != "CUSTOMER_USER"
         else "\n\nYou cannot execute device commands for this role."
