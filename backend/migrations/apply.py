@@ -718,8 +718,7 @@ MIGRATIONS += [
 ]
 
 
-if __name__ == "__main__":
-    run()
+
 
 
 MIGRATIONS += [
@@ -824,4 +823,7 @@ MIGRATIONS += [
                 WHERE status = 'SCHEDULED';
         """,
     },
+
+    if __name__ == "__main__":
+    run()
 ]
