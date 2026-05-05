@@ -529,39 +529,29 @@ async def _try_parse_rpc_intent(
     Uses REAL telemetry keys from the DB — no hardcoding.
     Only triggers for clear control intent keywords.
     """
-    # Strict control keywords — must be very specific device action phrases
-    # Deliberately excludes: "set threshold", "enable alarm", "disable rule", etc.
+    # Control keywords — simple and direct
     control_keywords = [
-        "turn on", "turn off",
-        "switch on", "switch off",
-        "toggle ",
-        "start the ", "stop the ",
-        "activate the ", "deactivate the ",
-        "run the ", "pause the ",
+        "turn on", "turn off", "switch on", "switch off",
+        "set ", "enable", "disable", "activate", "deactivate",
+        "toggle", "open", "close", "start", "stop", "run", "pause",
     ]
-    # Additional patterns that must include a device key word context
-    loose_keywords = ["set ", "enable ", "disable ", "open the ", "close the "]
 
-    # Exclusion patterns — if any of these appear, skip RPC intent entirely
+    # Hard exclusions — never trigger RPC for these
     exclusion_keywords = [
-        "threshold", "alert", "standard deviation",
-        "baseline", "configuration",
-        "i've set", "i have set", "was set",
-        "configured", "report", "analysis",
-        "acknowledge",
+        "threshold", "alarm rule", "rule chain", "set alarm",
+        "create alarm", "delete rule", "remove rule", "delete all",
+        "remove all", "standard deviation", "baseline",
+        "i've set", "i have set", "was set", "report", "analysis",
+        "acknowledge", "clear alarm",
     ]
 
     msg_lower = user_message.lower()
 
-    # Immediately bail if exclusion keywords found
+    # Bail if exclusion keyword found
     if any(ex in msg_lower for ex in exclusion_keywords):
         return None
 
-    # Check for strict or loose control keywords
-    has_strict = any(kw in msg_lower for kw in control_keywords)
-    has_loose  = any(kw in msg_lower for kw in loose_keywords)
-
-    if not has_strict and not has_loose:
+    if not any(kw in msg_lower for kw in control_keywords):
         return None
 
     device_names = [d["name"] for d in devices]
@@ -577,32 +567,24 @@ async def _try_parse_rpc_intent(
     else:
         keys_context = "\nNo telemetry keys known yet — infer from user message."
 
-    parse_prompt = f"""You are an IoT RPC command parser. Your ONLY job is to detect if the user wants to physically control a device actuator RIGHT NOW.
+    parse_prompt = f"""You are an IoT RPC command parser. Extract the device control intent from the user message.
 
 Available devices: {json.dumps(device_names)}
 {keys_context}
 User message: "{user_message}"
 
-STRICT RULES — respond with null unless ALL conditions are met:
-1. The user is giving a DIRECT command to control a physical device output (LED, relay, motor, pump, fan, valve, buzzer)
-2. The key being set MUST exist in the device's actual key list above
-3. Do NOT respond to: threshold changes, alarm settings, rule configurations, reports, questions, or analysis requests
-4. Do NOT invent keys that don't exist in the device's key list
-5. If the message is about viewing/checking/reporting — respond null
+Respond ONLY with valid JSON in this exact format (no explanation, no markdown):
+{{"device_name": "<exact device name from list>", "params": {{"<key>": <true/false or number>}}}}
 
-Valid examples:
-- "turn on led1" → {{"device_name": "ESP32-001", "params": {{"led1": true}}}}
-- "stop the pump" → {{"device_name": "ESP32-Pump", "params": {{"pump_main": false}}}}
-- "set motor speed to 80" → {{"device_name": "ESP32-Motor", "params": {{"motor_speed": 80}}}}
-
-Invalid — respond null:
-- "set the threshold to 410" → null (threshold change, not RPC)
-- "enable the alarm" → null (alarm config, not device control)
-- "I've set the distance rule" → null (reporting, not commanding)
-- "what is the temperature" → null (question, not command)
-
-Respond ONLY with valid JSON or the word null:
-{{"device_name": "<exact name>", "params": {{"<exact key>": <value>}}}}"""
+Rules:
+- Use the EXACT key names from the device's actual key list above.
+- "turn on led1" → {{"params": {{"led1": true}}}}
+- "turn off led2" → {{"params": {{"led2": false}}}}
+- "set relay1 to 1" → {{"params": {{"relay1": true}}}}
+- For boolean keys: on/start/enable/open/activate = true, off/stop/disable/close/deactivate = false
+- If no device is mentioned and only one device exists, use that device.
+- If the key name is ambiguous, pick the closest match from the device's actual key list.
+- If intent is unclear or not a control command, respond with: null"""
 
     try:
         result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=150, temperature=0.1)

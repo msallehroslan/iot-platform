@@ -2049,6 +2049,8 @@ function AIChatbot({ user }) {
     if (open) intelligenceApi.usage().then(setUsage).catch(()=>{});
   }, [open]);
 
+  const [showHelp, setShowHelp] = useState(false);
+
   const clearHistory = () => {
     const fresh = [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
     setMsgs(fresh);
@@ -2255,6 +2257,9 @@ function AIChatbot({ user }) {
               <button onClick={clearHistory} title="Clear history" style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.5}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
               </button>
+              <button onClick={()=>setShowHelp(h=>!h)} title="Command help" style={{background: showHelp ? "rgba(47,140,255,0.3)" : "none",border:"none",cursor:"pointer",padding:"2px 4px",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </button>
               <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2.5" style={{width:14,height:14}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -2275,7 +2280,7 @@ function AIChatbot({ user }) {
           </div>
 
           {/* Tab: Report */}
-          {tab === "report" && (
+          {tab === "report" && !showHelp && (
             <div style={{flex:1,overflowY:"auto",padding:"14px"}}>
               {reportLoading && (
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -2332,8 +2337,77 @@ function AIChatbot({ user }) {
             </div>
           )}
 
+          {/* Help Panel */}
+          {showHelp && (
+            <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+              <p style={{fontSize:11,fontWeight:700,color:"#334866",margin:0}}>💡 What you can ask TAAT</p>
+
+              {[
+                {
+                  cat: "⚡ Device Control",
+                  color: "#2F8CFF",
+                  cmds: [
+                    "Turn on led1",
+                    "Turn off led2",
+                    "Start the pump",
+                    "Stop the motor",
+                    "Set motor speed to 80",
+                    "Toggle relay1",
+                  ]
+                },
+                {
+                  cat: "🔔 Alarm Rules",
+                  color: "#f59e0b",
+                  cmds: [
+                    "Set temperature alarm above 80 critical",
+                    "Create warning alarm when humidity exceeds 90",
+                    "Set distance alarm on Temperature above 410 warning",
+                    "Change the humidity rule to 75",
+                    "Delete the temperature rule",
+                    "Delete all rules chain",
+                  ]
+                },
+                {
+                  cat: "🚨 Alarm Actions",
+                  color: "#ef4444",
+                  cmds: [
+                    "Acknowledge all alarms",
+                    "Acknowledge all critical alarms",
+                    "Clear all warnings",
+                    "Resolve all alarms",
+                  ]
+                },
+                {
+                  cat: "📊 Insights",
+                  color: "#10b981",
+                  cmds: [
+                    "Which device is most critical?",
+                    "What are the current trends?",
+                    "Give me a fleet overview",
+                    "Why did the temperature alarm fire?",
+                    "Is ESP32-e823 behaving differently this week?",
+                  ]
+                },
+              ].map(section=>(
+                <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
+                  <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
+                  {section.cmds.map(cmd=>(
+                    <button key={cmd} onClick={()=>{setShowHelp(false);setTab("chat");setTimeout(()=>send(cmd),100);}}
+                      style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",
+                        padding:"3px 0",fontSize:10,color:"#334866",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
+                      → {cmd}
+                    </button>
+                  ))}
+                </div>
+              ))}
+              <button onClick={()=>setShowHelp(false)} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
+                ← Back to chat
+              </button>
+            </div>
+          )}
+
           {/* Tab: Chat */}
-          {tab === "chat" && <>
+          {tab === "chat" && !showHelp && <>
           {/* Messages */}
           <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
             {msgs.map((m,i)=>(
