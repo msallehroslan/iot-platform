@@ -2230,6 +2230,9 @@ function AIChatbot({ user }) {
     setTimeout(()=>inputRef.current?.focus(), 50);
     try {
       const history = [...msgs, userMsg].slice(-10);
+      // Pass pending_confirm if the last assistant message had a HIGH-risk action waiting
+      const lastAssistant = [...msgs].reverse().find(m => m.role === "assistant");
+      const pendingConfirm = lastAssistant?.confirm_required || null;
       const res = await intelligenceApi.chat(history, null, pendingConfirm);
       setMsgs(m => [...m, {
         role:           "assistant",
