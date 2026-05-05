@@ -703,6 +703,247 @@ export function HtmlCard({ config, liveTelem }) {
 
 // ── Master registry + dispatcher ──────────────────────────────────────────────
 
+
+// ── Anomaly Score Widget ──────────────────────────────────────────────────────
+export function AnomalyWidget({ config, deviceId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    fetch(`${API_BASE}/intelligence/anomalies/${deviceId}`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
+    })
+    .then(r => r.json())
+    .then(d => { setData(d); setLoading(false); })
+    .catch(() => setLoading(false));
+  }, [deviceId]);
+
+  const label = config.key || "all";
+
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}>
+      <div style={{fontSize:11,color:"#94a3b8"}}>Loading anomaly data...</div>
+    </div>
+  );
+
+  const scores = data?.scores || [];
+  const keyScores = label === "all" ? scores : scores.filter(s => s.key === label);
+  const recent = keyScores.slice(0, 20);
+  const hasData = recent.length > 0;
+  const learning = data?.learning || !hasData;
+
+  if (learning) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10,padding:16}}>
+      <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,#667eea,#764ba2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🧠</div>
+      <p style={{fontSize:12,fontWeight:700,color:"#334866",margin:0}}>Learning Mode</p>
+      <p style={{fontSize:10,color:"#94a3b8",textAlign:"center",margin:0}}>Collecting baseline data.<br/>Anomaly scoring starts after 20 readings.</p>
+      <div style={{width:"80%",height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
+        <div style={{width:`${Math.min(100,(data?.sample_count||0)/20*100)}%`,height:"100%",background:"linear-gradient(90deg,#667eea,#764ba2)",borderRadius:2,transition:"width 1s"}}/>
+      </div>
+      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{data?.sample_count||0} / 20 readings</p>
+    </div>
+  );
+
+  // Find max anomaly score
+  const maxScore = Math.max(...recent.map(s => s.z_score || 0));
+  const anomalyColor = maxScore > 3 ? "#ef4444" : maxScore > 2 ? "#f59e0b" : "#10b981";
+  const anomalyLabel = maxScore > 3 ? "ANOMALY" : maxScore > 2 ? "UNUSUAL" : "NORMAL";
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",padding:"10px 12px",gap:8}}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#334866"}}>Anomaly Score</span>
+        <span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:`${anomalyColor}15`,color:anomalyColor,fontWeight:700,border:`1px solid ${anomalyColor}30`}}>{anomalyLabel}</span>
+      </div>
+
+      {/* Score bar */}
+      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+        {[...new Set(recent.map(s => s.key))].slice(0,4).map(k => {
+          const kScores = recent.filter(s => s.key === k);
+          const latest = kScores[0];
+          const z = Math.abs(latest?.z_score || 0);
+          const pct = Math.min(100, z / 5 * 100);
+          const col = z > 3 ? "#ef4444" : z > 2 ? "#f59e0b" : "#10b981";
+          return (
+            <div key={k}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                <span style={{fontSize:9,color:"#64748b",fontFamily:"monospace"}}>{k}</span>
+                <span style={{fontSize:9,fontWeight:600,color:col}}>z={z.toFixed(2)}</span>
+              </div>
+              <div style={{height:5,background:"#f1f5f9",borderRadius:3,overflow:"hidden"}}>
+                <div style={{width:`${pct}%`,height:"100%",background:col,borderRadius:3,transition:"width 0.5s"}}/>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Last anomaly */}
+      {maxScore > 2 && (
+        <div style={{marginTop:"auto",padding:"5px 8px",borderRadius:6,background:"#fef2f2",border:"1px solid #fecaca"}}>
+          <p style={{margin:0,fontSize:9,color:"#dc2626"}}>⚠️ Unusual reading detected — z-score {maxScore.toFixed(2)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Baseline / Adaptive Threshold Widget ──────────────────────────────────────
+export function BaselineWidget({ config, deviceId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    fetch(`${API_BASE}/intelligence/baseline/${deviceId}`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
+    })
+    .then(r => r.json())
+    .then(d => { setData(d); setLoading(false); })
+    .catch(() => setLoading(false));
+  }, [deviceId]);
+
+  const key = config.key;
+
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}>
+      <div style={{fontSize:11,color:"#94a3b8"}}>Loading baseline...</div>
+    </div>
+  );
+
+  const baselines = data?.baselines || {};
+  const keyData = key ? baselines[key] : null;
+  const hasData = Object.keys(baselines).length > 0;
+  const daysCovered = data?.days_covered || 0;
+  const needed = 30;
+
+  if (!hasData) return (
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10,padding:16}}>
+      <div style={{width:48,height:48,borderRadius:"50%",background:"linear-gradient(135deg,#f59e0b,#ef4444)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>📊</div>
+      <p style={{fontSize:12,fontWeight:700,color:"#334866",margin:0}}>Building Baseline</p>
+      <p style={{fontSize:10,color:"#94a3b8",textAlign:"center",margin:0}}>Adaptive thresholds available after 30 days of data.</p>
+      <div style={{width:"80%",height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
+        <div style={{width:`${Math.min(100,daysCovered/needed*100)}%`,height:"100%",background:"linear-gradient(90deg,#f59e0b,#ef4444)",borderRadius:2}}/>
+      </div>
+      <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{daysCovered} / {needed} days</p>
+    </div>
+  );
+
+  const displayKeys = key ? (keyData ? { [key]: keyData } : {}) : Object.entries(baselines).slice(0, 4).reduce((a, [k, v]) => ({ ...a, [k]: v }), {});
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",padding:"10px 12px",gap:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#334866"}}>Adaptive Baselines</span>
+        <span style={{fontSize:9,color:"#94a3b8"}}>{daysCovered}d data</span>
+      </div>
+      {Object.entries(displayKeys).map(([k, stats]) => {
+        const mean = stats?.mean || 0;
+        const std = stats?.std || 0;
+        const upper = (mean + 3 * std).toFixed(1);
+        const lower = (mean - 3 * std).toFixed(1);
+        return (
+          <div key={k} style={{background:"#f8faff",borderRadius:8,padding:"7px 10px",border:"1px solid #e2e8f0"}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+              <span style={{fontSize:10,fontWeight:600,color:"#334866",fontFamily:"monospace"}}>{k}</span>
+              <span style={{fontSize:9,color:"#10b981",fontWeight:600}}>μ={mean.toFixed(1)} σ={std.toFixed(1)}</span>
+            </div>
+            <div style={{display:"flex",gap:4}}>
+              <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"#dbeafe",color:"#1d4ed8"}}>Lower: {lower}</span>
+              <span style={{fontSize:9,padding:"1px 6px",borderRadius:4,background:"#dcfce7",color:"#166534"}}>Upper: {upper}</span>
+            </div>
+          </div>
+        );
+      })}
+      <p style={{fontSize:9,color:"#94a3b8",marginTop:"auto",margin:"auto 0 0"}}>Suggested alarm thresholds (±3σ)</p>
+    </div>
+  );
+}
+
+// ── Health Score Widget ───────────────────────────────────────────────────────
+export function HealthScoreWidget({ config, deviceId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!deviceId) return;
+    fetch(`${API_BASE}/intelligence/health/${deviceId}`, {
+      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
+    })
+    .then(r => r.json())
+    .then(d => { setData(d); setLoading(false); })
+    .catch(() => setLoading(false));
+  }, [deviceId]);
+
+  if (loading) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}>
+      <div style={{fontSize:11,color:"#94a3b8"}}>Loading health score...</div>
+    </div>
+  );
+
+  const score = data?.score ?? null;
+  const components = data?.components || {};
+  const status = score === null ? "UNKNOWN" : score >= 80 ? "HEALTHY" : score >= 60 ? "WARNING" : "CRITICAL";
+  const color = status === "HEALTHY" ? "#10b981" : status === "WARNING" ? "#f59e0b" : status === "UNKNOWN" ? "#94a3b8" : "#ef4444";
+  const maintenance = data?.maintenance_due;
+
+  // Gauge arc calculation
+  const radius = 40;
+  const cx = 60, cy = 65;
+  const startAngle = -210, endAngle = 30;
+  const range = endAngle - startAngle;
+  const scoreAngle = score !== null ? startAngle + (score / 100) * range : startAngle;
+  const toRad = a => (a * Math.PI) / 180;
+  const arcX = (angle) => cx + radius * Math.cos(toRad(angle));
+  const arcY = (angle) => cy + radius * Math.sin(toRad(angle));
+  const bgPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${radius} ${radius} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
+  const fillPath = score !== null ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${radius} ${radius} 0 ${Math.abs(scoreAngle - startAngle) > 180 ? 1 : 0} 1 ${arcX(scoreAngle)} ${arcY(scoreAngle)}` : null;
+
+  const compLabels = { uptime: "Uptime", alarm: "Alarm", stability: "Stability", freshness: "Freshness" };
+
+  return (
+    <div style={{height:"100%",display:"flex",flexDirection:"column",padding:"8px 12px",gap:6}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#334866"}}>Device Health</span>
+        <span style={{fontSize:9,padding:"2px 8px",borderRadius:20,background:`${color}15`,color,fontWeight:700,border:`1px solid ${color}30`}}>{status}</span>
+      </div>
+
+      {/* Gauge */}
+      <div style={{display:"flex",justifyContent:"center"}}>
+        <svg width="120" height="80" viewBox="0 0 120 80">
+          <path d={bgPath} fill="none" stroke="#e2e8f0" strokeWidth="8" strokeLinecap="round"/>
+          {fillPath && <path d={fillPath} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"/>}
+          <text x={cx} y={cy+2} textAnchor="middle" fontSize="20" fontWeight="700" fill={color}>{score !== null ? Math.round(score) : "?"}</text>
+          <text x={cx} y={cy+14} textAnchor="middle" fontSize="7" fill="#94a3b8">/100</text>
+        </svg>
+      </div>
+
+      {/* Components */}
+      {Object.keys(components).length > 0 && (
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          {Object.entries(components).map(([k, v]) => (
+            <div key={k} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:9,color:"#64748b",width:60}}>{compLabels[k]||k}</span>
+              <div style={{flex:1,height:4,background:"#f1f5f9",borderRadius:2,overflow:"hidden"}}>
+                <div style={{width:`${v||0}%`,height:"100%",background:v>=80?"#10b981":v>=60?"#f59e0b":"#ef4444",borderRadius:2}}/>
+              </div>
+              <span style={{fontSize:9,fontWeight:600,color:"#334866",width:24,textAlign:"right"}}>{Math.round(v||0)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {maintenance && (
+        <div style={{padding:"4px 8px",borderRadius:6,background:"#fef3c7",border:"1px solid #fde68a"}}>
+          <p style={{margin:0,fontSize:9,color:"#92400e"}}>⚠️ Maintenance recommended — {data?.maintenance_reason || "health score low"}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const WIDGET_REGISTRY = [
   // ── Data widgets ─────────────────────────────────────────────────────────
   { id: "value_card",        label: "Value Card",        icon: "M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8",             desc: "Large number + sparkline",         category: "data" },
@@ -724,6 +965,10 @@ export const WIDGET_REGISTRY = [
   { id: "rpc_button",        label: "RPC Button",        icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Send command on click",            category: "control" },
   { id: "rpc_toggle",        label: "RPC Toggle",        icon: "M18.36 6.64A9 9 0 1 1 5.64 17.36",                                     desc: "ON/OFF toggle command",            category: "control" },
   { id: "rpc_input",         label: "RPC Input",         icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z", desc: "Send value to device (setpoint override)", category: "control" },
+  // ── Intelligence widgets ─────────────────────────────────────────────────
+  { id: "anomaly_score",     label: "Anomaly Score",     icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Z-score anomaly detection",       category: "intelligence" },
+  { id: "baseline",          label: "Baseline / Thresholds", icon: "M3 3v18h18M7 12l4-4 4 4 4-4",                                    desc: "Adaptive threshold suggestions",  category: "intelligence" },
+  { id: "health_score",      label: "Health Score",      icon: "M22 12h-4l-3 9L9 3l-3 9H2",                                           desc: "Device health 0-100 gauge",       category: "intelligence" },
   // ── Content widgets ──────────────────────────────────────────────────────
   { id: "markdown",          label: "Text / Markdown",   icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",          desc: "Free-text notes",                  category: "content" },
   { id: "html_card",         label: "HTML Card",         icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",         desc: "Custom HTML with \${key} values",  category: "content" },
@@ -762,6 +1007,10 @@ export const WIDGET_COMPONENT_MAP = {
   rpc_button:        RpcButtonWidget,
   rpc_toggle:        RpcToggleWidget,
   rpc_input:         RpcInputWidget,
+  // ── Intelligence ───────────────────────────────────────────────────────────
+  anomaly_score:     AnomalyWidget,
+  baseline:          BaselineWidget,
+  health_score:      HealthScoreWidget,
   // ── Content ────────────────────────────────────────────────────────────────
   markdown:          MarkdownWidget,
   html_card:         HtmlCard,

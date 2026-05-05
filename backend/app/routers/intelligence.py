@@ -911,6 +911,90 @@ async def _try_parse_rule_intent(
                             "threshold": threshold, "condition": rule.condition,
                             "severity": rule.severity.value if hasattr(rule.severity,"value") else str(rule.severity)}
 
+    # Fast path for CREATE — extract device, key, threshold, severity directly
+    # Pattern: "set <key> alarm on <device> above/below <number> <severity>"
+    # or: "create <severity> alarm when <key> exceeds <number>"
+    import re as _re2
+    create_words = ["set", "create", "add", "alert me", "notify me", "alarm when", "when "]
+    condition_words = {"above": "gt", "exceeds": "gt", "greater than": "gt", "more than": "gt",
+                       "below": "lt", "drops below": "lt", "less than": "lt", "under": "lt"}
+    severity_words = {"critical": "CRITICAL", "major": "MAJOR", "minor": "MINOR",
+                      "warning": "WARNING", "warn": "WARNING", "indeterminate": "INDETERMINATE"}
+
+    if any(w in msg_lower for w in create_words) and not any(w in msg_lower for w in ["delete","remove","change","update","modify"]):
+        # Extract threshold number
+        nums = _re2.findall(r'\d+\.?\d*', user_message)
+        threshold = float(nums[0]) if nums else None
+
+        # Extract severity
+        severity = "WARNING"
+        for sw, sv in severity_words.items():
+            if sw in msg_lower:
+                severity = sv
+                break
+
+        # Extract condition
+        condition = "gt"
+        for cw, cv in condition_words.items():
+            if cw in msg_lower:
+                condition = cv
+                break
+
+        # Extract device name from message
+        device_name = None
+        for d in devices:
+            if d["name"].lower() in msg_lower:
+                device_name = d["name"]
+                break
+
+        # Extract key — look for telemetry keys in message
+        # Get all actual keys from existing rules + devices
+        all_known_keys = list(set(r.key for r in existing_rules))
+        # Also try to find key from message words (word before "alarm" or "rule")
+        key_match = _re2.search(r'([a-z_]+)\s+(?:alarm|rule|threshold|sensor)', msg_lower)
+        extracted_key = None
+        if key_match and key_match.group(1) not in ["a","an","the","this","that","set","create","add","new","high","low","critical","warning","major","minor"]:
+            extracted_key = key_match.group(1)
+        # Check if extracted key matches a known rule key
+        if not extracted_key:
+            for k in all_known_keys:
+                if k in msg_lower:
+                    extracted_key = k
+                    break
+
+        if extracted_key and threshold is not None:
+            # Make sure we don't use device name as key
+            if device_name and extracted_key.lower() == device_name.lower():
+                extracted_key = None  # ambiguous, let Groq handle
+            else:
+                alarm_type = f"High {extracted_key.replace('_',' ').title()}" if condition == "gt" else f"Low {extracted_key.replace('_',' ').title()}"
+                return {
+                    "action": "create",
+                    "device_name": device_name,
+                    "key": extracted_key,
+                    "condition": condition,
+                    "threshold": threshold,
+                    "severity": severity,
+                    "alarm_type": alarm_type,
+                }
+
+    # Fast path for UPDATE — match key from existing rules, extract number
+    if any(w in msg_lower for w in ["change", "update", "modify", "change the", "update the"]):
+        import re as _re3
+        for rule in existing_rules:
+            if rule.key.lower() in msg_lower:
+                nums = _re3.findall(r'[0-9]+\.?[0-9]*', user_message)
+                if nums:
+                    dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+                    return {
+                        "action": "update",
+                        "key": rule.key,
+                        "device_name": dn,
+                        "threshold": float(nums[0]),
+                        "condition": rule.condition,
+                        "severity": rule.severity.value if hasattr(rule.severity, "value") else str(rule.severity),
+                    }
+
     # Fast path for DELETE — no Groq, parse key from message directly
     if any(w in msg_lower for w in ["delete", "remove", "clear"]):
         if any(w in msg_lower for w in ["all rules", "rules chain", "rule chain"]):

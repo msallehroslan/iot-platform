@@ -201,6 +201,10 @@ VALID_WIDGET_TYPES = {
     # Phase 3 — 6 new types
     "multi_axis_chart", "map", "device_summary",
     "rpc_button", "rpc_toggle", "rpc_input",
+    # Phase 4+
+    "fleet_map", "trend_indicator",
+    # Phase 9 — Intelligence widgets
+    "anomaly_score", "baseline", "health_score",
 }
 
 
