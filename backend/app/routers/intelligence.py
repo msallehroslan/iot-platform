@@ -678,7 +678,7 @@ async def _execute_rpc_from_chat(
 
 RULE_KEYWORDS = [
     "set alarm", "create alarm", "add alarm", "create rule", "add rule",
-    "set rule", "update rule", "change rule", "delete rule", "remove rule",
+    "set rule", "update rule", "change rule", "change the", "update the", "modify rule", "delete rule", "remove rule",
     "delete all rules", "remove all rules", "clear all rules",
     "delete rules chain", "clear rules chain", "remove rules chain",
     "set threshold", "change threshold", "update threshold",
@@ -1021,10 +1021,18 @@ async def _execute_rule_from_chat(
 
         elif action == "update":
             rule_id = intent.get("rule_id")
+            # Try by rule_id first
             rule = db.query(ThresholdRule).filter(
                 ThresholdRule.id == rule_id,
                 ThresholdRule.tenant_id == current_user.tenant_id,
             ).first()
+            # Fallback: match by key name if rule_id not found
+            if not rule and intent.get("key"):
+                rule = db.query(ThresholdRule).filter(
+                    ThresholdRule.tenant_id == current_user.tenant_id,
+                    ThresholdRule.key == intent["key"],
+                    ThresholdRule.is_active == True,
+                ).first()
             if not rule:
                 return None
 
