@@ -1244,8 +1244,13 @@ async def ai_chat(
 
     raw_devices = _scoped_devices(current_user, db).limit(50).all()
     devices = [
-        {"id": str(d.id), "name": d.name, "type": d.device_type,
-         "status": d.status.value if hasattr(d.status, "value") else str(d.status)}
+        {
+            "id":           str(d.id),
+            "name":         d.name,
+            "type":         d.device_type,
+            "status":       d.status.value if hasattr(d.status, "value") else str(d.status),
+            "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+        }
         for d in raw_devices
     ]
 
@@ -1279,11 +1284,24 @@ async def ai_chat(
         confirm_mode = True
 
     # ── Step 1: Classify intent ───────────────────────────────────────────────
-    intent = await classify_intent(api_key, last_user_msg, _call_groq)
+    try:
+        intent = await classify_intent(api_key, last_user_msg, _call_groq)
+    except Exception as exc:
+        logger.warning("intent classification failed: %s", exc)
+        intent = "QUESTION"
 
     # ── Step 2: Build context ─────────────────────────────────────────────────
     device_id_str = str(body.device_id) if body.device_id else None
-    ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
+    try:
+        ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
+    except Exception as exc:
+        logger.error("build_context failed: %s", exc)
+        ctx = {
+            "intent":      intent,
+            "device_list": devices,
+            "active_alarms": [],
+            "memory":      {"count": 0, "memories": []},
+        }
 
     # ── Step 3: Permission check ──────────────────────────────────────────────
     action = None
@@ -1438,7 +1456,7 @@ async def ai_chat(
 
     # ── Step 5: Groq reply ────────────────────────────────────────────────────
     try:
-        reply = await _call_groq(api_key, chat_messages, max_tokens=600, temperature=0.4)
+        reply = await _call_groq(api_key, chat_messages, max_tokens=700, temperature=0.4)
 
         # Auto-save notable events to memory
         if action_result and action_result.get("success"):

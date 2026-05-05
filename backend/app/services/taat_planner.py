@@ -149,72 +149,95 @@ def build_context(
 
     ctx: dict = {
         "intent":      intent,
-        "device_list": [{"id": d["id"], "name": d["name"], "status": d["status"]} for d in devices],
+        "device_list": [
+            {
+                "id":           d["id"],
+                "name":         d["name"],
+                "status":       d["status"],
+                "last_seen_at": d.get("last_seen_at"),
+            }
+            for d in devices
+        ],
     }
 
-    # Always fetch memory — cheap, cached, gives TAAT context
-    ctx["memory"] = tool_get_memory(db, current_user)
+    # ── Each tool call is individually guarded ────────────────────────────────
+    # A missing table (migration not run), Redis error, or any transient failure
+    # must NEVER crash the chat endpoint. Tools return empty dicts on failure.
 
-    # For all intents: active alarms fleet-wide
+    def _safe(fn, *args, fallback=None, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            logger.debug("taat_planner tool error (%s): %s", fn.__name__, exc)
+            return fallback if fallback is not None else {}
+
+    # Memory — gracefully handles missing agent_memory table
+    ctx["memory"] = _safe(tool_get_memory, db, current_user, fallback={"count": 0, "memories": []})
+
+    # Fleet alarms
     if devices:
         all_alarms = []
         for d in devices[:10]:
-            a = tool_get_active_alarms(db, d["id"])
-            if a.get("count", 0) > 0:
-                for alarm in a.get("alarms", []):
-                    all_alarms.append({**alarm, "device_name": d["name"]})
+            a = _safe(tool_get_active_alarms, db, d["id"], fallback={"count": 0, "alarms": []})
+            for alarm in a.get("alarms", []):
+                all_alarms.append({**alarm, "device_name": d["name"]})
         ctx["active_alarms"] = all_alarms[:20]
 
     # Device-specific context
     focus_id = device_id or (devices[0]["id"] if len(devices) == 1 else None)
 
-    if focus_id and intent in ("QUESTION", "DEVICE_CONTROL", "ALARM", "RCA", "RECOMMEND"):
-        ctx["telemetry"]    = tool_get_latest_telemetry(db, focus_id)
-        ctx["health"]       = tool_get_device_health(db, focus_id)
-        ctx["anomalies"]    = tool_get_anomalies(db, focus_id, hours=24)
-        ctx["baseline"]     = tool_get_baseline(db, focus_id)
+    if focus_id and intent in ("QUESTION", "DEVICE_CONTROL", "ALARM", "RCA", "RECOMMEND", "SCHEDULE"):
+        ctx["telemetry"] = _safe(tool_get_latest_telemetry, db, focus_id)
+        ctx["health"]    = _safe(tool_get_device_health,    db, focus_id)
+        ctx["anomalies"] = _safe(tool_get_anomalies,        db, focus_id, hours=24)
+        ctx["baseline"]  = _safe(tool_get_baseline,         db, focus_id)
 
-    if focus_id and intent in ("DEVICE_CONTROL", "RCA"):
-        ctx["rpc_history"] = tool_get_rpc_history(db, focus_id, limit=5)
+    if focus_id and intent in ("DEVICE_CONTROL", "RCA", "SCHEDULE"):
+        ctx["rpc_history"] = _safe(tool_get_rpc_history, db, focus_id, limit=5)
 
     if intent == "RECOMMEND" and focus_id:
-        # Full enriched view for recommendation
-        ctx["telemetry"]    = tool_get_latest_telemetry(db, focus_id)
-        ctx["health"]       = tool_get_device_health(db, focus_id)
-        ctx["anomalies"]    = tool_get_anomalies(db, focus_id, hours=24)
-        ctx["baseline"]     = tool_get_baseline(db, focus_id)
-        ctx["rpc_history"]  = tool_get_rpc_history(db, focus_id, limit=5)
-        # Enrich anomalous keys with KeyIntelligence
-        most_anom = ctx["anomalies"].get("most_anomalous_key")
+        ctx["telemetry"]  = _safe(tool_get_latest_telemetry, db, focus_id)
+        ctx["health"]     = _safe(tool_get_device_health,    db, focus_id)
+        ctx["anomalies"]  = _safe(tool_get_anomalies,        db, focus_id, hours=24)
+        ctx["baseline"]   = _safe(tool_get_baseline,         db, focus_id)
+        ctx["rpc_history"] = _safe(tool_get_rpc_history,     db, focus_id, limit=5)
+        most_anom = ctx.get("anomalies", {}).get("most_anomalous_key")
         if most_anom:
             from app.services.taat_tools import tool_get_key_intelligence
-            ctx["key_intel"] = tool_get_key_intelligence(db, focus_id, most_anom)
+            ctx["key_intel"] = _safe(tool_get_key_intelligence, db, focus_id, most_anom)
 
     if intent == "RULE":
-        from app.models.models import ThresholdRule
-        rules = db.query(ThresholdRule).filter(
-            ThresholdRule.tenant_id == current_user.tenant_id,
-            ThresholdRule.is_active == True,
-        ).all()
-        ctx["existing_rules"] = [
-            {"id": str(r.id), "key": r.key, "condition": r.condition,
-             "threshold": r.threshold, "severity": r.severity.value if hasattr(r.severity, "value") else str(r.severity)}
-            for r in rules
-        ]
+        try:
+            from app.models.models import ThresholdRule
+            rules = db.query(ThresholdRule).filter(
+                ThresholdRule.tenant_id == current_user.tenant_id,
+                ThresholdRule.is_active == True,
+            ).all()
+            ctx["existing_rules"] = [
+                {"id": str(r.id), "key": r.key, "condition": r.condition,
+                 "threshold": r.threshold,
+                 "severity": r.severity.value if hasattr(r.severity, "value") else str(r.severity)}
+                for r in rules
+            ]
+        except Exception as exc:
+            logger.debug("existing_rules fetch failed: %s", exc)
+            ctx["existing_rules"] = []
 
     if intent == "USER":
-        from app.models.models import User
-        users = db.query(User).filter(
-            User.tenant_id == current_user.tenant_id
-        ).all()
-        ctx["users"] = [
-            {"id": str(u.id), "email": u.email, "role": u.role,
-             "name": f"{u.first_name or ''} {u.last_name or ''}".strip()}
-            for u in users
-        ]
+        try:
+            from app.models.models import User
+            users = db.query(User).filter(User.tenant_id == current_user.tenant_id).all()
+            ctx["users"] = [
+                {"id": str(u.id), "email": u.email, "role": u.role,
+                 "name": f"{u.first_name or ''} {u.last_name or ''}".strip()}
+                for u in users
+            ]
+        except Exception as exc:
+            logger.debug("users fetch failed: %s", exc)
+            ctx["users"] = []
 
     if intent in ("RCA", "RECOMMEND"):
-        ctx["audit_trail"] = tool_get_audit_log(db, current_user, limit=10)
+        ctx["audit_trail"] = _safe(tool_get_audit_log, db, current_user, limit=10)
 
     return ctx
 
@@ -283,7 +306,7 @@ def build_system_prompt(
     now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M UTC")
 
     device_lines = "\n".join(
-        f"  - {d['name']} [{d['status']}]"
+        f"  - {d['name']} [{d.get('status','?')}]{(' | last seen: ' + d['last_seen_at'][:16].replace('T',' ') + ' UTC') if d.get('last_seen_at') else ''}"
         for d in ctx.get("device_list", [])
     ) or "  None"
 
