@@ -1462,6 +1462,44 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
             )
         })
 
+    if rule_actioned:
+        chat_messages.append({
+            "role": "system",
+            "content": (
+                f"CONFIRMED: Rule {rule_actioned.get('action')} executed. "
+                f"Details: {json.dumps(rule_actioned)}. "
+                f"Confirm with ✅. Do not ask for confirmation."
+            )
+        })
+
+    if user_actioned:
+        if user_actioned.get("action") == "list":
+            chat_messages.append({
+                "role": "system",
+                "content": f"User list: {json.dumps(user_actioned.get('users', []))}. Present as a formatted list."
+            })
+        elif user_actioned.get("error"):
+            chat_messages.append({
+                "role": "system",
+                "content": f"User action failed: {user_actioned['error']}. Tell the user honestly."
+            })
+        elif user_actioned.get("action") == "denied":
+            chat_messages.append({
+                "role": "system",
+                "content": "User management denied — only TENANT_ADMIN can manage users. Tell the user."
+            })
+        else:
+            pw = user_actioned.get("password")
+            chat_messages.append({
+                "role": "system",
+                "content": (
+                    f"CONFIRMED: User {user_actioned.get('action')} successfully. "
+                    f"Details: {json.dumps({k:v for k,v in user_actioned.items() if k!='password'})}. "
+                    + (f"Temporary password: {pw} — share this with the user." if pw else "")
+                    + " Confirm with ✅."
+                )
+            })
+
     for msg in body.messages:
         chat_messages.append({"role": msg.role, "content": msg.content})
 
@@ -1473,7 +1511,9 @@ Be concise and technical. Use bullet points for lists. Today is {datetime.now().
             "engine":         f"groq/{GROQ_MODEL_FAST}",
             "rpc_executed":   rpc_executed,
             "alarm_actioned": alarm_actioned,
-            "rate":           rate_info,       # frontend can show usage counter
+            "rule_actioned":  rule_actioned,
+            "user_actioned":  user_actioned,
+            "rate":           rate_info,
         }
     except Exception as exc:
         logger.error("chat.failed error=%s", exc)
