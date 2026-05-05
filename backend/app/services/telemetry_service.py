@@ -439,6 +439,13 @@ async def ingest_telemetry(
             try: db.rollback()
             except: pass
 
+    # Phase 11: Invalidate Redis cache for this device (non-fatal)
+    try:
+        from app.services.cache_service import cache as _cache
+        await _cache.invalidate_device(str(device.id))
+    except Exception as exc:
+        logger.debug("cache invalidation skipped: %s", exc)
+
     # WebSocket broadcast (non-fatal)
     try:
         from app.core.websocket_manager import manager as ws_manager

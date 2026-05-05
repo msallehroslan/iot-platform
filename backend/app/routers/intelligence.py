@@ -26,6 +26,15 @@ from app.core.database import get_db
 from app.core.auth_deps import get_current_user, require_admin
 from app.models.models import Device, Alarm, TelemetryData, ThresholdRule
 from app.services.trend_service import get_device_key_trend, get_all_key_trends
+from app.services.data_service import (
+    get_latest_telemetry as ds_get_latest,
+    get_aggregated_telemetry as ds_get_aggregated,
+    get_active_alarms as ds_get_alarms,
+    get_baseline_now as ds_get_baseline,
+    get_anomaly_summary as ds_get_anomaly,
+    get_health_summary as ds_get_health,
+    get_unified_intelligence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -620,58 +629,22 @@ async def _execute_rpc_from_chat(
     params: dict,
 ) -> Optional[dict]:
     """
-    Find the device by name and queue an RPC command.
+    Find the device by name and queue an RPC command via rpc_service.
     Returns result dict or None on failure.
+
+    Phase 11: now delegates entirely to rpc_service.send_command_by_device_name()
+    — validation, audit logging, rate limiting and WS dispatch all happen there.
     """
-    from app.models.models import RpcCommand, RpcCommandStatus
-    from app.core.websocket_manager import manager as ws_manager
-
-    # Find matching device (case-insensitive)
-    matched = next(
-        (d for d in devices if d.name.lower() == device_name.lower()), None
+    from app.services.rpc_service import send_command_by_device_name
+    return await send_command_by_device_name(
+        db,
+        devices     = devices,
+        device_name = device_name,
+        method      = "set",
+        params      = params,
+        current_user= current_user,
+        source      = "chat",
     )
-    if not matched:
-        # Try partial match
-        matched = next(
-            (d for d in devices if device_name.lower() in d.name.lower()), None
-        )
-    if not matched:
-        return None
-
-    try:
-        cmd = RpcCommand(
-            device_id  = matched.id,
-            method     = "set",
-            params     = params,
-            status     = RpcCommandStatus.PENDING,
-            created_by = str(current_user.id),
-        )
-        db.add(cmd)
-        db.commit()
-        db.refresh(cmd)
-
-        # Push via WebSocket immediately
-        try:
-            await ws_manager.broadcast_json(str(matched.id), {
-                "type":   "rpc",
-                "cmd_id": str(cmd.id),
-                "method": "set",
-                "params": params,
-            })
-        except Exception:
-            pass  # WS failure doesn't block — device will poll
-
-        logger.info("chat.rpc sent device=%s params=%s by user=%s", matched.name, params, current_user.id)
-        return {
-            "device_id":   str(matched.id),
-            "device_name": matched.name,
-            "cmd_id":      str(cmd.id),
-            "params":      params,
-        }
-    except Exception as exc:
-        logger.error("chat.rpc failed: %s", exc)
-        db.rollback()
-        return None
 
 
 # ── Rule chain intent detection + execution ───────────────────────────────────
@@ -2184,3 +2157,63 @@ def get_groq_usage(
         "window_hours":   GROQ_CHAT_WINDOW_H,
         "pct_used":       round((used / GROQ_CHAT_LIMIT) * 100, 1),
     }
+
+
+# ── Unified Intelligence API (Phase 10) ───────────────────────────────────────
+
+@router.get("/unified/{device_id}")
+def get_unified_device_intelligence(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Phase 10 — Unified Intelligence Summary.
+
+    Single endpoint merging all intelligence layers for a device:
+        latest_telemetry      → current values
+        device_baselines      → current-hour normal ranges
+        anomaly_scores        → recent anomaly activity
+        device_health_scores  → composite health
+        alarms                → active alarm list
+        trends                → rising/falling/spike/stable per key
+
+    Returns:
+        status         → HEALTHY | WARNING | CRITICAL | OFFLINE
+        risk           → LOW | MEDIUM | HIGH | CRITICAL
+        reason         → human-readable explanation
+        recommendation → actionable next step
+
+    All widgets call this instead of 3-4 separate endpoints.
+    Adding Redis cache later only requires editing data_service.py.
+    """
+    device = _assert_device(device_id, current_user, db)
+    return get_unified_intelligence(db, str(device_id), device=device)
+
+
+@router.get("/unified/{device_id}/telemetry")
+def get_widget_telemetry(
+    device_id: UUID,
+    key: str,
+    hours: int = 24,
+    limit: int = 200,
+    resolution: str = "raw",
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Phase 10 — Widget Telemetry Data (downsampling-ready).
+
+        resolution=raw   → raw rows up to limit
+        resolution=5min  → 5-minute AVG buckets
+        resolution=1h    → hourly AVG buckets
+        resolution=1d    → daily AVG buckets
+
+    Returns min/max alongside avg for bucketed resolutions.
+    """
+    _assert_device(device_id, current_user, db)
+    from app.services.data_service import get_aggregated_telemetry
+    return get_aggregated_telemetry(
+        db, str(device_id), key,
+        hours=hours, limit=limit, resolution=resolution,
+    )

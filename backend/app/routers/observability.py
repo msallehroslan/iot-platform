@@ -103,6 +103,19 @@ def system_metrics(
     except Exception as exc:
         redis_status = f"error: {exc}"
 
+    # Phase 11: cache stats from CacheService
+    cache_stats = {"enabled": False, "status": "disabled"}
+    try:
+        from app.services.cache_service import cache as _cache_svc
+        import asyncio
+        loop = asyncio.get_event_loop()
+        if loop.is_running() and _cache_svc.enabled:
+            import concurrent.futures
+            fut = asyncio.run_coroutine_threadsafe(_cache_svc.stats(), loop)
+            cache_stats = fut.result(timeout=2)
+    except Exception:
+        pass
+
     return {
         "ts":            datetime.now(timezone.utc).isoformat(),
         "uptime_seconds": int(time.time() - _START_TIME),
@@ -118,6 +131,7 @@ def system_metrics(
         "database":   {**pool_status, "latency_ms": db_latency_ms},
         "websocket":  ws_info,
         "redis":      redis_status,
+        "cache":      cache_stats,
     }
 
 

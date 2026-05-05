@@ -9,7 +9,7 @@ POST /auth/forgot-password — DB-backed reset token (single-use, 30min TTL)
 POST /auth/reset-password  — consume reset token, set new password
 POST /auth/seed-demo       — create demo account
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import uuid
@@ -108,6 +108,15 @@ def _validate_refresh_token(db: Session, raw_token: str) -> RefreshToken:
 
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    # Password complexity
+    pwd = user_in.password
+    if len(pwd) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if not any(c.isupper() for c in pwd) or not any(c.islower() for c in pwd):
+        raise HTTPException(status_code=400, detail="Password must contain uppercase and lowercase letters")
+    if not any(c.isdigit() for c in pwd):
+        raise HTTPException(status_code=400, detail="Password must contain at least one number")
+
     existing = db.query(User).filter(User.email == user_in.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -137,12 +146,36 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(credentials: LoginRequest, db: Session = Depends(get_db)):
+def login(credentials: LoginRequest, request: Request, db: Session = Depends(get_db)):
+    from app.models.models import RateLimit
+    import hashlib
+
+    # Rate limit: 5 failed login attempts per IP per 15 minutes
+    client_ip = request.client.host if request.client else "unknown"
+    ip_token = f"login_fail:{hashlib.md5(client_ip.encode()).hexdigest()[:16]}"
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=15)
+    fail_row = db.query(RateLimit).filter(
+        RateLimit.token == ip_token,
+        RateLimit.window_start >= window_start,
+    ).first()
+    if fail_row and fail_row.request_count >= 5:
+        raise HTTPException(status_code=429, detail="Too many failed login attempts. Try again in 15 minutes.")
+
     user = db.query(User).filter(User.email == credentials.email).first()
     if not user or not verify_password(credentials.password, user.hashed_password):
+        # Track failed attempt
+        if fail_row:
+            fail_row.request_count += 1
+        else:
+            db.add(RateLimit(token=ip_token, request_count=1, window_start=datetime.now(timezone.utc)))
+        db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
+
+    # Clear failed attempts on success
+    if fail_row:
+        db.delete(fail_row)
 
     payload = {"sub": str(user.id), "email": user.email, "role": user.role}
     raw_refresh = create_refresh_token(payload)
@@ -269,7 +302,7 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
 def seed_demo(db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == "demo@triaxisai.com").first()
     if existing:
-        return {"message": "Demo user already exists", "email": "demo@triaxisai.com", "password": "demo1234"}
+        return {"message": "Demo user already exists", "email": "demo@triaxisai.com"}
 
     tenant = Tenant(name="TriAxis Demo", provisioning_key=secrets.token_hex(16))
     db.add(tenant)
@@ -283,7 +316,7 @@ def seed_demo(db: Session = Depends(get_db)):
     )
     db.add(user)
     db.commit()
-    return {"message": "Demo user created", "email": "demo@triaxisai.com", "password": "demo1234"}
+    return {"message": "Demo user created", "email": "demo@triaxisai.com", "note": "Default password set — change immediately"}
 
 
 # ── User management (TENANT_ADMIN only) ──────────────────────────────────────

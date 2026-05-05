@@ -22,6 +22,8 @@ from app.routers import (
     dashboard, dashboards, ws, user_dashboards,
 )
 from app.routers import threshold_rules, rpc, widget_templates, metrics, api_keys, observability
+from app.routers import widgets
+from app.services.cache_service import cache as _cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,9 @@ async def lifespan(app: FastAPI):
     create_tables_with_retry()
 
     # Phase 4: Redis manager startup (no-op if REDIS_URL not set)
+    # Phase 11: start Redis cache service
+    await _cache_service.setup(settings.REDIS_URL)
+
     from app.core.websocket_manager import manager as _ws_manager
     if hasattr(_ws_manager, "startup"):
         await _ws_manager.startup()
@@ -149,6 +154,8 @@ async def lifespan(app: FastAPI):
     if hasattr(_ws_manager, "shutdown"):
         await _ws_manager.shutdown()
     mqtt_client.stop()
+    # Phase 11: cache teardown
+    await _cache_service.teardown()
 
 
 app = FastAPI(
@@ -159,6 +166,25 @@ app = FastAPI(
     redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+# ── Request tracing middleware ────────────────────────────────────────────────
+import time, uuid as _uuid
+
+@app.middleware("http")
+async def request_tracing_middleware(request, call_next):
+    request_id = str(_uuid.uuid4())[:8]
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = round((time.time() - start) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    # Log slow requests
+    if duration_ms > 2000:
+        logger.warning("slow_request request_id=%s method=%s path=%s duration_ms=%d status=%d",
+                       request_id, request.method, request.url.path, duration_ms, response.status_code)
+    elif request.method != "GET" or "/telemetry/" in request.url.path:
+        logger.info("request request_id=%s method=%s path=%s duration_ms=%d status=%d",
+                    request_id, request.method, request.url.path, duration_ms, response.status_code)
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -184,6 +210,7 @@ app.include_router(metrics.router,           prefix="/api/v1")
 app.include_router(api_keys.router,          prefix="/api/v1")
 app.include_router(observability.router,     prefix="/api/v1")
 app.include_router(intelligence.router,      prefix="/api/v1")
+app.include_router(widgets.router,           prefix="/api/v1")
 
 
 @app.get("/", tags=["System"])

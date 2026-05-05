@@ -3,8 +3,60 @@
  * Rendering components for each widget type.
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
-import { useState, useEffect } from "react";
-import { telemetryApi, API_BASE } from "../../services/api.js";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { telemetryApi, intelligenceApi, API_BASE } from "../../services/api.js";
+
+// ── Intent context hook (Phase 10) ────────────────────────────────────────────
+// Fetches unified intelligence for a device once on mount.
+// Shared by ValueCard and GaugeWidget — one fetch per widget.
+function useIntelContext(deviceId, key) {
+  const [intel,   setIntel]   = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!deviceId || !key) return;
+    setLoading(true);
+    intelligenceApi.unified(deviceId)
+      .then(setIntel)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [deviceId, key]);
+
+  return { intel, loading };
+}
+
+// ── Baseline context badge (Phase 10) ─────────────────────────────────────────
+// Returns badge config for a value vs its baseline, or null.
+function getBaselineBadge(value, key, baselineKeys) {
+  if (!baselineKeys || !baselineKeys[key]) return null;
+  const b = baselineKeys[key];
+  if (b.mean === undefined || b.stddev === undefined) return null;
+  const { mean, stddev, upper, lower } = b;
+
+  if (upper !== null && value > upper)
+    return { label: `↑ above normal (>${Number(upper).toFixed(1)})`, color: "#ef4444", bg: "#fef2f2", direction: "high" };
+  if (lower !== null && value < lower)
+    return { label: `↓ below normal (<${Number(lower).toFixed(1)})`, color: "#3b82f6", bg: "#eff6ff", direction: "low" };
+
+  const sigma = stddev || 0;
+  if (sigma > 0 && value > mean + sigma)
+    return { label: `↑ above mean (μ ${Number(mean).toFixed(1)})`, color: "#f59e0b", bg: "#fffbeb", direction: "high_soft" };
+  if (sigma > 0 && value < mean - sigma)
+    return { label: `↓ below mean (μ ${Number(mean).toFixed(1)})`, color: "#f59e0b", bg: "#fffbeb", direction: "low_soft" };
+
+  return { label: `✓ normal  (μ ${Number(mean).toFixed(1)})`, color: "#10b981", bg: "#f0fdf4", direction: "normal" };
+}
+
+// ── Trend mini-icon lookup (Phase 10) ─────────────────────────────────────────
+const TREND_META = {
+  RISING:   { icon: "↑",  color: "#ef4444" },
+  FALLING:  { icon: "↓",  color: "#3b82f6" },
+  STABLE:   { icon: "→",  color: "#10b981" },
+  SPIKE:    { icon: "⚡", color: "#f59e0b" },
+  DROP:     { icon: "⬇", color: "#8b5cf6" },
+  VOLATILE: { icon: "〜", color: "#f97316" },
+  UNKNOWN:  { icon: "?",     color: "#94a3b8" },
+};
 
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
@@ -67,6 +119,58 @@ export function LineChartSVG({ data = [], color = "#3b82f6" }) {
       <path d={area} fill={`url(#${gid})`} />
       <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={px(vals.length - 1)} cy={py(vals[vals.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
+    </svg>
+  );
+}
+
+export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
+  // Renders bucketed data with a min/max band behind the avg line.
+  // data shape: [{ ts, value (avg), min, max }, ...]
+  if (data.length < 2) return (
+    <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
+    </div>
+  );
+  const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const avgs = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
+  const mins = data.map(p => typeof p.min  === "number" ? p.min  : avgs[data.indexOf(p)]);
+  const maxs = data.map(p => typeof p.max  === "number" ? p.max  : avgs[data.indexOf(p)]);
+  const allVals = [...avgs, ...mins, ...maxs];
+  const mn = Math.min(...allVals), mx = Math.max(...allVals), rng = mx - mn || 1;
+  const px = i => pad.l + (i / (avgs.length - 1)) * w;
+  const py = v => pad.t + h - ((v - mn) / rng) * h;
+  const avgPath = avgs.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
+  // Band polygon: forward across maxs, backward across mins
+  const bandPath = [
+    ...maxs.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`),
+    ...mins.slice().reverse().map((v, i) => `L${px(mins.length - 1 - i).toFixed(1)},${py(v).toFixed(1)}`),
+    "Z",
+  ].join(" ");
+  const gid = `band${color.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.14" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {[0, 0.25, 0.5, 0.75, 1].map(t => {
+        const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
+        return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
+      })}
+      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map((p, i) => (
+        <text key={i} x={px(data.indexOf(p))} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+          {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </text>
+      ))}
+      {/* Min/max band */}
+      <path d={bandPath} fill={color} fillOpacity="0.08" />
+      {/* Avg line */}
+      <path d={avgPath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={px(avgs.length - 1)} cy={py(avgs[avgs.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
     </svg>
   );
 }
@@ -175,14 +279,26 @@ export function PieChartSVG({ data = [] }) {
 // ── Widget type components ────────────────────────────────────────────────────
 
 export function ValueCard({ config, liveTelem, historyData, deviceId }) {
-  const raw  = liveTelem?.[config.key];
-  const num  = typeof raw === "number" ? raw : parseFloat(raw);
-  const isN  = !isNaN(num);
+  const raw   = liveTelem?.[config.key];
+  const num   = typeof raw === "number" ? raw : parseFloat(raw);
+  const isN   = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
   const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
   const devId = deviceId || config.device_id;
-  const [agg, setAgg] = useState({ avg: null, min: null, max: null });
+  const [agg, setAgg]       = useState({ avg: null, min: null, max: null });
   const [window, setWindow] = useState("1h");
+
+  // ── Phase 10: intent context ───────────────────────────────────────────────
+  const { intel } = useIntelContext(devId, config.key);
+  const baselineKeys  = intel?.baseline?.keys  || {};
+  const trends        = intel?.trends          || {};
+  const anomalyCount  = intel?.anomaly?.anomaly_count ?? 0;
+  const mostAnomalous = intel?.anomaly?.most_anomalous_key;
+  const badge      = isN ? getBaselineBadge(num, config.key, baselineKeys) : null;
+  const trend      = trends[config.key];
+  const trendM     = trend ? TREND_META[trend] : null;
+  const hasAnomaly = anomalyCount > 0 && mostAnomalous === config.key;
+  const intentColor = badge ? badge.color : alert ? "#ef4444" : (config.color || "#1e293b");
 
   useEffect(() => {
     if (!devId || !config.key) return;
@@ -210,20 +326,52 @@ export function ValueCard({ config, liveTelem, historyData, deviceId }) {
           }}>{w}</button>
         ))}
       </div>
+
       {/* Current value */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}>
         <p style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", color: "#94a3b8" }}>
           {config.label || config.key || "—"}
         </p>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
-          <span style={{ fontSize: 42, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
-            color: alert ? "#ef4444" : (config.color || "#1e293b"), transition: "color .3s" }}>
+          {trendM && (
+            <span style={{ fontSize: 14, color: trendM.color, paddingBottom: 8, lineHeight: 1 }}>{trendM.icon}</span>
+          )}
+          <span style={{
+            fontSize: 42, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
+            color: intentColor, transition: "color .3s",
+          }}>
             {isN ? num.toFixed(config.decimals ?? 1) : (raw ?? "—")}
           </span>
           {config.unit && <span style={{ fontSize: 15, color: "#94a3b8", fontWeight: 500, paddingBottom: 5 }}>{config.unit}</span>}
         </div>
-        {alert && <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", background: "#fef2f2", padding: "2px 8px", borderRadius: 20 }}>⚠ Threshold exceeded</span>}
+
+        {/* Phase 10 intent badges */}
+        {badge && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 4,
+            padding: "3px 10px", borderRadius: 20, marginTop: 2,
+            background: badge.bg, border: `1px solid ${badge.color}33`,
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: badge.color }}>{badge.label}</span>
+          </div>
+        )}
+        {hasAnomaly && (
+          <div style={{
+            padding: "2px 8px", borderRadius: 20, marginTop: 2,
+            background: "#fef2f2", border: "1px solid #fca5a5",
+          }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626" }}>
+              ⚠ anomaly detected · {anomalyCount} event{anomalyCount > 1 ? "s" : ""}
+            </span>
+          </div>
+        )}
+        {alert && !badge && (
+          <span style={{ fontSize: 10, fontWeight: 600, color: "#ef4444", background: "#fef2f2", padding: "2px 8px", borderRadius: 20 }}>
+            ⚠ Threshold exceeded
+          </span>
+        )}
       </div>
+
       {/* AVG / MIN / MAX */}
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
@@ -234,100 +382,155 @@ export function ValueCard({ config, liveTelem, historyData, deviceId }) {
           </div>
         ))}
       </div>
-      {history.length > 1 && <Sparkline data={history} color={config.color || "#3b82f6"} height={28} />}
+      {history.length > 1 && <Sparkline data={history} color={intentColor} height={28} />}
     </div>
   );
 }
 
 export function LineChartWidget({ config, historyData, deviceId }) {
-  const history = historyData?.[config.key] || [];
-  const [window, setWindow] = useState("1h");
-  const [aggData, setAggData] = useState({ avg: null, min: null, max: null, count: 0 });
-  const [aggLoading, setAggLoading] = useState(false);
-
   const devId = deviceId || config.device_id;
   const key   = config.key;
 
-  // Fetch all three aggregates when window or key changes
+  // ── Phase 10 #4: resolution-aware history ─────────────────────────────────
+  // Windows map to sensible resolutions to avoid querying millions of raw rows.
+  //   ≤1h  → raw (max 200 pts)
+  //   ≤12h → 5min buckets
+  //   ≤3d  → 1h  buckets
+  //   >3d  → 1d  buckets
+  const WINDOW_CONFIG = {
+    "1m":  { hours: 0.016, resolution: "raw"  },
+    "5m":  { hours: 0.083, resolution: "raw"  },
+    "15m": { hours: 0.25,  resolution: "raw"  },
+    "30m": { hours: 0.5,   resolution: "raw"  },
+    "1h":  { hours: 1,     resolution: "raw"  },
+    "6h":  { hours: 6,     resolution: "5min" },
+    "12h": { hours: 12,    resolution: "5min" },
+    "24h": { hours: 24,    resolution: "1h"   },
+    "7d":  { hours: 168,   resolution: "1h"   },
+    "30d": { hours: 720,   resolution: "1d"   },
+  };
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h","7d","30d"];
+
+  const [window, setWindow]       = useState("1h");
+  const [chartData, setChartData] = useState([]);
+  const [stats, setStats]         = useState({ avg: null, min: null, max: null, count: 0 });
+  const [loading, setLoading]     = useState(false);
+
+  // Live WebSocket points appended to raw view only
+  const livePoints = historyData?.[key] || [];
+
   useEffect(() => {
     if (!devId || !key) return;
-    setAggLoading(true);
-    Promise.all([
-      telemetryApi.aggregate(devId, key, window, "avg"),
-      telemetryApi.aggregate(devId, key, window, "min"),
-      telemetryApi.aggregate(devId, key, window, "max"),
-      telemetryApi.aggregate(devId, key, window, "count"),
-    ]).then(([a, mn, mx, ct]) => {
-      setAggData({
-        avg:   a?.result  ?? null,
-        min:   mn?.result ?? null,
-        max:   mx?.result ?? null,
-        count: ct?.count  ?? 0,
-      });
-    }).catch(() => {}).finally(() => setAggLoading(false));
+    const { hours, resolution } = WINDOW_CONFIG[window] || { hours: 1, resolution: "raw" };
+    setLoading(true);
+
+    // widgetApi.lineChart calls GET /widgets/data/{id}/line_chart via data_service
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.lineChart(devId, key, { hours, limit: 300, resolution })
+        .then(res => {
+          const pts = res?.points || [];
+          setChartData(pts);
+          if (pts.length) {
+            const vals = pts.map(p => p.value).filter(v => v !== null);
+            const sum  = vals.reduce((a, b) => a + b, 0);
+            setStats({
+              avg:   vals.length ? round2(sum / vals.length) : null,
+              min:   vals.length ? round2(Math.min(...vals)) : null,
+              max:   vals.length ? round2(Math.max(...vals)) : null,
+              count: pts.length,
+            });
+          } else {
+            setStats({ avg: null, min: null, max: null, count: 0 });
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
   }, [devId, key, window]);
 
-  const fmt = v => v === null ? "—" : Number(v).toFixed(2);
-  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+  // For raw windows, append live WebSocket points on top of fetched data
+  const isRaw = (WINDOW_CONFIG[window]?.resolution ?? "raw") === "raw";
+  const displayData = isRaw && livePoints.length > chartData.length
+    ? livePoints
+    : chartData;
+
+  const { resolution } = WINDOW_CONFIG[window] || {};
+  const fmt  = v => v === null ? "—" : Number(v).toFixed(2);
+  const round2 = v => Math.round(v * 100) / 100;
+
+  const RES_LABEL = { raw: "raw", "5min": "5 min avg", "1h": "1 h avg", "1d": "1 day avg" };
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
 
-      {/* Window selector + stats row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        {/* Time window pills */}
-        <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+      {/* Window selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flex: 1 }}>
           {WINDOWS.map(w => (
             <button key={w} onClick={() => setWindow(w)} style={{
               padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600,
               cursor: "pointer", border: "1px solid",
               borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
-              background: window === w ? "#2F8CFF" : "#F4F8FF",
-              color: window === w ? "white" : "#6B7F9F",
-              transition: "all 0.15s",
+              background:  window === w ? "#2F8CFF" : "#F4F8FF",
+              color:       window === w ? "white" : "#6B7F9F",
+              transition:  "all 0.15s",
             }}>{w}</button>
           ))}
         </div>
+        {/* Resolution badge */}
+        <span style={{
+          fontSize: 8, padding: "2px 6px", borderRadius: 20, flexShrink: 0,
+          background: resolution === "raw" ? "#f0fdf4" : "#EAF2FF",
+          color:      resolution === "raw" ? "#166534" : "#1d4ed8",
+          border:     resolution === "raw" ? "1px solid #bbf7d0" : "1px solid #bfdbfe",
+          fontWeight: 600,
+        }}>
+          {RES_LABEL[resolution] || resolution}
+        </span>
       </div>
 
-      {/* AVG / MIN / MAX cards */}
+      {/* Stats row */}
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-        {[["AVG", aggData.avg, "#2F8CFF"], ["MIN", aggData.min, "#10b981"], ["MAX", aggData.max, "#f59e0b"]].map(([label, val, color]) => (
+        {[["AVG", stats.avg, "#2F8CFF"], ["MIN", stats.min, "#10b981"], ["MAX", stats.max, "#f59e0b"]].map(([label, val, color]) => (
           <div key={label} style={{
             flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
             display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
-            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
-            transition: "opacity 0.2s",
+            border: "1px solid #D8E3F3", opacity: loading ? 0.5 : 1, transition: "opacity 0.2s",
           }}>
             <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>{label}</span>
             <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>
-              {aggLoading ? "…" : fmt(val)}
+              {loading ? "…" : fmt(val)}
             </span>
           </div>
         ))}
         <div style={{
           flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "5px 8px",
           display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
-          border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1,
+          border: "1px solid #D8E3F3", opacity: loading ? 0.5 : 1,
         }}>
           <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: "0.06em" }}>PTS</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: "#8b5cf6", fontFamily: "monospace" }}>
-            {aggLoading ? "…" : aggData.count}
+            {loading ? "…" : stats.count}
           </span>
         </div>
       </div>
 
-      {/* Chart */}
+      {/* Chart — range band for bucketed data, plain line for raw */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        <LineChartSVG data={history} color={config.color || "#3b82f6"} />
+        {resolution !== "raw" && displayData.some(p => p.min !== undefined)
+          ? <LineChartSVGBanded data={displayData} color={config.color || "#3b82f6"} />
+          : <LineChartSVG data={displayData} color={config.color || "#3b82f6"} />
+        }
       </div>
 
       {/* Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
-          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+          {isRaw && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />}
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>
+            {displayData.length} pts{isRaw ? " · LIVE" : ""}
+          </span>
         </div>
       </div>
     </div>
@@ -335,11 +538,20 @@ export function LineChartWidget({ config, historyData, deviceId }) {
 }
 
 export function GaugeWidget({ config, liveTelem, deviceId }) {
-  const raw = liveTelem?.[config.key];
-  const num = typeof raw === "number" ? raw : parseFloat(raw);
+  const raw   = liveTelem?.[config.key];
+  const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const devId = deviceId || config.device_id;
   const [window, setWindow] = useState("24h");
-  const [agg, setAgg] = useState({ min: null, max: null, avg: null });
+  const [agg, setAgg]       = useState({ min: null, max: null, avg: null });
+
+  // ── Phase 10: intent context ───────────────────────────────────────────────
+  const { intel } = useIntelContext(devId, config.key);
+  const baselineKeys = intel?.baseline?.keys || {};
+  const trends       = intel?.trends         || {};
+  const badge   = !isNaN(num) ? getBaselineBadge(num, config.key, baselineKeys) : null;
+  const trend   = trends[config.key];
+  const trendM  = trend ? TREND_META[trend] : null;
+  const gaugeColor = badge ? badge.color : (config.color || "#3b82f6");
 
   useEffect(() => {
     if (!devId || !config.key) return;
@@ -367,17 +579,38 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
           }}>{w}</button>
         ))}
       </div>
-      {/* Gauge dial */}
+
+      {/* Gauge dial — colour driven by intent */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <GaugeSVG value={isNaN(num) ? config.min : num} min={config.min ?? 0} max={config.max ?? 100} color={config.color || "#3b82f6"} />
+        <GaugeSVG
+          value={isNaN(num) ? config.min : num}
+          min={config.min ?? 0}
+          max={config.max ?? 100}
+          color={gaugeColor}
+        />
       </div>
+
       {/* Label row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "0 8px", flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.min ?? 0}{config.unit}</span>
-        <span style={{ fontSize: 10, fontWeight: 600, color: config.color || "#3b82f6" }}>{config.label || config.key}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {trendM && <span style={{ fontSize: 11, color: trendM.color }}>{trendM.icon}</span>}
+          <span style={{ fontSize: 10, fontWeight: 600, color: gaugeColor }}>{config.label || config.key}</span>
+        </div>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{config.max ?? 100}{config.unit}</span>
       </div>
-      {/* AVG / MIN / MAX for selected window */}
+
+      {/* Phase 10 intent badge */}
+      {badge && (
+        <div style={{
+          padding: "3px 10px", borderRadius: 20, flexShrink: 0,
+          background: badge.bg, border: `1px solid ${badge.color}33`,
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 600, color: badge.color }}>{badge.label}</span>
+        </div>
+      )}
+
+      {/* AVG / MIN / MAX */}
       <div style={{ display: "flex", gap: 4, width: "100%", flexShrink: 0 }}>
         {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
           <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
@@ -458,62 +691,115 @@ export function StatusLight({ config, liveTelem, deviceLastSeen }) {
 }
 
 export function BarChartWidget({ config, historyData, deviceId }) {
-  const key = config.key || (config.keys || [])[0] || "";
-  const history = historyData?.[key] || [];
+  const key   = config.key || (config.keys || [])[0] || "";
   const devId = deviceId || config.device_id;
-  const [window, setWindow] = useState("1h");
-  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
-  const [aggLoading, setAggLoading] = useState(false);
+
+  // ── Phase 10 #4: resolution-aware history (same map as LineChartWidget) ───
+  const WINDOW_CONFIG = {
+    "1m":  { hours: 0.016, resolution: "raw"  },
+    "5m":  { hours: 0.083, resolution: "raw"  },
+    "15m": { hours: 0.25,  resolution: "raw"  },
+    "30m": { hours: 0.5,   resolution: "raw"  },
+    "1h":  { hours: 1,     resolution: "raw"  },
+    "6h":  { hours: 6,     resolution: "5min" },
+    "12h": { hours: 12,    resolution: "5min" },
+    "24h": { hours: 24,    resolution: "1h"   },
+    "7d":  { hours: 168,   resolution: "1h"   },
+    "30d": { hours: 720,   resolution: "1d"   },
+  };
+  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h","7d","30d"];
+
+  const [window, setWindow]       = useState("1h");
+  const [chartData, setChartData] = useState([]);
+  const [stats, setStats]         = useState({ avg: null, min: null, max: null, count: 0 });
+  const [loading, setLoading]     = useState(false);
+
+  const livePoints = historyData?.[key] || [];
 
   useEffect(() => {
     if (!devId || !key) return;
-    setAggLoading(true);
-    Promise.all([
-      telemetryApi.aggregate(devId, key, window, "avg"),
-      telemetryApi.aggregate(devId, key, window, "min"),
-      telemetryApi.aggregate(devId, key, window, "max"),
-      telemetryApi.aggregate(devId, key, window, "count"),
-    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
-      .catch(() => {}).finally(() => setAggLoading(false));
+    const { hours, resolution } = WINDOW_CONFIG[window] || { hours: 1, resolution: "raw" };
+    setLoading(true);
+
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.barChart(devId, key, { hours, limit: 300, resolution })
+        .then(res => {
+          const pts = res?.points || [];
+          setChartData(pts);
+          if (pts.length) {
+            const vals = pts.map(p => p.value).filter(v => v !== null);
+            const sum  = vals.reduce((a, b) => a + b, 0);
+            setStats({
+              avg:   vals.length ? Math.round((sum / vals.length) * 100) / 100 : null,
+              min:   vals.length ? Math.round(Math.min(...vals) * 100) / 100 : null,
+              max:   vals.length ? Math.round(Math.max(...vals) * 100) / 100 : null,
+              count: pts.length,
+            });
+          } else {
+            setStats({ avg: null, min: null, max: null, count: 0 });
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
   }, [devId, key, window]);
 
+  const isRaw = (WINDOW_CONFIG[window]?.resolution ?? "raw") === "raw";
+  const displayData = isRaw && livePoints.length > chartData.length ? livePoints : chartData;
+  const { resolution } = WINDOW_CONFIG[window] || {};
   const fmt = v => v === null ? "—" : Number(v).toFixed(2);
-  const WINDOWS = ["1m","5m","15m","30m","1h","6h","12h","24h"];
+  const RES_LABEL = { raw: "raw", "5min": "5 min avg", "1h": "1 h avg", "1d": "1 day avg" };
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
       {/* Window selector */}
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flexShrink: 0 }}>
-        {WINDOWS.map(w => (
-          <button key={w} onClick={() => setWindow(w)} style={{
-            padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600, cursor: "pointer",
-            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
-            background: window === w ? "#2F8CFF" : "#F4F8FF",
-            color: window === w ? "white" : "#6B7F9F",
-          }}>{w}</button>
-        ))}
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap", flex: 1 }}>
+          {WINDOWS.map(w => (
+            <button key={w} onClick={() => setWindow(w)} style={{
+              padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 600, cursor: "pointer",
+              border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+              background: window === w ? "#2F8CFF" : "#F4F8FF",
+              color: window === w ? "white" : "#6B7F9F",
+            }}>{w}</button>
+          ))}
+        </div>
+        <span style={{
+          fontSize: 8, padding: "2px 6px", borderRadius: 20, flexShrink: 0,
+          background: resolution === "raw" ? "#f0fdf4" : "#EAF2FF",
+          color:      resolution === "raw" ? "#166534" : "#1d4ed8",
+          border:     resolution === "raw" ? "1px solid #bbf7d0" : "1px solid #bfdbfe",
+          fontWeight: 600,
+        }}>
+          {RES_LABEL[resolution] || resolution}
+        </span>
       </div>
+
       {/* Stats */}
       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-        {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"], ["PTS", agg.count, "#8b5cf6"]].map(([label, val, color]) => (
+        {[["AVG", stats.avg, "#2F8CFF"], ["MIN", stats.min, "#10b981"], ["MAX", stats.max, "#f59e0b"], ["PTS", stats.count, "#8b5cf6"]].map(([label, val, color]) => (
           <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 8, padding: "4px 8px",
             display: "flex", flexDirection: "column", alignItems: "center", gap: 1,
-            border: "1px solid #D8E3F3", opacity: aggLoading ? 0.5 : 1 }}>
+            border: "1px solid #D8E3F3", opacity: loading ? 0.5 : 1 }}>
             <span style={{ fontSize: 8, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: "monospace" }}>{aggLoading ? "…" : (label === "PTS" ? val : fmt(val))}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: "monospace" }}>
+              {loading ? "…" : (label === "PTS" ? val : fmt(val))}
+            </span>
           </div>
         ))}
       </div>
+
       {/* Chart */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        <BarChartSVG data={history} color={config.color || "#3b82f6"} />
+        <BarChartSVG data={displayData} color={config.color || "#3b82f6"} />
       </div>
+
       {/* Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 9, color: "#94a3b8" }}>{key}{config.unit ? ` (${config.unit})` : ""}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />
-          <span style={{ fontSize: 9, color: "#94a3b8" }}>{history.length} pts · LIVE</span>
+          {isRaw && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", flexShrink: 0, display: "inline-block" }} />}
+          <span style={{ fontSize: 9, color: "#94a3b8" }}>{displayData.length} pts{isRaw ? " · LIVE" : ""}</span>
         </div>
       </div>
     </div>
@@ -1201,18 +1487,13 @@ export function RpcInputWidget({ config, liveTelem, deviceId }) {
     if (state === "sending" || !value.toString().trim()) return;
     setState("sending"); setErrMsg("");
     try {
-      const token = localStorage.getItem("access_token");
-      const BASE  = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
       const parsed = inputType === "number" ? parseFloat(value) : value;
       if (inputType === "number" && isNaN(parsed)) {
         setErrMsg("Enter a valid number"); setState("idle"); return;
       }
-      const res = await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${token}` },
-        body: JSON.stringify({ method, params: { [paramKey]: parsed } }),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      const { rpcApi } = await import("../../services/api.js");
+      const res = await rpcApi.send(deviceId, { method, params: { [paramKey]: parsed } });
+      if (!res) throw new Error("Send failed");
       setState("done");
       setTimeout(() => setState("idle"), 2000);
     } catch (e) {
@@ -1788,17 +2069,11 @@ export function RpcButtonWidget({ config, deviceId }) {
     if (state === "sending") return;
     setState("sending");
     try {
-      const token = localStorage.getItem("access_token");
-      const BASE = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
-      // If method is "set", build standard params from config.param_key
       const body = method === "set"
         ? { method: "set", params: config.params || {} }
         : { method, params: config.params || {} };
-      await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body: JSON.stringify(body),
-      });
+      const { rpcApi } = await import("../../services/api.js");
+      await rpcApi.send(deviceId, body);
       setState("done");
       setTimeout(()=>setState("idle"), 2000);
     } catch {
@@ -1862,19 +2137,14 @@ export function RpcToggleWidget({ config, liveTelem, deviceId }) {
     setSending(true);
     setFeedback(null);
     try {
-      const token = localStorage.getItem("access_token");
-      const BASE  = (typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"";
       // Standard: {"method":"set","params":{"pump":true}}
       // Legacy:   {"method":"turnOn","params":{}}
       const body = useLegacy
         ? { method: isOn ? legacyOff : legacyOn, params: {} }
         : { method: "set", params: { [paramKey]: !isOn } };
-      const res = await fetch(`${BASE}/api/v1/rpc/${deviceId}`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json","Authorization":`Bearer ${token}`},
-        body: JSON.stringify(body),
-      });
-      setFeedback(res.ok ? "ok" : "err");
+      const { rpcApi } = await import("../../services/api.js");
+      const res = await rpcApi.send(deviceId, body);
+      setFeedback(res ? "ok" : "err");
     } catch { setFeedback("err"); }
     setTimeout(() => { setSending(false); setFeedback(null); }, 2000);
   };

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     #   - Redis-backed WebSocket pub/sub (multi-worker safe)
     #   - Optional ingest queue
     # If not set → falls back to in-process ConnectionManager (single worker)
-    REDIS_URL: Optional[str] = None
+    REDIS_URL: Optional[str] = None   # Set via Render env var: redis://red-d7sv4qq8qa3s73f17s4g:6379
 
     # ── Phase 4: Tenant Quotas ────────────────────────────────────────────────
     # Default limits applied to all tenants unless overridden in tenant.quotas

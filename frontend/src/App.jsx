@@ -1800,6 +1800,40 @@ function SystemMetricsPage({ onToast }) {
                 </div>
               </div>
             </div>
+
+            {/* Cache stats (Phase 11) */}
+            <div className="bg-white rounded-2xl border border-[#D8E3F3] p-5 space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[#6B7F9F]">Data Cache</p>
+              {!s?.cache?.enabled ? (
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  <span className="w-2 h-2 rounded-full bg-slate-300 flex-shrink-0"/>
+                  Disabled — set REDIS_URL to enable
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm items-center">
+                    <span className="text-[#334866]">Status</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.cache.status === "ok" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-600"}`}>
+                      {s.cache.status === "ok" ? "Active" : s.cache.status}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#334866]">Keys cached</span>
+                    <span className="font-bold text-[#0B1426]">{s.cache.key_count ?? "—"}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#334866]">Hit rate</span>
+                    <span className={`font-bold ${(s.cache.hit_rate_pct ?? 0) > 60 ? "text-emerald-600" : "text-amber-500"}`}>
+                      {s.cache.hit_rate_pct ?? "—"}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#334866]">Memory</span>
+                    <span className="font-mono text-xs text-[#334866]">{s.cache.used_memory_human ?? "—"}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Tenant WS clients */}

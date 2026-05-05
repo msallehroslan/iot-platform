@@ -209,4 +209,52 @@ export const intelligenceApi = {
   compareDevice:   (deviceId)                     => apiFetch(`/intelligence/compare/${deviceId}`),
   dailyReport:     ()                             => apiFetch(`/intelligence/report/daily`),
   usage:           ()                             => apiFetch(`/intelligence/usage`),
+  // Phase 10 — Unified Intelligence
+  unified:         (deviceId)                     => apiFetch(`/intelligence/unified/${deviceId}`),
+  widgetTelemetry: (deviceId, key, opts = {})     => {
+    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    return apiFetch(`/intelligence/unified/${deviceId}/telemetry?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
+  },
+};
+
+// ── Widget Data API (Phase 10 #3) ─────────────────────────────────────────────
+// Single entry point for all widget data. Each widget type has its own
+// named method AND falls through to the generic dispatch endpoint.
+export const widgetApi = {
+  // Generic dispatch — routes by widget type
+  data: (deviceId, type, params = {}) => {
+    const q = new URLSearchParams({ type, ...params });
+    return apiFetch(`/widgets/data/${deviceId}?${q}`);
+  },
+
+  // Named per-widget methods — cleaner call sites
+  gauge:          (deviceId, key)                     => apiFetch(`/widgets/data/${deviceId}/gauge?key=${encodeURIComponent(key)}`),
+  valueCard:      (deviceId, key)                     => apiFetch(`/widgets/data/${deviceId}/value_card?key=${encodeURIComponent(key)}`),
+  lineChart:      (deviceId, key, opts = {})          => {
+    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    return apiFetch(`/widgets/data/${deviceId}/line_chart?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
+  },
+  barChart:       (deviceId, key, opts = {})          => {
+    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    return apiFetch(`/widgets/data/${deviceId}/bar_chart?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
+  },
+  multiAxisChart: (deviceId, keys = [], opts = {})    => {
+    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    return apiFetch(`/widgets/data/${deviceId}/multi_axis_chart?keys=${encodeURIComponent(keys.join(","))}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
+  },
+  timeseriesTable:(deviceId, key, opts = {})          => {
+    const { hours = 1, limit = 50 } = opts;
+    return apiFetch(`/widgets/data/${deviceId}/timeseries_table?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}`);
+  },
+  pieChart:       (deviceId, keys = [])               => apiFetch(`/widgets/data/${deviceId}/pie_chart?keys=${encodeURIComponent(keys.join(","))}`),
+  statusLight:    (deviceId, key = "")                => apiFetch(`/widgets/data/${deviceId}/status_light?key=${encodeURIComponent(key)}`),
+  alarmList:      (deviceId)                          => apiFetch(`/widgets/data/${deviceId}/alarm_list`),
+  entityTable:    (deviceId)                          => apiFetch(`/widgets/data/${deviceId}/entity_table`),
+  trendIndicator: (deviceId, key, minutes = 30)       => apiFetch(`/widgets/data/${deviceId}/trend_indicator?key=${encodeURIComponent(key)}&minutes=${minutes}`),
+  healthScore:    (deviceId)                          => apiFetch(`/widgets/data/${deviceId}/health_score`),
+  anomalyScore:   (deviceId, key = "", hours = 24)    => apiFetch(`/widgets/data/${deviceId}/anomaly_score?key=${encodeURIComponent(key)}&hours=${hours}`),
+  baseline:       (deviceId, key = "")                => apiFetch(`/widgets/data/${deviceId}/baseline?key=${encodeURIComponent(key)}`),
+
+  // Catalogue — returns all supported types and their params
+  types:          ()                                  => apiFetch("/widgets/types"),
 };
