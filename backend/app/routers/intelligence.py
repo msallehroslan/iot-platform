@@ -1168,6 +1168,7 @@ async def ai_chat(
 
     if current_user.role != "CUSTOMER_USER" and last_user_msg and api_key:
         msg_lower = last_user_msg.lower()
+        _now_utc = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
 
         # ── Rule chain intent detection ────────────────────────────────────
         try:
