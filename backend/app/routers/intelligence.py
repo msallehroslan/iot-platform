@@ -1482,9 +1482,10 @@ async def ai_chat(
         }
 
     except Exception as exc:
-        logger.error("taat_v2 chat.failed: %s", exc)
+        import traceback
+        logger.error("taat_v2 chat.failed: %s\n%s", exc, traceback.format_exc())
         return {
-            "reply":  f"Sorry, I'm having trouble connecting right now. ({str(exc)[:60]})",
+            "reply":  f"Sorry, I'm having trouble connecting right now. Error: {str(exc)[:120]}",
             "engine": "error",
         }
 

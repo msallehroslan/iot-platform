@@ -2248,7 +2248,9 @@ function AIChatbot({ user }) {
         setMsgs(m => [...m, { role:"assistant", content: detail?.message || `⏳ You've reached the AI request limit for this hour. Please wait before sending more messages.` }]);
         intelligenceApi.usage().then(setUsage).catch(()=>{});
       } else {
-        setMsgs(m => [...m, { role:"assistant", content:"Sorry, something went wrong. Please try again." }]);
+        const errMsg = e.message || String(e);
+        setMsgs(m => [...m, { role:"assistant", content:`⚠️ Error: ${errMsg.slice(0,200)}` }]);
+        console.error("TAAT error:", e);
       }
     } finally {
       setLoading(false);
