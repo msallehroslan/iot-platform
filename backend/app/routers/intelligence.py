@@ -1264,34 +1264,66 @@ async def ai_chat(
 
                 if continue_to_schedule_parse:
 
-                  schedule_prompt = f"""Parse a scheduled RPC command from this message.
+                  now_utc = datetime.now(timezone.utc)
+                schedule_prompt = f"""Parse a scheduled RPC command from this message.
 
 Available devices: {json.dumps(device_list)}
 Device keys: {json.dumps(_get_device_keys(db, device_list))}
-Current time (UTC): {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")}
+Current time (UTC): {now_utc.strftime("%Y-%m-%d %H:%M")}
 User message: "{last_user_msg}"
 
-Respond ONLY with JSON or null:
+Respond ONLY with JSON or null. Use EXACT ISO format for run_at: YYYY-MM-DDTHH:MM:SS+00:00
 {{"device_name":"<name>","params":{{"<key>":<value>}},"run_at":"<ISO datetime UTC>","repeat_hours":<number or null>}}
 
+Rules for run_at calculation based on current time {now_utc.strftime("%Y-%m-%d %H:%M")} UTC:
+- "in 3 minutes" → {(now_utc + __import__('datetime').timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}
+- "in 1 hour" → {(now_utc + __import__('datetime').timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}
+- "at midnight" → {now_utc.strftime("%Y-%m-%d")}T00:00:00+00:00 (or next day if past midnight)
+- "at 10pm" → {now_utc.strftime("%Y-%m-%d")}T22:00:00+00:00
+- "every 6 hours" → run_at = now, repeat_hours = 6
+
 Examples:
-- "turn on led1 at midnight" → {{"device_name":"ESP32","params":{{"led1":true}},"run_at":"<today 00:00 UTC>","repeat_hours":null}}
-- "run pump every 6 hours" → {{"device_name":"ESP32","params":{{"pump":true}},"run_at":"<now + 6h>","repeat_hours":6}}
-- "turn off fan at 10pm" → {{"device_name":"ESP32","params":{{"fan":false}},"run_at":"<today 22:00 UTC>","repeat_hours":null}}
+- "turn on led1 in 3 minutes" → {{"device_name":"ESP32","params":{{"led1":true}},"run_at":"{(now_utc + __import__('datetime').timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%S+00:00")}","repeat_hours":null}}
+- "run pump every 6 hours" → {{"device_name":"ESP32","params":{{"pump":true}},"run_at":"{now_utc.strftime("%Y-%m-%dT%H:%M:%S+00:00")}","repeat_hours":6}}
+- "turn off fan at 10pm" → {{"device_name":"ESP32","params":{{"fan":false}},"run_at":"{now_utc.strftime("%Y-%m-%d")}T22:00:00+00:00","repeat_hours":null}}
 If not a schedule command → null"""
 
                 sched_result = await _call_groq(api_key, [{"role":"user","content":schedule_prompt}], max_tokens=200, temperature=0.1)
                 sched_result = sched_result.strip()
                 if sched_result and sched_result != "null" and sched_result.startswith("{"):
-                    sched_parsed = json.loads(sched_result)
+                    try:
+                        sched_parsed = json.loads(sched_result)
+                    except json.JSONDecodeError:
+                        sched_parsed = {}
+
                     if "device_name" in sched_parsed and "params" in sched_parsed and "run_at" in sched_parsed:
                         matched = next((d for d in devices if d.name.lower() == sched_parsed["device_name"].lower()), None)
                         if not matched:
                             matched = next((d for d in devices if sched_parsed["device_name"].lower() in d.name.lower()), None)
                         if matched:
-                            from app.models.models import RpcCommand
-                            run_at = datetime.fromisoformat(sched_parsed["run_at"].replace("Z", "+00:00"))
-                            sched_cmd = RpcCommand(
+                            from app.models.models import RpcCommand as _SchedRpcCmd
+                            # Robust datetime parsing
+                            run_at_str = sched_parsed["run_at"]
+                            try:
+                                run_at = datetime.fromisoformat(run_at_str.replace("Z", "+00:00"))
+                            except (ValueError, TypeError):
+                                # Fallback: parse relative times like "now + 3 minutes"
+                                now_utc = datetime.now(timezone.utc)
+                                if "minute" in run_at_str.lower():
+                                    import re as _re
+                                    mins = _re.search("([0-9]+)", run_at_str)
+                                    run_at = now_utc + timedelta(minutes=int(mins.group(1)) if mins else 5)
+                                elif "hour" in run_at_str.lower():
+                                    import re as _re
+                                    hrs = _re.search("([0-9]+)", run_at_str)
+                                    run_at = now_utc + timedelta(hours=int(hrs.group(1)) if hrs else 1)
+                                else:
+                                    run_at = now_utc + timedelta(minutes=5)
+
+                            if run_at.tzinfo is None:
+                                run_at = run_at.replace(tzinfo=timezone.utc)
+
+                            sched_cmd = _SchedRpcCmd(
                                 device_id  = matched.id,
                                 method     = "set",
                                 params     = sched_parsed["params"],
@@ -1314,7 +1346,8 @@ If not a schedule command → null"""
                                 "is_scheduled":  True,
                             }
             except Exception as exc:
-                logger.debug("scheduled RPC failed (non-fatal): %s", exc)
+                logger.error("scheduled RPC failed: %s", exc)
+                # Don't let schedule errors break the chat response
 
         # ── Alarm action detection ─────────────────────────────────────────
         alarm_keywords = ["acknowledge", "ack", "clear", "dismiss", "resolve"]
