@@ -1059,11 +1059,17 @@ async def ai_chat(
 
     # ── Build chat system prompt ──────────────────────────────────────────────
     rpc_capability = (
-        "\n\nYou CAN directly execute RPC commands on devices. "
-        "When you do, confirm it with: \'✅ Done — sent [params] to [device]\'. "
-        "The command has already been queued — do not say you cannot execute commands."
+        (
+            "\n\nACTIONS YOU CAN TAKE (these are already wired to the database):\n"
+            "- Send RPC commands to devices (turn on/off physical outputs)\n"
+            "- Acknowledge or clear alarms\n"
+            "- Create, update or delete threshold rules\n"
+            "IMPORTANT: Only confirm an action if you see a [SYSTEM: ... already executed] message above. "
+            "If there is no such message, do NOT claim you performed any action. "
+            "Instead say what the user should do or ask them to rephrase their command."
+        )
         if current_user.role != "CUSTOMER_USER"
-        else "\n\nYou cannot execute RPC commands for this role."
+        else "\n\nYou cannot execute device commands for this role."
     )
 
     system_prompt = f"""You are an intelligent IoT platform assistant for {tenant.name if tenant else "TriAxis Nexus"}.
@@ -1182,7 +1188,7 @@ DEVICE KEYS (actual controllable/readable keys per device):
 {chr(10).join(f"- {name}: {json.dumps(keys)}" for name, keys in (_get_device_keys(db, device_list) if devices else {}).items()) or "No keys known yet — send telemetry first"}
 
 Answer questions about devices, alarms, telemetry, and platform health.
-You CAN execute RPC commands directly — use the exact key names listed above for each device.
+You can execute RPC commands, acknowledge alarms, and manage rules — but ONLY confirm actions that appear in a [SYSTEM: already executed] message. Never fabricate or assume an action was taken. If no action was executed, say so honestly.
 Be concise, technical, and helpful. If asked about something not in your context, say so clearly.
 Format responses clearly — use bullet points for lists, be direct."""
 
