@@ -991,7 +991,6 @@ async def ai_chat(
 
         # ── Rule chain intent detection ────────────────────────────────────
         try:
-            existing_rules = db.query(Alarm.__class__).filter(False).all()  # placeholder
             from app.models.models import ThresholdRule as TR
             existing_rules = db.query(TR).filter(
                 TR.tenant_id == current_user.tenant_id,
@@ -1001,7 +1000,7 @@ async def ai_chat(
             if rule_intent:
                 rule_actioned = await _execute_rule_from_chat(db, current_user, device_list, rule_intent)
         except Exception as exc:
-            logger.debug("rule intent check failed (non-fatal): %s", exc)
+            logger.error("rule intent check failed: %s", exc)
 
         # ── Alarm action detection ─────────────────────────────────────────
         alarm_keywords = ["acknowledge", "ack", "clear", "dismiss", "resolve"]
