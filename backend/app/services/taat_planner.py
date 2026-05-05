@@ -72,14 +72,16 @@ async def classify_intent(
 
 Categories:
 - QUESTION: asking about status, values, trends, history, "what is", "show me", "why", "how many"
-- DEVICE_CONTROL: turn on/off, set value, enable/disable, start/stop, toggle, reboot, restart
+- SCHEDULE: schedule/cancel FUTURE commands with a time — "at midnight", "at 9am", "tomorrow", "every 6h", "in 2 hours", "cancel scheduled"
+- DEVICE_CONTROL: turn on/off RIGHT NOW, set value now, enable/disable now, toggle, reboot immediately
 - ALARM: acknowledge, clear, dismiss, resolve alarms
 - RULE: create/update/delete threshold rules, alarm rules, "set alarm when"
 - USER: invite/delete/manage users, change roles
 - REPORT: daily report, fleet summary, generate report
 - RCA: root cause analysis, "why did", "what caused", "explain this anomaly"
 - RECOMMEND: "what should I do", "recommend", "suggest", anomaly + asking for action
-- SCHEDULE: schedule/cancel future commands — "turn off at midnight", "restart every 6h", "cancel scheduled", "list scheduled"
+
+IMPORTANT: If the message contains a future time ("at midnight", "at 9am", "tomorrow", "every X hours", "in X hours"), classify as SCHEDULE even if it also contains control words like "turn on/off".
 
 Message: "{message}"
 
@@ -100,11 +102,20 @@ Respond with ONLY the category name, nothing else."""
 
     # Keyword fallback so we never return QUESTION for obvious actions
     msg = message.lower()
+    # SCHEDULE must be checked FIRST — "turn on at midnight" has both control + time words
+    schedule_time_words = ["at midnight", "at noon", "tomorrow at", "at 9", "at 10", "at 11",
+                           "at 12", "every hour", "every 6h", "every 2h", "every 12h", "every 24h",
+                           "in 1 hour", "in 2 hours", "in 30 min", "cancel schedule", "list scheduled",
+                           "schedule", "recurring", "tonight at", "nightly", "daily at"]
+    if any(w in msg for w in schedule_time_words):
+        return "SCHEDULE"
     if any(w in msg for w in ["turn on", "turn off", "set ", "enable", "disable", "toggle", "reboot", "restart"]):
         return "DEVICE_CONTROL"
     if any(w in msg for w in ["acknowledge", "ack", "clear alarm", "dismiss", "resolve"]):
         return "ALARM"
-    if any(w in msg for w in ["create rule", "set alarm when", "add rule", "delete rule", "update rule", "alarm above", "alarm below"]):
+    if any(w in msg for w in ["create rule", "set alarm when", "add rule", "delete rule", "update rule",
+                               "delete all rules", "remove all rules", "clear all rules",
+                               "alarm above", "alarm below"]):
         return "RULE"
     if any(w in msg for w in ["invite", "add user", "delete user", "change role", "list users"]):
         return "USER"
@@ -114,9 +125,6 @@ Respond with ONLY the category name, nothing else."""
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
         return "RECOMMEND"
-    if any(w in msg for w in ["schedule", "at midnight", "at noon", "every hour", "every 6h",
-                               "tomorrow at", "cancel schedule", "list scheduled", "recurring"]):
-        return "SCHEDULE"
 
     return "QUESTION"
 

@@ -1280,15 +1280,21 @@ async def ai_chat(
     # ── Confirm mode: user said "proceed" to a pending HIGH-risk action ───────
     confirm_mode = False
     pending_action = body.pending_confirm if hasattr(body, "pending_confirm") else None
-    if pending_action and last_user_msg.lower().strip() in ("proceed", "confirm", "yes", "ok", "do it"):
+    if pending_action and last_user_msg.lower().strip() in ("proceed", "confirm", "yes", "ok", "do it", "proceed."):
         confirm_mode = True
 
     # ── Step 1: Classify intent ───────────────────────────────────────────────
-    try:
-        intent = await classify_intent(api_key, last_user_msg, _call_groq)
-    except Exception as exc:
-        logger.warning("intent classification failed: %s", exc)
-        intent = "QUESTION"
+    # If user confirmed a HIGH-risk action, restore the original intent+action
+    # instead of classifying the "proceed" message
+    if confirm_mode and pending_action:
+        intent = pending_action.get("intent", "QUESTION")
+        logger.info("taat_v2 confirm_mode: restoring intent=%s action=%s", intent, pending_action.get("action"))
+    else:
+        try:
+            intent = await classify_intent(api_key, last_user_msg, _call_groq)
+        except Exception as exc:
+            logger.warning("intent classification failed: %s", exc)
+            intent = "QUESTION"
 
     # ── Step 2: Build context ─────────────────────────────────────────────────
     device_id_str = str(body.device_id) if body.device_id else None
@@ -1322,10 +1328,14 @@ async def ai_chat(
             }
 
         # Step 3a: Extract structured action
-        try:
-            action = await extract_action(api_key, intent, last_user_msg, ctx, _call_groq)
-        except Exception as exc:
-            logger.debug("action extraction failed: %s", exc)
+        # On confirm_mode, restore original action from pending_confirm
+        if confirm_mode and pending_action:
+            action = pending_action.get("action")
+        else:
+            try:
+                action = await extract_action(api_key, intent, last_user_msg, ctx, _call_groq)
+            except Exception as exc:
+                logger.debug("action extraction failed: %s", exc)
 
         # Step 3b: Assess risk
         if action:

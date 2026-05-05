@@ -70,7 +70,7 @@ TOOL_RISK = {
     # Write tools
     "create_rule":          "MEDIUM",
     "update_rule":          "MEDIUM",
-    "delete_rule":          "HIGH",
+    "delete_rule":          "MEDIUM",  # single delete; delete_all escalates to HIGH below
     "ack_alarm":            "MEDIUM",
     "clear_alarm":          "MEDIUM",
     "send_rpc":             "MEDIUM",   # escalates to HIGH for bulk/all-devices
