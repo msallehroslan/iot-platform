@@ -135,8 +135,85 @@ async def lifespan(app: FastAPI):
 
     purge_task     = _asyncio.create_task(_daily_purge())
     offline_task   = _asyncio.create_task(_offline_check())
+    # Phase 9: Scheduled RPC executor
+    async def _scheduled_rpc():
+        """Check every minute for scheduled RPC commands that are due."""
+        while True:
+            await _asyncio.sleep(60)
+            db = SessionLocal()
+            try:
+                from app.models.models import RpcCommand, Device
+                from app.core.websocket_manager import manager as ws_manager
+                import json as _json
+                from datetime import datetime, timezone
+
+                now = datetime.now(timezone.utc)
+                # Find SCHEDULED commands whose scheduled_for time has passed
+                scheduled = db.query(RpcCommand).filter(
+                    RpcCommand.status == "SCHEDULED",
+                ).all()
+
+                fired = 0
+                for cmd in scheduled:
+                    if not cmd.result:
+                        continue
+                    scheduled_for_str = cmd.result.get("scheduled_for") if isinstance(cmd.result, dict) else None
+                    if not scheduled_for_str:
+                        continue
+                    try:
+                        scheduled_for = datetime.fromisoformat(scheduled_for_str)
+                        if scheduled_for.tzinfo is None:
+                            from datetime import timezone as _tz
+                            scheduled_for = scheduled_for.replace(tzinfo=_tz.utc)
+                    except Exception:
+                        continue
+
+                    if now >= scheduled_for:
+                        # Fire the command
+                        cmd.status = "PENDING"
+                        db.commit()
+
+                        # Push via WebSocket
+                        try:
+                            await ws_manager.broadcast_json(str(cmd.device_id), {
+                                "type":   "rpc",
+                                "cmd_id": str(cmd.id),
+                                "method": cmd.method,
+                                "params": cmd.params,
+                            })
+                        except Exception:
+                            pass
+
+                        # Handle repeat
+                        repeat_hours = cmd.result.get("repeat_hours") if isinstance(cmd.result, dict) else None
+                        if repeat_hours:
+                            from datetime import timedelta
+                            next_run = now + timedelta(hours=float(repeat_hours))
+                            new_cmd = RpcCommand(
+                                device_id  = cmd.device_id,
+                                method     = cmd.method,
+                                params     = cmd.params,
+                                status     = "SCHEDULED",
+                                created_by = cmd.created_by,
+                                result     = {
+                                    "scheduled_for": next_run.isoformat(),
+                                    "repeat_hours":  repeat_hours,
+                                },
+                            )
+                            db.add(new_cmd)
+                            db.commit()
+
+                        fired += 1
+                        logger.info("scheduled RPC fired: device=%s params=%s", cmd.device_id, cmd.params)
+
+            except Exception as exc:
+                logger.error("scheduled RPC task failed: %s", exc)
+            finally:
+                db.close()
+
     baseline_task  = _asyncio.create_task(_nightly_baseline())
     health_task    = _asyncio.create_task(_hourly_health())
+    scheduled_rpc_task = _asyncio.create_task(_scheduled_rpc())
 
     yield
 
@@ -144,6 +221,7 @@ async def lifespan(app: FastAPI):
     offline_task.cancel()
     baseline_task.cancel()
     health_task.cancel()
+    scheduled_rpc_task.cancel()
 
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):

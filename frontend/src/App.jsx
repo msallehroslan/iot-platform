@@ -2085,6 +2085,7 @@ function AIChatbot({ user }) {
         rpc_executed:   res.rpc_executed   || null,
         alarm_actioned: res.alarm_actioned || null,
         rule_actioned:  res.rule_actioned  || null,
+        user_actioned:  res.user_actioned  || null,
       }]);
       // Update usage counter from response
       if (res.rate) setUsage(res.rate);
@@ -2388,6 +2389,29 @@ function AIChatbot({ user }) {
                     "Is ESP32-e823 behaving differently this week?",
                   ]
                 },
+                {
+                  cat: "👥 User Management",
+                  color: "#8b5cf6",
+                  cmds: [
+                    "List all users",
+                    "Invite john@example.com as admin",
+                    "Invite user@example.com as tenant user",
+                    "Delete user john@example.com",
+                    "Make john@example.com admin",
+                  ]
+                },
+                {
+                  cat: "⏰ Scheduled RPC",
+                  color: "#f59e0b",
+                  cmds: [
+                    "Turn on led1 at midnight",
+                    "Run pump every 6 hours",
+                    "Turn off fan at 10pm",
+                    "Show scheduled commands",
+                    "Cancel scheduled led1",
+                    "Cancel all scheduled",
+                  ]
+                },
               ].map(section=>(
                 <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
                   <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
@@ -2429,7 +2453,14 @@ function AIChatbot({ user }) {
                     <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
                       <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
-                        RPC sent → {m.rpc_executed.device_name}: {JSON.stringify(m.rpc_executed.params)}
+                        {m.rpc_executed.is_schedule_list
+                          ? `${m.rpc_executed.count} scheduled command(s) found`
+                          : m.rpc_executed.is_schedule_cancel
+                          ? `${m.rpc_executed.cancelled} scheduled command(s) cancelled`
+                          : m.rpc_executed.is_scheduled
+                          ? `RPC scheduled → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)} @ ${m.rpc_executed.scheduled_for}${m.rpc_executed.repeat_hours ? ` (every ${m.rpc_executed.repeat_hours}h)` : ""}`
+                          : `RPC sent → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)}`
+                        }
                       </span>
                     </div>
                   )}
@@ -2452,6 +2483,19 @@ function AIChatbot({ user }) {
                           : m.rule_actioned.action === "updated"
                           ? `Rule updated → ${m.rule_actioned.key} ${m.rule_actioned.condition || ""} ${m.rule_actioned.threshold ?? ""}`
                           : `Rule created → ${m.rule_actioned.device || "all devices"}: {${m.rule_actioned.key} ${m.rule_actioned.condition} ${m.rule_actioned.threshold}} (${m.rule_actioned.severity})`
+                        }
+                      </span>
+                    </div>
+                  )}
+                  {m.user_actioned && !m.user_actioned.error && m.user_actioned.action !== "list" && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
+                        {m.user_actioned.action === "invited"
+                          ? `User invited → ${m.user_actioned.email} (${m.user_actioned.role})`
+                          : m.user_actioned.action === "deleted"
+                          ? `User deleted → ${m.user_actioned.email}`
+                          : `Role updated → ${m.user_actioned.email}: ${m.user_actioned.old_role} → ${m.user_actioned.new_role}`
                         }
                       </span>
                     </div>
