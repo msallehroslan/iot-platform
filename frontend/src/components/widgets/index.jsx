@@ -335,12 +335,23 @@ export function ValueCard({ config, liveTelem, historyData, deviceId }) {
 
   useEffect(() => {
     if (!devId || !config.key) return;
-    Promise.all([
-      telemetryApi.aggregate(devId, config.key, window, "avg"),
-      telemetryApi.aggregate(devId, config.key, window, "min"),
-      telemetryApi.aggregate(devId, config.key, window, "max"),
-    ]).then(([a, mn, mx]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null }))
-      .catch(() => {});
+    // Single call via widget abstraction layer — replaces 3× telemetryApi.aggregate
+    const WINDOW_HOURS = { "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24 };
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.lineChart(devId, config.key, { hours: WINDOW_HOURS[window] || 1, limit: 300, resolution: "raw" })
+        .then(res => {
+          const vals = (res?.points || []).map(p => p.value).filter(v => v !== null && !isNaN(v));
+          if (vals.length) {
+            const sum = vals.reduce((a, b) => a + b, 0);
+            setAgg({
+              avg: Math.round((sum / vals.length) * 100) / 100,
+              min: Math.round(Math.min(...vals) * 100) / 100,
+              max: Math.round(Math.max(...vals) * 100) / 100,
+            });
+          }
+        })
+        .catch(() => {});
+    });
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
@@ -599,12 +610,23 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
 
   useEffect(() => {
     if (!devId || !config.key) return;
-    Promise.all([
-      telemetryApi.aggregate(devId, config.key, window, "min"),
-      telemetryApi.aggregate(devId, config.key, window, "max"),
-      telemetryApi.aggregate(devId, config.key, window, "avg"),
-    ]).then(([mn, mx, av]) => setAgg({ min: mn?.result ?? null, max: mx?.result ?? null, avg: av?.result ?? null }))
-      .catch(() => {});
+    // Single call via widget abstraction layer — replaces 3× telemetryApi.aggregate
+    const WINDOW_HOURS = { "1h": 1, "6h": 6, "24h": 24, "7d": 168 };
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.lineChart(devId, config.key, { hours: WINDOW_HOURS[window] || 24, limit: 300, resolution: "raw" })
+        .then(res => {
+          const vals = (res?.points || []).map(p => p.value).filter(v => v !== null && !isNaN(v));
+          if (vals.length) {
+            const sum = vals.reduce((a, b) => a + b, 0);
+            setAgg({
+              avg: Math.round((sum / vals.length) * 100) / 100,
+              min: Math.round(Math.min(...vals) * 100) / 100,
+              max: Math.round(Math.max(...vals) * 100) / 100,
+            });
+          }
+        })
+        .catch(() => {});
+    });
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(1);
@@ -880,21 +902,45 @@ export function AlarmListWidget({ alarms = [] }) {
 }
 
 export function TimeseriesTable({ config, historyData, deviceId }) {
-  const history = [...(historyData?.[config.key] || [])].reverse().slice(0, 25);
   const devId = deviceId || config.device_id;
   const [window, setWindow] = useState("1h");
-  const [agg, setAgg] = useState({ avg: null, min: null, max: null, count: 0 });
+  const [points, setPoints] = useState([]);
+  const [agg, setAgg]       = useState({ avg: null, min: null, max: null, count: 0 });
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!devId || !config.key) return;
-    Promise.all([
-      telemetryApi.aggregate(devId, config.key, window, "avg"),
-      telemetryApi.aggregate(devId, config.key, window, "min"),
-      telemetryApi.aggregate(devId, config.key, window, "max"),
-      telemetryApi.aggregate(devId, config.key, window, "count"),
-    ]).then(([a, mn, mx, ct]) => setAgg({ avg: a?.result ?? null, min: mn?.result ?? null, max: mx?.result ?? null, count: ct?.count ?? 0 }))
-      .catch(() => {});
+    // Single call via widgetApi.timeseriesTable — replaces 4× telemetryApi.aggregate
+    const WINDOW_HOURS = { "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24 };
+    const hours = WINDOW_HOURS[window] || 1;
+    setLoading(true);
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.timeseriesTable(devId, config.key, { hours, limit: 100 })
+        .then(res => {
+          const pts = res?.points || [];
+          setPoints(pts);
+          const vals = pts.map(p => p.value).filter(v => v !== null && !isNaN(v));
+          if (vals.length) {
+            const sum = vals.reduce((a, b) => a + b, 0);
+            setAgg({
+              avg:   Math.round((sum / vals.length) * 100) / 100,
+              min:   Math.round(Math.min(...vals) * 100) / 100,
+              max:   Math.round(Math.max(...vals) * 100) / 100,
+              count: pts.length,
+            });
+          } else {
+            setAgg({ avg: null, min: null, max: null, count: 0 });
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
   }, [devId, config.key, window]);
+
+  // Fall back to historyData prop during initial load
+  const history = points.length > 0
+    ? [...points].reverse().slice(0, 100)
+    : [...(historyData?.[config.key] || [])].reverse().slice(0, 25);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 2);
   const WINDOWS = ["15m","30m","1h","6h","24h"];
@@ -1041,13 +1087,14 @@ export function AnomalyWidget({ config, deviceId }) {
 
   useEffect(() => {
     if (!deviceId) return;
-    fetch(`${API_BASE}/intelligence/anomalies/${deviceId}`, {
-      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
-    })
-    .then(r => r.json())
-    .then(d => { setData(d); setLoading(false); })
-    .catch(() => setLoading(false));
-  }, [deviceId]);
+    // widgetApi.anomalyScore → GET /widgets/data/{id}/anomaly_score
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.anomalyScore(deviceId, config.key || "", 24)
+        .then(d => setData(d))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
+  }, [deviceId, config.key]);
 
   const label = config.key || "all";
 
@@ -1057,16 +1104,17 @@ export function AnomalyWidget({ config, deviceId }) {
     </div>
   );
 
-  // API returns {summary, anomalies}
-  // API returns {summary: {status, samples_available, anomaly_count, ...}, anomalies: [...]}
-  const summary = data?.summary || {};
-  const anomalies = data?.anomalies || [];
-  const allScores = label === "all" ? anomalies : anomalies.filter(s => s.key === label);
-  const recent = allScores.slice(0, 20);
-  const sampleCount = summary?.samples_available || 0;
-  const minNeeded = summary?.min_samples_needed || 20;
-  const hasData = summary?.status === "active" || sampleCount >= minNeeded;
-  const learning = !hasData;
+  // widgetApi returns data_service shape: { anomaly_count, most_anomalous_key, recent_anomalies, status }
+  // Backward compat: also handles old { summary, anomalies } shape
+  const summary      = data?.summary || data || {};
+  const anomalyCount = data?.anomaly_count ?? summary?.anomaly_count ?? 0;
+  const rawAnomalies = data?.recent_anomalies || data?.anomalies || [];
+  const allScores    = label === "all" ? rawAnomalies : rawAnomalies.filter(s => s.key === label);
+  const recent       = allScores.slice(0, 20);
+  const sampleCount  = summary?.samples_available || 0;
+  const minNeeded    = summary?.min_samples_needed || 20;
+  const dataStatus   = data?.status || summary?.status || "learning";
+  const learning     = dataStatus === "learning" && anomalyCount === 0;
 
   if (learning) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:10,padding:16}}>
@@ -1080,8 +1128,7 @@ export function AnomalyWidget({ config, deviceId }) {
     </div>
   );
 
-  const anomalyCount = summary?.anomaly_count || 0;
-  const mostAnomalous = summary?.most_anomalous_key || "";
+  const mostAnomalous = data?.most_anomalous_key || summary?.most_anomalous_key || "";
   const maxScore = recent.length > 0 ? Math.max(...recent.map(s => Math.abs(s.z_score || s.score || 0))) : 0;
   const anomalyColor = anomalyCount > 0 ? "#ef4444" : "#10b981";
   const anomalyLabel = anomalyCount > 0 ? `${anomalyCount} ANOMALIES` : "NORMAL";
@@ -1133,13 +1180,14 @@ export function BaselineWidget({ config, deviceId }) {
 
   useEffect(() => {
     if (!deviceId) return;
-    fetch(`${API_BASE}/intelligence/baseline/${deviceId}`, {
-      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
-    })
-    .then(r => r.json())
-    .then(d => { setData(d); setLoading(false); })
-    .catch(() => setLoading(false));
-  }, [deviceId]);
+    // widgetApi.baseline → GET /widgets/data/{id}/baseline
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.baseline(deviceId, config.key || "")
+        .then(d => setData(d))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
+  }, [deviceId, config.key]);
 
   const key = config.key;
 
@@ -1149,27 +1197,13 @@ export function BaselineWidget({ config, deviceId }) {
     </div>
   );
 
-  // API returns {status, baselines: {key: [{hour, mean, std, min, max}, ...]}}
-  const baselineData = data?.baselines || data?.baseline || {};
-  // Aggregate per-key stats (average across hours)
-  const baselines = {};
-  Object.entries(baselineData).forEach(([k, hours]) => {
-    if (Array.isArray(hours) && hours.length > 0) {
-      const means = hours.map(h => h.mean).filter(v => v != null);
-      const stds = hours.map(h => h.std).filter(v => v != null);
-      if (means.length > 0) {
-        baselines[k] = {
-          mean: means.reduce((a,b)=>a+b,0)/means.length,
-          std: stds.length > 0 ? stds.reduce((a,b)=>a+b,0)/stds.length : 0,
-        };
-      }
-    } else if (hours && typeof hours === 'object' && !Array.isArray(hours)) {
-      baselines[k] = hours;
-    }
-  });
-  const keyData = key ? baselines[key] : null;
-  const hasData = Object.keys(baselines).length > 0;
-  const daysCovered = data?.days_covered || data?.baseline_days || (hasData ? 1 : 0);
+  // widgetApi returns data_service shape: { status, current_hour, keys: { key: { mean, stddev, upper, lower, samples } } }
+  // "active" = baseline ready, "learning" = still accumulating data
+  const baselineStatus = data?.status || "learning";
+  const baselines = data?.keys || {};  // { key: { mean, stddev, upper, lower, min, max, samples } }
+  const keyData   = key ? baselines[key] : null;
+  const hasData   = baselineStatus === "active" && Object.keys(baselines).length > 0;
+  const daysCovered = hasData ? 30 : 0;   // active means 30+ days satisfied
   const needed = 30;
 
   if (!hasData) return (
@@ -1222,12 +1256,13 @@ export function HealthScoreWidget({ config, deviceId }) {
 
   useEffect(() => {
     if (!deviceId) return;
-    fetch(`${API_BASE}/intelligence/health/${deviceId}`, {
-      headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
-    })
-    .then(r => r.json())
-    .then(d => { setData(d); setLoading(false); })
-    .catch(() => setLoading(false));
+    // widgetApi.healthScore → GET /widgets/data/{id}/health_score
+    import("../../services/api.js").then(({ widgetApi }) => {
+      widgetApi.healthScore(deviceId)
+        .then(d => setData(d))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    });
   }, [deviceId]);
 
   if (loading) return (
@@ -1236,8 +1271,9 @@ export function HealthScoreWidget({ config, deviceId }) {
     </div>
   );
 
-  // API returns flat: {health_score, health_label, uptime_score, alarm_score, stability_score, freshness_score, maintenance_due}
-  // or nested: {health: {...}}
+  // widgetApi.healthScore returns data_service shape (flat):
+  // { health_score, health_label, uptime_score, alarm_score, stability_score, freshness_score, maintenance_due }
+  // Backward compat: also handles old nested { health: {...} } shape
   const healthData = data?.health || data || {};
   const score = healthData?.health_score ?? healthData?.score ?? null;
   const components = {

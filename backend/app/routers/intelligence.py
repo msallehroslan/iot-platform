@@ -1291,7 +1291,7 @@ async def ai_chat(
     confirm_required = None
     risk_level = "LOW"
 
-    write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER"}
+    write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE"}
 
     if intent in write_intents and last_user_msg:
         allowed, deny_reason = check_permission(intent, {}, current_user, last_user_msg)
@@ -1371,6 +1371,41 @@ async def ai_chat(
                             db, current_user, action, existing_users
                         )
 
+                    elif intent == "SCHEDULE":
+                        from app.services.scheduled_rpc_service import (
+                            schedule_by_device_name, cancel_scheduled, list_scheduled,
+                            parse_schedule_time,
+                        )
+                        sched_action = action.get("action", "schedule")
+
+                        if sched_action == "list":
+                            action_result = list_scheduled(db, current_user)
+
+                        elif sched_action == "cancel":
+                            action_result = cancel_scheduled(
+                                db,
+                                device_id    = None,
+                                current_user = current_user,
+                            )
+
+                        elif sched_action == "schedule" and action.get("device_name"):
+                            # Parse the natural language time string
+                            scheduled_for = parse_schedule_time(
+                                action.get("time_str", "in 1 hour"),
+                                action.get("repeat_hours"),
+                            )
+                            action_result = await schedule_by_device_name(
+                                db,
+                                devices               = raw_devices,
+                                device_name           = action["device_name"],
+                                method                = action.get("method", "set"),
+                                params                = action.get("params", {}),
+                                scheduled_for         = scheduled_for,
+                                repeat_interval_hours = action.get("repeat_hours"),
+                                current_user          = current_user,
+                                source                = "taat_chat",
+                            )
+
                 except Exception as exc:
                     logger.error("taat_v2 action execution failed: %s", exc)
                     db.rollback()
@@ -1421,7 +1456,7 @@ async def ai_chat(
             "action_result":    action_result,
             "confirm_required": confirm_required,
             # Legacy fields — keep for backward compat with existing frontend
-            "rpc_executed":     action_result if intent == "DEVICE_CONTROL" and action_result else None,
+            "rpc_executed":     action_result if intent in ("DEVICE_CONTROL", "SCHEDULE") and action_result else None,
             "alarm_actioned":   action_result if intent == "ALARM" and action_result else None,
             "rule_actioned":    action_result if intent == "RULE" and action_result else None,
             "user_actioned":    action_result if intent == "USER" and action_result else None,
@@ -1732,13 +1767,14 @@ def alarm_action(
     raise HTTPException(400, "Invalid action")
 
 
-# ── 2. Scheduled RPC ──────────────────────────────────────────────────────────
+# ── 2. Scheduled RPC (Phase 11 clean rewrite) ────────────────────────────────
 
 class ScheduledRpcRequest(BaseModel):
-    device_id: UUID
-    params: dict
-    run_at: datetime          # UTC datetime to execute
-    repeat_hours: Optional[float] = None   # e.g. 6.0 = every 6 hours
+    device_id:             UUID
+    method:                str = "set"
+    params:                dict = {}
+    scheduled_for:         datetime
+    repeat_interval_hours: Optional[float] = None
 
 
 @router.post("/schedule-rpc")
@@ -1748,65 +1784,54 @@ def schedule_rpc(
     current_user=Depends(get_current_user),
 ):
     """
-    Schedule an RPC command to run at a future time.
-    Stored in rpc_commands with a future created_at — picked up by the scheduler.
+    Schedule an RPC command to run at a specific UTC time.
+    Optional repeat_interval_hours creates a recurring command.
+    Background dispatcher in main.py fires it every 30s check.
     """
-    _assert_device(body.device_id, current_user, db)
-    from app.models.models import RpcCommand, RpcCommandStatus
-
-    cmd = RpcCommand(
-        device_id  = body.device_id,
-        method     = "set",
-        params     = body.params,
-        status     = "SCHEDULED",
-        created_by = str(current_user.id),
-        # Store scheduled time in result field as metadata
-        result     = {
-            "scheduled_for": body.run_at.isoformat(),
-            "repeat_hours":  body.repeat_hours,
-        },
+    from app.services.scheduled_rpc_service import schedule_command
+    cmd = schedule_command(
+        db,
+        device_id             = body.device_id,
+        method                = body.method,
+        params                = body.params,
+        scheduled_for         = body.scheduled_for,
+        repeat_interval_hours = body.repeat_interval_hours,
+        current_user          = current_user,
+        source                = "dashboard",
     )
-    db.add(cmd)
-    db.commit()
-    db.refresh(cmd)
+    from app.services.scheduled_rpc_service import _humanise_schedule
     return {
-        "cmd_id":       str(cmd.id),
-        "device_id":    str(body.device_id),
-        "params":       body.params,
-        "scheduled_for": body.run_at.isoformat(),
-        "repeat_hours":  body.repeat_hours,
+        "cmd_id":                str(cmd.id),
+        "device_id":             str(cmd.device_id),
+        "method":                cmd.method,
+        "params":                cmd.params,
+        "scheduled_for":         cmd.scheduled_for.isoformat(),
+        "repeat_interval_hours": cmd.repeat_interval_hours,
+        "human_label":           _humanise_schedule(cmd.scheduled_for, cmd.repeat_interval_hours),
+        "is_scheduled":          True,
     }
 
 
 @router.get("/schedule-rpc")
 def list_scheduled_rpc(
+    device_id: Optional[UUID] = None,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """List all pending scheduled RPC commands for the tenant."""
-    from app.models.models import RpcCommand
-    devices = _scoped_devices(current_user, db).all()
-    device_ids = [d.id for d in devices]
-    cmds = (
-        db.query(RpcCommand)
-        .filter(
-            RpcCommand.device_id.in_(device_ids),
-            RpcCommand.status == "SCHEDULED",
-        )
-        .order_by(RpcCommand.created_at.desc())
-        .limit(50)
-        .all()
-    )
-    return [
-        {
-            "cmd_id":        str(c.id),
-            "device_id":     str(c.device_id),
-            "params":        c.params,
-            "scheduled_for": c.result.get("scheduled_for") if c.result else None,
-            "repeat_hours":  c.result.get("repeat_hours") if c.result else None,
-        }
-        for c in cmds
-    ]
+    """List all pending SCHEDULED commands for the tenant."""
+    from app.services.scheduled_rpc_service import list_scheduled
+    return list_scheduled(db, current_user, device_id=device_id)
+
+
+@router.delete("/schedule-rpc/{cmd_id}")
+def cancel_scheduled_rpc(
+    cmd_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Cancel a specific scheduled command."""
+    from app.services.scheduled_rpc_service import cancel_scheduled
+    return cancel_scheduled(db, cmd_id=cmd_id, current_user=current_user)
 
 
 # ── 3. "Why did this alarm fire?" deep RCA ────────────────────────────────────

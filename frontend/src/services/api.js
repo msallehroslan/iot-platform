@@ -205,7 +205,8 @@ export const intelligenceApi = {
   // Phase 8
   alarmAction:     (body)                         => apiFetch(`/intelligence/alarm-action`, { method: "POST", body: JSON.stringify(body) }),
   scheduleRpc:     (body)                         => apiFetch(`/intelligence/schedule-rpc`, { method: "POST", body: JSON.stringify(body) }),
-  scheduledRpcs:   ()                             => apiFetch(`/intelligence/schedule-rpc`),
+  scheduledRpcs:   (deviceId)                     => apiFetch(`/intelligence/schedule-rpc${deviceId ? `?device_id=${deviceId}` : ""}`),
+  cancelSchedule:  (cmdId)                        => apiFetch(`/intelligence/schedule-rpc/${cmdId}`, { method: "DELETE" }),
   explainAlarm:    (alarmId)                      => apiFetch(`/intelligence/alarm-explain/${alarmId}`, { method: "POST" }),
   compareDevice:   (deviceId)                     => apiFetch(`/intelligence/compare/${deviceId}`),
   dailyReport:     ()                             => apiFetch(`/intelligence/report/daily`),

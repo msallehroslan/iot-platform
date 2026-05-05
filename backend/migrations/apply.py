@@ -809,3 +809,19 @@ MIGRATIONS += [
         """,
     },
 ]
+
+MIGRATIONS += [
+    {
+        "id":   "034_scheduled_rpc",
+        "desc": "Scheduled RPC: add SCHEDULED/CANCELLED status values and scheduling columns",
+        "sql":  """
+            ALTER TABLE rpc_commands
+                ADD COLUMN IF NOT EXISTS scheduled_for        TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS repeat_interval_hours FLOAT;
+
+            CREATE INDEX IF NOT EXISTS ix_rpc_commands_scheduled
+                ON rpc_commands(scheduled_for)
+                WHERE status = 'SCHEDULED';
+        """,
+    },
+]

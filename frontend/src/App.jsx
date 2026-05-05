@@ -2595,12 +2595,12 @@ function AIChatbot({ user }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
                       <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
                         {m.rpc_executed.is_schedule_list
-                          ? `${m.rpc_executed.count} scheduled command(s) found`
+                          ? `📋 ${m.rpc_executed.count} scheduled command(s)`
                           : m.rpc_executed.is_schedule_cancel
-                          ? `${m.rpc_executed.cancelled} scheduled command(s) cancelled`
+                          ? `🗑 ${m.rpc_executed.cancelled} scheduled command(s) cancelled`
                           : m.rpc_executed.is_scheduled
-                          ? `RPC scheduled → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)} @ ${m.rpc_executed.scheduled_for}${m.rpc_executed.repeat_hours ? ` (every ${m.rpc_executed.repeat_hours}h)` : ""}`
-                          : `RPC sent → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)}`
+                          ? `⏰ Scheduled → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)} — ${m.rpc_executed.human_label || m.rpc_executed.scheduled_for}${m.rpc_executed.repeat_interval_hours ? ` · every ${m.rpc_executed.repeat_interval_hours}h` : ""}`
+                          : `✅ RPC → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)}`
                         }
                       </span>
                     </div>

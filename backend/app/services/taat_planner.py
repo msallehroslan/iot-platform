@@ -51,6 +51,7 @@ INTENT_CATEGORIES = [
     "REPORT",
     "RCA",
     "RECOMMEND",
+    "SCHEDULE",      # schedule/cancel future RPC commands
 ]
 
 CUSTOMER_ALLOWED_INTENTS = {"QUESTION", "REPORT"}
@@ -78,6 +79,7 @@ Categories:
 - REPORT: daily report, fleet summary, generate report
 - RCA: root cause analysis, "why did", "what caused", "explain this anomaly"
 - RECOMMEND: "what should I do", "recommend", "suggest", anomaly + asking for action
+- SCHEDULE: schedule/cancel future commands — "turn off at midnight", "restart every 6h", "cancel scheduled", "list scheduled"
 
 Message: "{message}"
 
@@ -112,6 +114,9 @@ Respond with ONLY the category name, nothing else."""
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
         return "RECOMMEND"
+    if any(w in msg for w in ["schedule", "at midnight", "at noon", "every hour", "every 6h",
+                               "tomorrow at", "cancel schedule", "list scheduled", "recurring"]):
+        return "SCHEDULE"
 
     return "QUESTION"
 
@@ -389,6 +394,8 @@ async def extract_action(
         return _extract_alarm_action(message, ctx)
     if intent == "USER":
         return await _extract_user_action(api_key, message, ctx, call_groq)
+    if intent == "SCHEDULE":
+        return await _extract_schedule_action(api_key, message, ctx, call_groq)
     return None
 
 
@@ -476,6 +483,48 @@ Respond JSON only:
 - Role: {{"action":"change_role","user_id":"<id>","role":"<new_role>"}}
 - List: {{"action":"list"}}
 - If unclear: null"""
+    try:
+        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
+        r = r.strip()
+        if r.lower() == "null" or not r.startswith("{"):
+            return None
+        return json.loads(r)
+    except Exception:
+        pass
+    return None
+
+
+async def _extract_schedule_action(api_key, message, ctx, call_groq) -> Optional[dict]:
+    """Extract schedule/cancel intent from message."""
+    msg_lower = message.lower()
+
+    # Cancel scheduled
+    if any(w in msg_lower for w in ["cancel", "remove scheduled", "stop scheduled", "delete scheduled"]):
+        return {"action": "cancel", "device_name": None}
+
+    # List scheduled
+    if any(w in msg_lower for w in ["list scheduled", "show scheduled", "what is scheduled", "pending commands"]):
+        return {"action": "list"}
+
+    devices = ctx.get("device_list", [])
+    device_names = [d["name"] for d in devices]
+
+    prompt = f"""Extract scheduled RPC command from: "{message}"
+Devices: {json.dumps(device_names)}
+Current UTC time: {__import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+
+Respond ONLY with valid JSON or null.
+
+For schedule:
+{{"action":"schedule","device_name":"<name>","method":"set","params":{{"<key>":<value>}},"time_str":"<when>","repeat_hours":<number or null>}}
+
+time_str examples: "midnight", "9am", "tomorrow at 6pm", "in 2 hours", "+6h"
+repeat_hours: null for one-shot, float for recurring (e.g. 6.0 for every 6 hours)
+
+For cancel: {{"action":"cancel","device_name":"<name or null>"}}
+For list:   {{"action":"list"}}
+If unclear: null"""
+
     try:
         r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
         r = r.strip()

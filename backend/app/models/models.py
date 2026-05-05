@@ -351,6 +351,8 @@ class RpcCommandStatus(str, enum.Enum):
     COMPLETED = "COMPLETED"
     FAILED    = "FAILED"
     TIMEOUT   = "TIMEOUT"
+    SCHEDULED  = "SCHEDULED"   # waiting for scheduled_for time
+    CANCELLED  = "CANCELLED"   # cancelled before execution
 
 
 class RpcCommand(Base):
@@ -369,10 +371,13 @@ class RpcCommand(Base):
     params       = Column(JSON, nullable=False, default=dict)
     status       = Column(String(20), nullable=False, default="PENDING")
     result       = Column(JSON, nullable=True)
-    created_by   = Column(String(255), nullable=True)    # user_id who sent it
-    sent_at      = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    created_by             = Column(String(255), nullable=True)    # user_id who sent it
+    sent_at                = Column(DateTime(timezone=True), nullable=True)
+    completed_at           = Column(DateTime(timezone=True), nullable=True)
+    created_at             = Column(DateTime(timezone=True), server_default=func.now())
+    # Scheduled RPC fields (migration 034)
+    scheduled_for          = Column(DateTime(timezone=True), nullable=True)   # UTC fire time
+    repeat_interval_hours  = Column(Float, nullable=True)                     # None = one-shot
 
 
 # ── Phase 3: Widget Templates ─────────────────────────────────────────────────

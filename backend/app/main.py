@@ -138,10 +138,28 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    purge_task     = _asyncio.create_task(_daily_purge())
-    offline_task   = _asyncio.create_task(_offline_check())
-    baseline_task  = _asyncio.create_task(_nightly_baseline())
-    health_task    = _asyncio.create_task(_hourly_health())
+    # Phase 11: Scheduled RPC dispatcher — fires due commands every 30s
+    async def _scheduled_rpc_dispatcher():
+        while True:
+            await _asyncio.sleep(30)
+            db = SessionLocal()
+            try:
+                from app.services.scheduled_rpc_service import dispatch_due_commands
+                n = await dispatch_due_commands(db)
+                if n:
+                    logger.info("Scheduled RPC dispatcher fired %d command(s)", n)
+            except Exception as exc:
+                logger.error("Scheduled RPC dispatcher error: %s", exc)
+                try: db.rollback()
+                except: pass
+            finally:
+                db.close()
+
+    purge_task      = _asyncio.create_task(_daily_purge())
+    offline_task    = _asyncio.create_task(_offline_check())
+    baseline_task   = _asyncio.create_task(_nightly_baseline())
+    health_task     = _asyncio.create_task(_hourly_health())
+    sched_rpc_task  = _asyncio.create_task(_scheduled_rpc_dispatcher())
 
     yield
 
@@ -149,6 +167,7 @@ async def lifespan(app: FastAPI):
     offline_task.cancel()
     baseline_task.cancel()
     health_task.cancel()
+    sched_rpc_task.cancel()
 
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):
