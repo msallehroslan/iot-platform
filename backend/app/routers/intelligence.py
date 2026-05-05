@@ -237,7 +237,7 @@ Format your response with clear sections using the numbered headers above."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
                     "max_tokens": 1024,
                     "temperature": 0.3,
@@ -410,7 +410,7 @@ async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temper
         resp = await client.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "llama-3.3-70b-versatile", "max_tokens": max_tokens,
+            json={"model": "llama-3.1-8b-instant", "max_tokens": max_tokens,
                   "messages": messages, "temperature": temperature},
         )
         resp.raise_for_status()
@@ -918,7 +918,7 @@ Format responses clearly — use bullet points for lists, be direct."""
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "llama-3.1-8b-instant",
                     "messages": groq_messages,
                     "max_tokens": 512,
                     "temperature": 0.4,
