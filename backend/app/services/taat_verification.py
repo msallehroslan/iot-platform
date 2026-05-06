@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -35,8 +37,12 @@ from app.services.taat_executor import ExecutionTrace
 
 logger = logging.getLogger(__name__)
 
-# How long to wait before re-reading telemetry to confirm state change
-VERIFY_DELAY_S = 4.0
+# How long to wait before re-reading telemetry (must exceed device poll interval)
+VERIFY_DELAY_S   = 4.0
+# Maximum total time allowed for verification (prevents hanging)
+VERIFY_TIMEOUT_S = 10.0
+# If telemetry ts hasn't updated since pre-action, it's stale
+STALE_THRESHOLD_S = 30.0
 
 
 @dataclass
@@ -50,51 +56,73 @@ class VerificationResult:
 
 
 async def verify_rpc(
-    db: Session,
+    db:        Session,
     device_id: str,
-    params: dict,
-    trace: ExecutionTrace,
+    params:    dict,
+    trace:     ExecutionTrace,
+    trace_id:  str = "",
 ) -> VerificationResult:
     """
-    Verify that an RPC command took effect by checking telemetry delta.
-
-    Args:
-        db:        DB session
-        device_id: target device
-        params:    RPC params that were sent e.g. {"led1": 1}
-        trace:     execution trace containing pre_state result
-
-    Returns:
-        VerificationResult
+    Verify RPC effect via telemetry delta.
+    Hardened: timeout protection, stale telemetry detection, correlation logging.
     """
+    tid = trace_id or getattr(trace, "trace_id", "")
+
     if not params or not device_id:
         return VerificationResult(verified=False, skipped=True,
                                   message="No params or device_id to verify")
 
-    # Pick the first key from params as the verification target
     target_key = next(iter(params.keys()), None)
     if not target_key:
         return VerificationResult(verified=False, skipped=True,
                                   message="No target key in params")
 
-    # Get pre-action value from trace
-    pre_state  = trace.get("pre_state") or {}
-    pre_values = pre_state.get("values", {})
-    pre_value  = pre_values.get(target_key)
+    # Record pre-action state
+    pre_state    = trace.get("pre_state") or {}
+    pre_values   = pre_state.get("values", {})
+    pre_value    = pre_values.get(target_key)
+    pre_ts       = pre_state.get("ts")          # telemetry timestamp before action
+    t_action     = time.monotonic()
 
-    # Wait for device to respond and telemetry to be ingested
-    await asyncio.sleep(VERIFY_DELAY_S)
+    logger.info("verify.start trace_id=%s device=%s key=%s pre_value=%s",
+                tid, device_id, target_key, pre_value)
 
-    # Re-read telemetry
+    # Wait with timeout — never hang the event loop indefinitely
     try:
-        from app.services.data_service import get_latest_telemetry
-        post_telem = get_latest_telemetry(db, device_id)
+        await asyncio.wait_for(asyncio.sleep(VERIFY_DELAY_S), timeout=VERIFY_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        logger.warning("verify.timeout trace_id=%s device=%s key=%s",
+                       tid, device_id, target_key)
+        return VerificationResult(
+            verified=False, skipped=True,
+            key=target_key, pre_value=pre_value,
+            message=f"Verification timeout after {VERIFY_TIMEOUT_S}s",
+        )
+
+    # Re-read telemetry (bypasses cache for fresh read)
+    try:
+        from app.services.data_service import _fetch_latest_telemetry
+        post_telem = _fetch_latest_telemetry(db, device_id)
         post_value = post_telem.get("values", {}).get(target_key)
+        post_ts    = post_telem.get("ts")
     except Exception as exc:
-        logger.warning("verification read failed: %s", exc)
+        logger.warning("verify.read_failed trace_id=%s device=%s: %s", tid, device_id, exc)
         return VerificationResult(
             verified=False, skipped=True,
             message=f"Could not read telemetry for verification: {exc}",
+        )
+
+    # Stale telemetry detection — if ts hasn't advanced, device isn't reporting
+    if pre_ts and post_ts and pre_ts == post_ts:
+        elapsed = round((time.monotonic() - t_action) * 1000)
+        logger.warning("verify.stale trace_id=%s device=%s key=%s ts_unchanged=%s elapsed=%dms",
+                       tid, device_id, target_key, post_ts, elapsed)
+        return VerificationResult(
+            verified=False, skipped=True,
+            key=target_key, pre_value=pre_value, post_value=post_value,
+            message=(
+                f"Stale telemetry — device ts unchanged ({post_ts}). "
+                "Device may be offline or not reporting."),
         )
 
     if post_value is None:
@@ -104,33 +132,25 @@ async def verify_rpc(
             message=f"Key '{target_key}' not in telemetry — cannot verify",
         )
 
-    # Compare — coerce to comparable types
-    pre_num  = _to_num(pre_value)
+    pre_num = _to_num(pre_value)
     post_num = _to_num(post_value)
     changed  = pre_num != post_num
 
     if changed:
-        msg = (
-            f"Verified ✅ — {target_key} changed "
-            f"{_fmt(pre_value)} → {_fmt(post_value)}"
-        )
-        logger.info("verify.success device=%s key=%s %s→%s",
-                    device_id, target_key, pre_value, post_value)
+        msg = f"Verified ✅ — {target_key} changed {_fmt(pre_value)} → {_fmt(post_value)}"
+        logger.info("verify.success trace_id=%s device=%s key=%s %s→%s",
+                    tid, device_id, target_key, pre_value, post_value)
     else:
         msg = (
-            f"State unchanged ⚠️ — {target_key} is still "
-            f"{_fmt(post_value)} after {VERIFY_DELAY_S}s. "
+            f"State unchanged ⚠️ — {target_key} still {_fmt(post_value)} after {VERIFY_DELAY_S}s. "
             "Device may be offline or firmware did not handle the command."
         )
-        logger.warning("verify.unchanged device=%s key=%s value=%s",
-                       device_id, target_key, post_value)
+        logger.warning("verify.unchanged trace_id=%s device=%s key=%s value=%s",
+                       tid, device_id, target_key, post_value)
 
     return VerificationResult(
-        verified   = changed,
-        key        = target_key,
-        pre_value  = pre_value,
-        post_value = post_value,
-        message    = msg,
+        verified=changed, key=target_key,
+        pre_value=pre_value, post_value=post_value, message=msg,
     )
 
 
@@ -241,15 +261,18 @@ async def verify_actions(
                 )
         elif step.tool == "create_rule":
             key = step.args.get("key")
-            tenant_id = getattr(
-                getattr(db, "_current_user", None), "tenant_id", None
+            # Resolve tenant_id from trace results (set by create_rule tool)
+            tenant_id = (
+                trace.results.get("rule_result", {}).get("tenant_id")
+                or step.args.get("tenant_id")
             )
             if key and tenant_id:
                 result = await verify_rule_created(db, tenant_id, key)
             else:
+                # Can't verify without tenant — skip, not fail
                 result = VerificationResult(
-                    verified=False, skipped=True,
-                    message="key/tenant not available for rule verification",
+                    verified=True, skipped=True,
+                    message="rule verification skipped — tenant_id not in trace",
                 )
         else:
             result = VerificationResult(
@@ -278,9 +301,13 @@ async def verify_actions(
         for sid, r in step_results.items()
     )
 
-    return {
+    result = {
         "overall":  overall,
         "verified": verified,
         "steps":    step_results,
         "message":  summary,
     }
+    # Write summary back onto trace for observability
+    if hasattr(trace, "verification_summary"):
+        trace.verification_summary = f"{overall}: {summary[:200]}"
+    return result

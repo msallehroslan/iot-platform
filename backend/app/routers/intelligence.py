@@ -36,6 +36,7 @@ from app.services.data_service import (
     get_unified_intelligence,
     get_key_intelligence,
 )
+# TAAT modules imported inside ai_chat to avoid circular import at startup
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,33 @@ def _scoped_devices(current_user, db: Session):
     if current_user.role == "CUSTOMER_USER" and current_user.customer_id:
         q = q.filter(Device.customer_id == current_user.customer_id)
     return q
+
+
+# ── Production safety helpers ─────────────────────────────────────────────────
+
+_OFFLINE_THRESHOLD_MINS = 5
+
+def _is_device_offline(device: Device) -> bool:
+    """
+    Task 7: stale / offline detection.
+    Returns True if device hasn't reported in OFFLINE_THRESHOLD_MINS.
+    """
+    if not device.last_seen_at:
+        return True
+    from datetime import datetime, timezone
+    age = (datetime.now(timezone.utc) - device.last_seen_at).total_seconds() / 60
+    return age > _OFFLINE_THRESHOLD_MINS
+
+
+def _safe_chat_response(error: str, engine: str = "error") -> dict:
+    """
+    Task 7: safe fallback response — never crashes, never silent.
+    """
+    logger.error("taat.safe_fallback: %s", error)
+    return {
+        "reply":  f"I encountered an issue: {error[:120]}. Please try again.",
+        "engine": engine,
+    }
 
 
 # ── Trend Detection ───────────────────────────────────────────────────────────
@@ -1235,7 +1263,7 @@ async def ai_chat(
     All existing actions (RPC, alarms, rules, users) are preserved.
     CUSTOMER_USER now gets read-only TAAT (was fully blocked before).
     """
-    # ── Compound AI imports ──────────────────────────────────────────────────
+    # ── TAAT imports (inline to avoid circular import at startup) ───────────
     from app.services.taat_planner import (
         classify_intent, build_context, build_system_prompt,
         check_permission, get_action_risk, extract_action,
@@ -1243,7 +1271,7 @@ async def ai_chat(
     )
     from app.services.taat_agent_planner import make_plan
     from app.services.taat_executor     import execute as run_plan
-    from app.services.taat_verification   import verify_rpc, verify_rule_created, verify_actions
+    from app.services.taat_verification import verify_rpc, verify_rule_created, verify_actions
     from app.services.taat_decision_engine import build_decision, summarize_decision, build_failure_decision
     from app.services.taat_memory_service import (
         record_action_outcome, record_incident, get_relevant_memories, format_for_prompt
@@ -1252,8 +1280,8 @@ async def ai_chat(
     api_key = os.getenv("GROQ_API_KEY")
 
     # ── Gather tenant + devices ───────────────────────────────────────────────
-    from app.models.models import Tenant
-    tenant      = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
+    from app.models.models import Tenant as _TenantModel
+    tenant      = db.query(_TenantModel).filter(Tenant.id == current_user.tenant_id).first()
     tenant_name = tenant.name if tenant else "TriAxis Nexus"
 
     raw_devices = _scoped_devices(current_user, db).limit(50).all()
@@ -1614,6 +1642,7 @@ async def ai_chat(
             "rule_actioned":    action_result if intent == "RULE"   and action_result else None,
             "user_actioned":    action_result if intent == "USER"   and action_result else None,
             "rate":             rate_info,
+            "trace_id":         trace.trace_id if trace else None,
         }
 
     except Exception as exc:

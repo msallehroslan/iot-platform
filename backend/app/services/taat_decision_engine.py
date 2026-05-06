@@ -204,6 +204,10 @@ def build_decision(
     if base["plan_risk"] == "HIGH":
         base["risk"] = "HIGH"
 
+    # Write decision_summary back onto trace for observability (Task 2)
+    if hasattr(trace, "decision_summary"):
+        trace.decision_summary = summarize_decision(base)
+
     return base
 
 

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -39,13 +41,22 @@ class StepTrace:
 
 @dataclass
 class ExecutionTrace:
-    """Full record of a plan execution — passed to LLM as context."""
-    plan_intent:  str
-    steps:        List[StepTrace]           = field(default_factory=list)
-    results:      Dict[str, Any]            = field(default_factory=dict)  # keyed by output_key
-    errors:       List[str]                 = field(default_factory=list)  # step error messages
-    all_success:  bool                      = True
-    total_ms:     float                     = 0.0
+    """
+    Full record of a plan execution.
+    Conforms to Task 3 spec: trace_id, intent, steps, results, errors,
+    started_at, completed_at, duration_ms, verification_summary, decision_summary.
+    """
+    plan_intent:          str
+    trace_id:             str                       = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    steps:                List[StepTrace]           = field(default_factory=list)
+    results:              Dict[str, Any]            = field(default_factory=dict)
+    errors:               List[str]                 = field(default_factory=list)
+    all_success:          bool                      = True
+    total_ms:             float                     = 0.0
+    started_at:           Optional[str]             = None   # ISO UTC
+    completed_at:         Optional[str]             = None   # ISO UTC
+    verification_summary: Optional[str]             = None   # set by verify_actions()
+    decision_summary:     Optional[str]             = None   # set by build_decision()
 
     def get(self, key: str, default=None):
         return self.results.get(key, default)
@@ -82,6 +93,7 @@ async def execute(
     (e.g. devices list for create_rule, api_key for LLM tools)
     """
     trace = ExecutionTrace(plan_intent=plan.intent)
+    trace.started_at = datetime.now(timezone.utc).isoformat()
     kwargs_base = extra_kwargs or {}
     t_total = time.monotonic()
 
@@ -95,7 +107,7 @@ async def execute(
         # e.g. step that needs device_id from a previous get_devices result
         _inject_forward_results(merged, trace.results, step)
 
-        logger.debug("executor.step tool=%s args=%s", step.tool, _safe_repr(merged))
+        logger.debug("executor.step trace_id=%s tool=%s args=%s", trace.trace_id, step.tool, _safe_repr(merged))
 
         try:
             result: ToolResult = await registry_call(
@@ -137,10 +149,11 @@ async def execute(
             step.tool, result.success, duration,
         )
 
-    trace.total_ms = round((time.monotonic() - t_total) * 1000, 1)
+    trace.total_ms    = round((time.monotonic() - t_total) * 1000, 1)
+    trace.completed_at = datetime.now(timezone.utc).isoformat()
     logger.info(
-        "executor.plan done intent=%s steps=%d all_success=%s total=%.0fms",
-        plan.intent, len(plan.steps), trace.all_success, trace.total_ms,
+        "executor.plan trace_id=%s intent=%s steps=%d all_success=%s total=%.0fms",
+        trace.trace_id, plan.intent, len(plan.steps), trace.all_success, trace.total_ms,
     )
     return trace
 
