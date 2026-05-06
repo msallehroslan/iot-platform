@@ -164,6 +164,42 @@ async def send_command_by_device_name(
         return None
 
     try:
+        # ── Prevent redundant RPC actions ─────────────────────
+
+        from app.services.taat_tools import tool_get_latest_telemetry
+
+        latest = tool_get_latest_telemetry(db, str(matched.id))
+
+        values = latest.get("values", {})
+
+        already_correct = True
+
+        for key, desired_value in params.items():
+
+            current_value = values.get(key)
+
+            # normalize bool/int
+            if isinstance(current_value, bool):
+                current_value = int(current_value)
+
+            if isinstance(desired_value, bool):
+                desired_value = int(desired_value)
+
+            if current_value != desired_value:
+                already_correct = False
+                break
+
+        if already_correct:
+
+            return {
+                "device_id": str(matched.id),
+                "device_name": matched.name,
+                "method": method,
+                "params": params,
+                "success": True,
+                "no_action": True,
+                "message": f"State already correct on {matched.name}",
+            }
         cmd = await send_command(
             db,
             device_id   = matched.id,
@@ -178,6 +214,8 @@ async def send_command_by_device_name(
             "cmd_id":      str(cmd.id),
             "method":      method,
             "params":      params,
+            "success": True,
+            "no_action": False,
         }
     except HTTPException as exc:
         logger.warning(
