@@ -1604,11 +1604,34 @@ async def ai_chat(
     chat_messages = [{"role": "system", "content": system_prompt}]
 
     if action_result:
-        outcome = "✅ SUCCESS" if action_result.get("success", True) else "⚠️ FAILED"
-        ver_note = f" {ctx.get('verification', {}).get('message', '')}" if verification else ""
+        outcome   = "✅ SUCCESS" if action_result.get("success", True) else "⚠️ FAILED"
+        ver_result = ctx.get("verification", {})
+        ver_msg   = ver_result.get("message", "") if isinstance(ver_result, dict) else ""
+        ver_overall = ver_result.get("overall", "skipped") if isinstance(ver_result, dict) else "skipped"
+
+        # Build a structured update the LLM MUST include in its reply
+        dev_name = action_result.get("device_name", "device")
+        params   = action_result.get("params", {})
+
+        if ver_overall == "success" and ver_msg:
+            update_instruction = (
+                f"Tell the user: Command executed on {dev_name}: {params}. {ver_msg}. "
+                f"Device confirmed the change. Be brief and direct."
+            )
+        elif ver_overall == "failed" and ver_msg:
+            update_instruction = (
+                f"Tell the user: Command was sent to {dev_name}: {params}, but {ver_msg}. "
+                f"The device may be offline or firmware did not respond. Be direct."
+            )
+        else:
+            update_instruction = (
+                f"Tell the user: Command sent to {dev_name}: {params}. "
+                f"Waiting for device to respond (verification pending or skipped). Be brief."
+            )
+
         chat_messages.append({
             "role":    "system",
-            "content": f"[ACTION {outcome}] {intent}: {json.dumps(action_result)}.{ver_note} Confirm naturally to the user.",
+            "content": f"[ACTION {outcome}] {update_instruction}",
         })
     if confirm_required:
         chat_messages.append({

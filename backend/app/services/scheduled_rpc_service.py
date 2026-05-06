@@ -54,8 +54,12 @@ def schedule_command(
     # Validate device access
     device = _get_device(db, device_id, current_user)
 
-    # Validate scheduled time is in the future
+    # Ensure scheduled_for is always UTC-aware (fix naive datetimes)
     now = datetime.now(timezone.utc)
+    if scheduled_for.tzinfo is None:
+        scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+
+    # Validate scheduled time is in the future
     if scheduled_for <= now:
         raise HTTPException(
             status_code=400,
@@ -261,15 +265,26 @@ async def dispatch_due_commands(db: Session) -> int:
     """
     from app.core.websocket_manager import manager as ws_manager
 
-    now  = datetime.now(timezone.utc)
-    due  = (
+    now       = datetime.now(timezone.utc)
+    now_naive = datetime.utcnow()  # for naive stored timestamps
+
+    # Fetch all scheduled commands — handle both aware and naive stored times
+    candidates = (
         db.query(RpcCommand)
-        .filter(
-            RpcCommand.status        == RpcCommandStatus.SCHEDULED,
-            RpcCommand.scheduled_for <= now,
-        )
+        .filter(RpcCommand.status == RpcCommandStatus.SCHEDULED)
         .all()
     )
+
+    due = []
+    for cmd in candidates:
+        sf = cmd.scheduled_for
+        if sf is None:
+            continue
+        # Make naive timestamps UTC-aware for comparison
+        if sf.tzinfo is None:
+            sf = sf.replace(tzinfo=timezone.utc)
+        if sf <= now:
+            due.append(cmd)
 
     if not due:
         return 0
@@ -312,6 +327,28 @@ async def dispatch_due_commands(db: Session) -> int:
 
             dispatched += 1
             logger.info("rpc.dispatch cmd=%s device=%s method=%s", cmd.id, cmd.device_id, cmd.method)
+
+            # Store dispatch event in agent_memory so TAAT proactively reports it
+            try:
+                from app.services.taat_memory_service import save_memory
+                device = db.query(Device).filter(Device.id == cmd.device_id).first()
+                dev_name = device.name if device else str(cmd.device_id)
+                fired_at = now.strftime("%H:%M UTC")
+                content = (
+                    f"SCHEDULED_DISPATCH: {cmd.method} {cmd.params} executed on {dev_name} "
+                    f"at {fired_at} (cmd_id={cmd.id})"
+                )
+                # Get tenant_id from device
+                if device and device.tenant_id:
+                    save_memory(
+                        db,
+                        tenant_id   = device.tenant_id,
+                        memory_type = "scheduled_dispatch",
+                        content     = content,
+                        commit      = False,  # will commit with the batch below
+                    )
+            except Exception as mem_exc:
+                logger.debug("dispatch memory record skipped: %s", mem_exc)
 
         except Exception as exc:
             logger.error("rpc.dispatch failed cmd=%s: %s", cmd.id, exc)

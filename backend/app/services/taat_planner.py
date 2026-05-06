@@ -72,7 +72,7 @@ async def classify_intent(
 
 Categories:
 - QUESTION: asking about status, values, trends, history, "what is", "show me", "why", "how many"
-- SCHEDULE: schedule/cancel FUTURE commands with a time — "at midnight", "at 9am", "tomorrow", "every 6h", "in 2 hours", "in 1 minute", "in 5 minutes", "cancel scheduled"
+- SCHEDULE: any command with a future time — "schedule", "at midnight", "at 9am", "tomorrow", "every Xh", "in X minutes", "in X hours", "in 2 min", "cancel scheduled". If the word 'schedule' appears OR a future time is mentioned → SCHEDULE, not DEVICE_CONTROL.
 - DEVICE_CONTROL: turn on/off RIGHT NOW, set value now, enable/disable now, toggle, reboot immediately
 - ALARM: acknowledge, clear, dismiss, resolve alarms
 - RULE: create/update/delete threshold rules, alarm rules, "set alarm when"
@@ -105,9 +105,12 @@ Respond with ONLY the category name, nothing else."""
     # SCHEDULE must be checked FIRST — "turn on at midnight" has both control + time words
     schedule_time_words = ["at midnight", "at noon", "tomorrow at", "at 9", "at 10", "at 11",
                            "at 12", "every hour", "every 6h", "every 2h", "every 12h", "every 24h",
-                           "in 1 hour", "in 2 hours", "in 30 min", "in 1 minute", "in 5 minutes",
-                           "in 10 minutes", "in 15 minutes", "in 30 minutes", "in 45 minutes",
-                           "in 1 min", "in 2 min", "in 5 min", "in 10 min", "in 15 min",
+                           "in 1 hour", "in 2 hours", "in 3 hours", "in 6 hours", "in 12 hours",
+                           "in 30 min", "in 45 min",
+                           "in 1 minute", "in 2 minutes", "in 3 minutes", "in 5 minutes",
+                           "in 10 minutes", "in 15 minutes", "in 20 minutes", "in 30 minutes",
+                           "in 45 minutes", "in 60 minutes",
+                           "in 1 min", "in 2 min", "in 3 min", "in 5 min", "in 10 min", "in 15 min",
                            "cancel schedule", "list scheduled",
                            "schedule", "recurring", "tonight at", "nightly", "daily at"]
     if any(w in msg for w in schedule_time_words):
@@ -326,9 +329,19 @@ def build_system_prompt(
         for a in ctx.get("active_alarms", [])
     ) or "  None"
 
+    all_memories = ctx.get("memory", {}).get("memories", [])
+    # Separate scheduled dispatches — show proactively at top
+    dispatches = [m for m in all_memories if m.get("type") == "scheduled_dispatch"]
+    other_mem  = [m for m in all_memories if m.get("type") != "scheduled_dispatch"]
+
+    dispatch_section = ""
+    if dispatches:
+        dispatch_lines = "\n".join(f"  ⏰ {m['content']}" for m in dispatches[:3])
+        dispatch_section = f"\nRECENT SCHEDULED ACTIONS EXECUTED:\n{dispatch_lines}"
+
     memory_lines = "\n".join(
         f"  [{m['type']}] {m['content']}"
-        for m in ctx.get("memory", {}).get("memories", [])
+        for m in other_mem
     ) or "  None"
 
     # Build telemetry section
@@ -366,6 +379,7 @@ def build_system_prompt(
             intel_section += f"\nLAST RPC: {last['method']} {last['params']} → {last['status']}"
     if ctx.get("decision_summary"):
         intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
+    intel_section += dispatch_section
 
     # Role capabilities
     if role == "CUSTOMER_USER":
@@ -405,6 +419,8 @@ RULES:
 3. For HIGH-risk actions, say: "⚠️ This will [description]. Reply 'proceed' to confirm."
 4. If you cannot find a device or key, say so — do not guess.
 5. Keep responses short unless asked for detail.
+6. If RECENT SCHEDULED ACTIONS EXECUTED section is present, proactively inform the user at the start of your reply.
+7. When showing scheduled commands, format them as readable text — never raw JSON. Example: "⏰ Turn off led2 on ESP32-e823 at 09:12 UTC".
 """
 
 
