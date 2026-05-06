@@ -1281,7 +1281,7 @@ async def ai_chat(
 
     # ── Gather tenant + devices ───────────────────────────────────────────────
     from app.models.models import Tenant as _TenantModel
-    tenant      = db.query(_TenantModel).filter(Tenant.id == current_user.tenant_id).first()
+    tenant      = db.query(_TenantModel).filter(_TenantModel.id == current_user.tenant_id).first()
     tenant_name = tenant.name if tenant else "TriAxis Nexus"
 
     raw_devices = _scoped_devices(current_user, db).limit(50).all()

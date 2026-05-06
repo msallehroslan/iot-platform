@@ -23,8 +23,6 @@ from app.routers import (
 )
 from app.routers import threshold_rules, rpc, widget_templates, metrics, api_keys, observability
 from app.routers import widgets
-from app.routers.intelligence_rca  import router_rca  as _intel_rca_router
-from app.routers.intelligence_data import router_data as _intel_data_router
 from app.services.cache_service import cache as _cache_service
 
 logger = logging.getLogger(__name__)
@@ -232,8 +230,6 @@ app.include_router(api_keys.router,          prefix="/api/v1")
 app.include_router(observability.router,     prefix="/api/v1")
 app.include_router(intelligence.router,      prefix="/api/v1")
 app.include_router(widgets.router,           prefix="/api/v1")
-app.include_router(_intel_rca_router,        prefix="/api/v1")
-app.include_router(_intel_data_router,       prefix="/api/v1")
 
 
 @app.get("/", tags=["System"])
