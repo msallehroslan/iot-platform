@@ -1856,12 +1856,24 @@ export function FleetMapWidget({ config }) {
   useEffect(() => {
     import("../../services/api.js").then(({ apiFetch }) => {
       apiFetch("/devices/?limit=100")
-        .then(r => { if (r?.items) setAllDevices(r.items); })
+        .then(r => {
+          // Handle both {items:[]} and plain array responses
+          const list = Array.isArray(r) ? r : (r?.items || []);
+          setAllDevices(list);
+        })
         .catch(() => {});
     });
   }, []);
 
-  const devices = allDevices.filter(d => d.latitude && d.longitude);
+  // Show devices with either lat/lng from device record OR from config
+  const devices = allDevices.filter(d =>
+    (d.latitude != null && d.longitude != null) ||
+    (d.lat != null && d.lng != null)
+  ).map(d => ({
+    ...d,
+    latitude:  d.latitude ?? d.lat,
+    longitude: d.longitude ?? d.lng,
+  }));
 
   useEffect(() => {
     if (!devices.length) return;
@@ -1959,7 +1971,15 @@ export function FleetMapWidget({ config }) {
         mapInstanceRef.current = null;
       }
     };
-  }, []);
+  }, [devices.length]);
+
+  // Force Leaflet to recalculate size after widget renders
+  useEffect(() => {
+    if (mapInstanceRef.current) {
+      setTimeout(() => mapInstanceRef.current?.invalidateSize(), 200);
+      setTimeout(() => mapInstanceRef.current?.invalidateSize(), 600);
+    }
+  });
 
   if (!devices.length) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8}}>

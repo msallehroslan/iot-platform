@@ -323,13 +323,18 @@ def build_system_prompt(
     Groq sees real data — never guesses.
     """
     role = getattr(current_user, "role", "TENANT_USER")
-    now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        now = _dt.now(_ZI("Asia/Kuala_Lumpur")).strftime("%Y-%m-%d %H:%M MYT")
+    except Exception:
+        now = __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
     device_lines = "\n".join(
         (
             f"  - {d['name']} [{d.get('status','?')}]"
             + (f" | {d['label']}" if d.get('label') else "")
-            + (f" | lat:{d['latitude']:.4f} lng:{d['longitude']:.4f}" if d.get('latitude') and d.get('longitude') else "")
+            + (f" | lat:{float(d['latitude']):.4f} lng:{float(d['longitude']):.4f}" if d.get('latitude') is not None and d.get('longitude') is not None else "")
             + (f" | last seen: {_fmt_myt(d['last_seen_at'])}" if d.get('last_seen_at') else "")
         )
         for d in ctx.get("device_list", [])
