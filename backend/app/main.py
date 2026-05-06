@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI):
             db = SessionLocal()
             try:
                 from app.services.scheduled_rpc_service import dispatch_due_commands
+                logger.info("Scheduled RPC dispatcher tick")
                 n = await dispatch_due_commands(db)
                 if n:
                     logger.info("Scheduled RPC dispatcher fired %d command(s)", n)

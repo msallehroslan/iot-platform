@@ -324,7 +324,10 @@ async def dispatch_due_commands(db: Session) -> int:
 
             # Promote the original scheduled command. Do not create a second duplicate command.
             cmd.status = RpcCommandStatus.PENDING
-            cmd.sent_at = None
+            cmd.sent_at = datetime.now(timezone.utc)
+
+            # Flush immediately so polling endpoint sees update
+            db.flush()
 
             # Immediate websocket delivery. Non-fatal because HTTP polling will deliver PENDING.
             try:
@@ -381,6 +384,17 @@ async def dispatch_due_commands(db: Session) -> int:
                 "scheduled_rpc.dispatched cmd=%s device=%s method=%s params=%s",
                 cmd.id, dev_name, cmd.method, cmd.params,
             )
+
+            # Commit immediately so ESP polling can fetch command
+            try:
+                db.commit()
+            except Exception as commit_exc:
+                logger.error(
+                    "scheduled_rpc.partial_commit_failed cmd=%s: %s",
+                    cmd.id,
+                    commit_exc,
+                )
+                db.rollback()
 
         except Exception as exc:
             logger.error("scheduled_rpc.dispatch failed cmd=%s: %s", getattr(cmd, "id", "?"), exc)

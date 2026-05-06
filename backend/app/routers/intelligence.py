@@ -1527,10 +1527,18 @@ async def ai_chat(
                     elif sched_action == "cancel":
                         action_result = cancel_scheduled(db, device_id=None, current_user=current_user)
                     elif sched_action == "schedule" and action.get("device_name"):
+                        from zoneinfo import ZoneInfo
+                        MYT = ZoneInfo("Asia/Kuala_Lumpur")
                         scheduled_for = parse_schedule_time(
                             action.get("time_str", "in 1 hour"),
                             action.get("repeat_hours"),
                         )
+                        # Ensure timezone-aware UTC datetime
+                        if scheduled_for.tzinfo is None:
+                            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+                        # Convert ONLY for human display
+                        scheduled_for_local = scheduled_for.astimezone(MYT)
+                        display_time = scheduled_for_local.strftime("%Y-%m-%d %H:%M MYT")
                         action_result = await schedule_by_device_name(
                             db,
                             devices               = raw_devices,
@@ -1542,6 +1550,9 @@ async def ai_chat(
                             current_user          = current_user,
                             source                = "taat_agent",
                         )
+                        # Human-readable schedule time
+                        if isinstance(action_result, dict):
+                            action_result["scheduled_display"] = display_time
             except Exception as exc:
                 logger.error("schedule execution failed: %s", exc)
                 db.rollback()
@@ -1613,7 +1624,19 @@ async def ai_chat(
         dev_name = action_result.get("device_name", "device")
         params   = action_result.get("params", {})
 
-        if ver_overall == "success" and ver_msg:
+        # Scheduled action response override
+        if (
+            intent == "SCHEDULE"
+            and isinstance(action_result, dict)
+            and action_result.get("scheduled_display")
+        ):
+            update_instruction = (
+                f"Tell the user: "
+                f"⏰ Command scheduled successfully for "
+                f"{action_result['scheduled_display']}. "
+                f"Be brief and direct."
+            )
+        elif ver_overall == "success" and ver_msg:
             update_instruction = (
                 f"Tell the user: Command executed on {dev_name}: {params}. {ver_msg}. "
                 f"Device confirmed the change. Be brief and direct."
