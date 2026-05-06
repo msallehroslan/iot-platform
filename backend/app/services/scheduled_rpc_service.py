@@ -20,7 +20,9 @@ Natural language examples handled by TAAT:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 from uuid import UUID
 
@@ -33,6 +35,30 @@ from app.models.models import (
 from app.services.audit import audit
 
 logger = logging.getLogger(__name__)
+
+# Human-entered schedule times are interpreted in this timezone, then stored in UTC.
+# Malaysia users expect "9:39am" to mean Malaysia time, not 09:39 UTC.
+SCHEDULE_TIMEZONE = os.getenv("SCHEDULE_TIMEZONE", "Asia/Kuala_Lumpur")
+
+
+def _schedule_tz():
+    try:
+        return ZoneInfo(SCHEDULE_TIMEZONE)
+    except Exception:
+        logger.warning("Invalid SCHEDULE_TIMEZONE=%s; falling back to UTC", SCHEDULE_TIMEZONE)
+        return timezone.utc
+
+
+def _to_utc(dt: datetime) -> datetime:
+    """Normalise any datetime to timezone-aware UTC."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_schedule_tz())
+    return dt.astimezone(timezone.utc)
+
+
+def _now_local() -> datetime:
+    return datetime.now(_schedule_tz())
+
 
 # ── Schedule CRUD ─────────────────────────────────────────────────────────────
 
@@ -54,10 +80,10 @@ def schedule_command(
     # Validate device access
     device = _get_device(db, device_id, current_user)
 
-    # Ensure scheduled_for is always UTC-aware (fix naive datetimes)
+    # Interpret naive human-entered times in SCHEDULE_TIMEZONE, then store UTC.
+    # This prevents "9:39am" in Malaysia from being stored as 09:39 UTC.
+    scheduled_for = _to_utc(scheduled_for)
     now = datetime.now(timezone.utc)
-    if scheduled_for.tzinfo is None:
-        scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
 
     # Validate scheduled time is in the future
     if scheduled_for <= now:
@@ -257,108 +283,115 @@ def list_scheduled(
 async def dispatch_due_commands(db: Session) -> int:
     """
     Fire all SCHEDULED commands whose scheduled_for <= now.
-    Called every 30s from the background task in main.py.
 
-    For repeating commands: after firing, creates the next occurrence
-    and marks the current one PENDING (to be sent via WS/poll).
-    Returns count of commands dispatched.
+    Important behaviour:
+    - Scheduled rows stay as the original command history.
+    - When due, the same row is promoted to PENDING.
+    - WebSocket dispatch is attempted immediately.
+    - HTTP polling still works as fallback: /rpc/pending/{token} will pick up PENDING.
+    - Repeating commands create a fresh SCHEDULED row for the next fire time.
     """
     from app.core.websocket_manager import manager as ws_manager
 
-    now       = datetime.now(timezone.utc)
-    now_naive = datetime.utcnow()  # for naive stored timestamps
+    now = datetime.now(timezone.utc)
+    logger.debug("scheduled_rpc.dispatch tick now=%s", now.isoformat())
 
-    # Fetch all scheduled commands — handle both aware and naive stored times
     candidates = (
         db.query(RpcCommand)
         .filter(RpcCommand.status == RpcCommandStatus.SCHEDULED)
         .all()
     )
 
-    due = []
+    due: list[RpcCommand] = []
     for cmd in candidates:
-        sf = cmd.scheduled_for
-        if sf is None:
+        if not cmd.scheduled_for:
             continue
-        # Make naive timestamps UTC-aware for comparison
-        if sf.tzinfo is None:
-            sf = sf.replace(tzinfo=timezone.utc)
-        if sf <= now:
+        scheduled_for = _to_utc(cmd.scheduled_for)
+        if scheduled_for <= now:
             due.append(cmd)
 
     if not due:
+        logger.debug("scheduled_rpc.dispatch no due commands candidates=%d", len(candidates))
         return 0
+
+    logger.info("scheduled_rpc.dispatch due=%d candidates=%d", len(due), len(candidates))
 
     dispatched = 0
     for cmd in due:
         try:
-            # Mark as PENDING — rpc polling loop or WS will deliver it
-            cmd.status  = RpcCommandStatus.PENDING
-            cmd.sent_at = None   # reset — will be set when device polls
+            device = db.query(Device).filter(Device.id == cmd.device_id).first()
+            dev_name = device.name if device else str(cmd.device_id)
 
-            # Dispatch via WebSocket immediately (non-fatal)
+            # Promote the original scheduled command. Do not create a second duplicate command.
+            cmd.status = RpcCommandStatus.PENDING
+            cmd.sent_at = None
+
+            # Immediate websocket delivery. Non-fatal because HTTP polling will deliver PENDING.
             try:
                 await ws_manager.broadcast_json(str(cmd.device_id), {
-                    "type":   "rpc",
+                    "type": "rpc",
                     "cmd_id": str(cmd.id),
                     "method": cmd.method,
                     "params": cmd.params,
+                    "source": "scheduled_rpc",
                 })
-            except Exception:
-                pass  # device will poll
+                logger.info("scheduled_rpc.ws_dispatched cmd=%s device=%s", cmd.id, dev_name)
+            except Exception as ws_exc:
+                logger.debug("scheduled_rpc.ws_dispatch skipped cmd=%s: %s", cmd.id, ws_exc)
 
-            # Schedule next occurrence for repeating commands
+            # Repeating command: create the next SCHEDULED occurrence.
             if cmd.repeat_interval_hours:
                 next_fire = now + timedelta(hours=cmd.repeat_interval_hours)
                 next_cmd = RpcCommand(
-                    device_id             = cmd.device_id,
-                    method                = cmd.method,
-                    params                = cmd.params,
-                    status                = RpcCommandStatus.SCHEDULED,
-                    created_by            = cmd.created_by,
-                    scheduled_for         = next_fire,
-                    repeat_interval_hours = cmd.repeat_interval_hours,
+                    device_id=cmd.device_id,
+                    method=cmd.method,
+                    params=cmd.params,
+                    status=RpcCommandStatus.SCHEDULED,
+                    created_by=cmd.created_by,
+                    scheduled_for=next_fire,
+                    repeat_interval_hours=cmd.repeat_interval_hours,
                 )
                 db.add(next_cmd)
                 logger.info(
-                    "rpc.repeat next=%s device=%s in %.1fh",
-                    next_fire.isoformat(), cmd.device_id, cmd.repeat_interval_hours,
+                    "scheduled_rpc.repeat_created original=%s next=%s device=%s repeat=%.2fh",
+                    cmd.id, next_fire.isoformat(), dev_name, cmd.repeat_interval_hours,
                 )
 
-            dispatched += 1
-            logger.info("rpc.dispatch cmd=%s device=%s method=%s", cmd.id, cmd.device_id, cmd.method)
-
-            # Store dispatch event in agent_memory so TAAT proactively reports it
+            # Memory event so TAAT report can show RECENT SCHEDULED ACTIONS EXECUTED.
             try:
                 from app.services.taat_memory_service import save_memory
-                device = db.query(Device).filter(Device.id == cmd.device_id).first()
-                dev_name = device.name if device else str(cmd.device_id)
-                fired_at = now.strftime("%H:%M UTC")
-                content = (
-                    f"SCHEDULED_DISPATCH: {cmd.method} {cmd.params} executed on {dev_name} "
-                    f"at {fired_at} (cmd_id={cmd.id})"
-                )
-                # Get tenant_id from device
                 if device and device.tenant_id:
+                    fired_at_local = now.astimezone(_schedule_tz()).strftime("%Y-%m-%d %H:%M %Z")
+                    content = (
+                        f"SCHEDULED_DISPATCH: {cmd.method} {cmd.params} fired on {dev_name} "
+                        f"at {fired_at_local} (cmd_id={cmd.id})"
+                    )
                     save_memory(
                         db,
-                        tenant_id   = device.tenant_id,
-                        memory_type = "scheduled_dispatch",
-                        content     = content,
-                        commit      = False,  # will commit with the batch below
+                        tenant_id=device.tenant_id,
+                        memory_type="scheduled_dispatch",
+                        content=content,
+                        commit=False,
                     )
             except Exception as mem_exc:
-                logger.debug("dispatch memory record skipped: %s", mem_exc)
+                logger.debug("scheduled_rpc.memory skipped cmd=%s: %s", cmd.id, mem_exc)
+
+            dispatched += 1
+            logger.info(
+                "scheduled_rpc.dispatched cmd=%s device=%s method=%s params=%s",
+                cmd.id, dev_name, cmd.method, cmd.params,
+            )
 
         except Exception as exc:
-            logger.error("rpc.dispatch failed cmd=%s: %s", cmd.id, exc)
+            logger.error("scheduled_rpc.dispatch failed cmd=%s: %s", getattr(cmd, "id", "?"), exc)
 
     if dispatched:
         try:
             db.commit()
         except Exception as exc:
-            logger.error("rpc.dispatch commit failed: %s", exc)
+            logger.error("scheduled_rpc.dispatch commit failed: %s", exc)
             db.rollback()
+            return 0
 
     return dispatched
 
@@ -382,15 +415,14 @@ def parse_schedule_time(
     """
     import re
 
-    now = datetime.now(timezone.utc)
+    # Use local scheduling timezone for human phrases, then convert to UTC before returning.
+    now_local = _now_local()
     s   = time_str.strip().lower()
 
     # ISO datetime — just parse
     try:
         dt = datetime.fromisoformat(s.replace("z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
+        return _to_utc(dt)
     except ValueError:
         pass
 
@@ -399,21 +431,23 @@ def parse_schedule_time(
     if m:
         val, unit = float(m.group(1)), m.group(2)
         delta = timedelta(hours=val) if unit.startswith("h") else timedelta(minutes=val)
-        return now + delta
+        return datetime.now(timezone.utc) + delta
 
     # "+Xh" / "+Xm"
     m = re.match(r"\+(\d+(?:\.\d+)?)(h|m)", s)
     if m:
         val, unit = float(m.group(1)), m.group(2)
-        return now + (timedelta(hours=val) if unit == "h" else timedelta(minutes=val))
+        return datetime.now(timezone.utc) + (timedelta(hours=val) if unit == "h" else timedelta(minutes=val))
 
     # "midnight" / "noon"
     if "midnight" in s:
-        base = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        return base if base > now else base + timedelta(days=1)
+        base = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+        target = base if base > now_local else base + timedelta(days=1)
+        return _to_utc(target)
     if "noon" in s:
-        base = now.replace(hour=12, minute=0, second=0, microsecond=0)
-        return base if base > now else base + timedelta(days=1)
+        base = now_local.replace(hour=12, minute=0, second=0, microsecond=0)
+        target = base if base > now_local else base + timedelta(days=1)
+        return _to_utc(target)
 
     # "tomorrow at HH:MM" / "tomorrow at Xam"
     is_tomorrow = "tomorrow" in s
@@ -432,16 +466,16 @@ def parse_schedule_time(
             hour = 0
 
     if hour is not None:
-        base = (now + timedelta(days=1)) if is_tomorrow else now
+        base = (now_local + timedelta(days=1)) if is_tomorrow else now_local
         target = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
         # If time is in the past today, roll to tomorrow
-        if target <= now and not is_tomorrow:
+        if target <= now_local and not is_tomorrow:
             target += timedelta(days=1)
-        return target
+        return _to_utc(target)
 
     # Default: 1 hour from now
     logger.warning("Could not parse schedule time '%s', defaulting to +1h", time_str)
-    return now + timedelta(hours=1)
+    return datetime.now(timezone.utc) + timedelta(hours=1)
 
 
 def _humanise_schedule(
@@ -451,6 +485,7 @@ def _humanise_schedule(
     """Return a human-readable label like 'tonight at 00:00 · every 6h'."""
     if not scheduled_for:
         return ""
+    scheduled_for = _to_utc(scheduled_for)
     now   = datetime.now(timezone.utc)
     delta = scheduled_for - now
     hours = delta.total_seconds() / 3600
@@ -458,9 +493,9 @@ def _humanise_schedule(
     if hours < 1:
         time_part = f"in {int(delta.total_seconds() / 60)} min"
     elif hours < 24:
-        time_part = scheduled_for.strftime("%H:%M UTC today")
+        time_part = scheduled_for.astimezone(_schedule_tz()).strftime("%H:%M %Z today")
     else:
-        time_part = scheduled_for.strftime("%d %b %H:%M UTC")
+        time_part = scheduled_for.astimezone(_schedule_tz()).strftime("%d %b %H:%M %Z")
 
     if repeat_hours:
         h = int(repeat_hours) if repeat_hours == int(repeat_hours) else repeat_hours

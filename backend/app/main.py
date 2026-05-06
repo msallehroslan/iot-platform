@@ -138,10 +138,10 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # Phase 11: Scheduled RPC dispatcher — fires due commands every 30s
+    # Phase 11: Scheduled RPC dispatcher — checks due commands every 5s.
+    # It runs immediately on startup, then sleeps, so due commands do not wait 30s.
     async def _scheduled_rpc_dispatcher():
         while True:
-            await _asyncio.sleep(30)
             db = SessionLocal()
             try:
                 from app.services.scheduled_rpc_service import dispatch_due_commands
@@ -154,6 +154,7 @@ async def lifespan(app: FastAPI):
                 except: pass
             finally:
                 db.close()
+            await _asyncio.sleep(5)
 
     purge_task      = _asyncio.create_task(_daily_purge())
     offline_task    = _asyncio.create_task(_offline_check())
