@@ -2764,17 +2764,24 @@ export default function App() {
 
   // Listen for map pin "Open Dashboard" clicks — dispatched by Leaflet popup
   useEffect(() => {
-    const handler = (e) => {
+    const handler = async (e) => {
       const deviceId = e.detail;
-      const found = allDevices?.find(d => String(d.id) === String(deviceId));
-      if (found) {
-        setDashDevice(found);
+      // Fetch device directly by ID — avoids allDevices scope issue
+      try {
+        const { deviceApi } = await import("./services/api.js");
+        const device = await deviceApi.get(deviceId);
+        if (device && device.id) {
+          setDashDevice(device);
+          setPage("device-dashboards");
+        }
+      } catch {
+        // Fallback: navigate to device-dashboards and let user pick
         setPage("device-dashboards");
       }
     };
     window.addEventListener("taat-open-device", handler);
     return () => window.removeEventListener("taat-open-device", handler);
-  }, [allDevices]);
+  }, []);
 
   // refreshKey drives: alarm badge count, Overview stats, manual refresh button.
   // Telemetry cards now use WebSocket (useDeviceTelemetry) so 3s polling is gone.
