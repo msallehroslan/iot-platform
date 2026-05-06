@@ -208,6 +208,11 @@ def build_context(
                 "name":         d["name"],
                 "status":       d["status"],
                 "last_seen_at": d.get("last_seen_at"),
+
+                 # TEMP DEBUG
+                "label": d.get("label"),
+                "latitude": d.get("latitude"),
+                "longitude": d.get("longitude"),
             }
             for d in devices
         ],
