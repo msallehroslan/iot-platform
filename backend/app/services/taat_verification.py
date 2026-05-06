@@ -45,14 +45,22 @@ VERIFY_TIMEOUT_S = 10.0
 STALE_THRESHOLD_S = 30.0
 
 
+# Verification state constants (Part 1 — truthfulness)
+VSTATE_SUCCESS         = "SUCCESS"          # telemetry confirmed state changed
+VSTATE_PARTIAL_SUCCESS = "PARTIAL_SUCCESS"  # RPC sent, no telemetry confirmation
+VSTATE_UNVERIFIED      = "UNVERIFIED"       # no telemetry available to check
+VSTATE_FAILED          = "FAILED"           # RPC transport failure
+
+
 @dataclass
 class VerificationResult:
-    verified:    bool                  # True = state confirmed changed
-    key:         Optional[str] = None  # which key was checked
-    pre_value:   object        = None  # value before command
-    post_value:  object        = None  # value after command
-    message:     str           = ""    # human-readable summary
-    skipped:     bool          = False # True = couldn't verify (offline/no key)
+    verified:            bool                  # True = state confirmed changed
+    key:                 Optional[str] = None  # which key was checked
+    pre_value:           object        = None  # value before command
+    post_value:          object        = None  # value after command
+    message:             str           = ""    # human-readable summary
+    skipped:             bool          = False # True = couldn't verify (offline/no key)
+    verification_state:  str           = VSTATE_UNVERIFIED  # one of 4 states above
 
 
 async def verify_rpc(
@@ -97,6 +105,7 @@ async def verify_rpc(
             verified=False, skipped=True,
             key=target_key, pre_value=pre_value,
             message=f"Verification timeout after {VERIFY_TIMEOUT_S}s",
+            verification_state=VSTATE_UNVERIFIED,
         )
 
     # Re-read telemetry (bypasses cache for fresh read)
@@ -110,6 +119,7 @@ async def verify_rpc(
         return VerificationResult(
             verified=False, skipped=True,
             message=f"Could not read telemetry for verification: {exc}",
+            verification_state=VSTATE_UNVERIFIED,
         )
 
     # Stale telemetry detection — if ts hasn't advanced, device isn't reporting
@@ -123,13 +133,16 @@ async def verify_rpc(
             message=(
                 f"Stale telemetry — device ts unchanged ({post_ts}). "
                 "Device may be offline or not reporting."),
+            verification_state=VSTATE_UNVERIFIED,
         )
 
     if post_value is None:
+        # RPC was sent but no telemetry key to confirm — PARTIAL_SUCCESS not UNVERIFIED
         return VerificationResult(
             verified=False, skipped=True,
             key=target_key, pre_value=pre_value, post_value=post_value,
-            message=f"Key '{target_key}' not in telemetry — cannot verify",
+            message=f"RPC sent to device, but key '{target_key}' not in telemetry — awaiting confirmation",
+            verification_state=VSTATE_PARTIAL_SUCCESS,
         )
 
     pre_num = _to_num(pre_value)
@@ -151,6 +164,7 @@ async def verify_rpc(
     return VerificationResult(
         verified=changed, key=target_key,
         pre_value=pre_value, post_value=post_value, message=msg,
+        verification_state=VSTATE_SUCCESS if changed else VSTATE_PARTIAL_SUCCESS,
     )
 
 
@@ -286,14 +300,25 @@ async def verify_actions(
         else:
             fail_count += 1
 
-    if fail_count == 0:
-        overall  = "success"
+    # Derive overall state from individual step states
+    states = [
+        r.get("verification_state", VSTATE_UNVERIFIED)
+        for r in step_results.values()
+    ]
+    if all(s == VSTATE_SUCCESS for s in states):
+        overall  = VSTATE_SUCCESS
         verified = True
-    elif success_count == 0:
-        overall  = "failed"
+    elif all(s == VSTATE_FAILED for s in states):
+        overall  = VSTATE_FAILED
+        verified = False
+    elif any(s == VSTATE_SUCCESS for s in states):
+        overall  = VSTATE_PARTIAL_SUCCESS
+        verified = False
+    elif any(s == VSTATE_PARTIAL_SUCCESS for s in states):
+        overall  = VSTATE_PARTIAL_SUCCESS
         verified = False
     else:
-        overall  = "partial"
+        overall  = VSTATE_UNVERIFIED
         verified = False
 
     summary = "; ".join(

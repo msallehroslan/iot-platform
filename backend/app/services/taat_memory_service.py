@@ -24,6 +24,20 @@ logger = logging.getLogger(__name__)
 
 MAX_MEMORIES = 100   # per tenant cap — oldest pruned on write
 
+# ── Memory type constants (Part 2+4) ──────────────────────────────────────────
+# Semantic memories persist longer and have higher retrieval priority
+MTYPE_ACTION   = "outcome"           # RPC actions, alarm actions
+MTYPE_SEMANTIC = "semantic"          # device purpose, location, system knowledge
+MTYPE_INCIDENT = "incident"          # anomalies, failures, events
+MTYPE_SCHEDULE = "scheduled_dispatch" # scheduled command executions
+MTYPE_PATTERN  = "successful_action_pattern"  # learned high-confidence patterns
+MTYPE_POLICY   = "auto_execute_policy"
+
+# Semantic memories are never pruned by normal MAX_MEMORIES logic
+SEMANTIC_TYPES = {MTYPE_SEMANTIC}
+# Retrieval priority order — semantic first
+PRIORITY_ORDER = [MTYPE_SEMANTIC, MTYPE_INCIDENT, MTYPE_ACTION, MTYPE_SCHEDULE]
+
 
 # ── Read ──────────────────────────────────────────────────────────────────────
 
@@ -68,25 +82,55 @@ def get_relevant_memories(
 ) -> list[dict]:
     """
     Fetch memories relevant to a specific device or key.
+    Semantic memories retrieved first (higher priority).
     Used by context builder to inject focused memory into the system prompt.
     """
-    all_mem = get_memories(db, tenant_id, limit=50)
-    if not device_name and not key:
-        return all_mem[:limit]
+    all_mem = get_memories(db, tenant_id, limit=100)
 
+    # Score by relevance + type priority
     scored = []
     for m in all_mem:
         content_lower = m["content"].lower()
-        score = 0
+        # Base score: semantic = 10, incident = 3, action = 1
+        type_score = 10 if m["type"] == MTYPE_SEMANTIC else                      3  if m["type"] == MTYPE_INCIDENT else 1
+
+        match_score = 0
         if device_name and device_name.lower() in content_lower:
-            score += 2
+            match_score += 4
         if key and key.lower() in content_lower:
-            score += 1
-        if score > 0:
-            scored.append((score, m))
+            match_score += 2
+        if match_score > 0 or not (device_name or key):
+            scored.append((type_score + match_score, m))
+
+    if not scored:
+        return all_mem[:limit]
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [m for _, m in scored[:limit]]
+
+
+def get_semantic_memories(
+    db: Session,
+    tenant_id: UUID,
+    query: Optional[str] = None,
+    limit: int = 20,
+) -> list[dict]:
+    """
+    Retrieve semantic memories only — device purpose, location, preferences.
+    Called when user asks descriptive questions: 'What is X used for?'
+    """
+    mems = get_memories(db, tenant_id, memory_type=MTYPE_SEMANTIC, limit=200)
+    if not query:
+        return mems[:limit]
+
+    query_lower = query.lower()
+    scored = []
+    for m in mems:
+        score = sum(1 for word in query_lower.split() if word in m["content"].lower())
+        if score > 0:
+            scored.append((score, m))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [m for _, m in scored[:limit]] or mems[:limit]
 
 
 def format_for_prompt(memories: list[dict]) -> str:
@@ -117,14 +161,18 @@ def save_memory(
     try:
         from app.models.models import AgentMemory
 
-        # Prune oldest if at cap
+        # Prune oldest non-semantic entries if at cap
+        # Semantic memories are preserved — they are long-term infrastructure knowledge
         count = db.query(AgentMemory).filter(
             AgentMemory.tenant_id == tenant_id
         ).count()
         if count >= MAX_MEMORIES:
             oldest = (
                 db.query(AgentMemory)
-                .filter(AgentMemory.tenant_id == tenant_id)
+                .filter(
+                    AgentMemory.tenant_id == tenant_id,
+                    AgentMemory.memory_type.notin_(list(SEMANTIC_TYPES)),
+                )
                 .order_by(AgentMemory.created_at.asc())
                 .limit(max(1, count - MAX_MEMORIES + 1))
                 .all()
@@ -149,6 +197,24 @@ def save_memory(
         except Exception:
             pass
         return False
+
+
+def save_semantic_memory(
+    db: Session,
+    tenant_id: UUID,
+    content: str,
+    user_id: Optional[UUID] = None,
+) -> bool:
+    """
+    Store a semantic fact — device purpose, location, system context, preference.
+    These persist permanently and are never crowded out by operational noise.
+
+    Examples:
+        'ESP32-e823 controls the lab test LED in Lab A'
+        'Pump-01 is installed at Cooling Tower 2'
+        'User prefers Celsius and daily reports at 8 AM MYT'
+    """
+    return save_memory(db, tenant_id, MTYPE_SEMANTIC, content, user_id=user_id)
 
 
 def record_incident(
@@ -176,13 +242,22 @@ def record_action_outcome(
 ) -> None:
     """Record the outcome of an executed action for future TAAT context."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    status = "✅ success" if success else "❌ failed"
+    # Part 1: use truthful status — never store SUCCESS when unverified
+    if success and detail and "confirmed" in detail.lower():
+        status = "✅ SUCCESS"
+    elif success and (not detail or "awaiting" in detail.lower() or "unverified" in detail.lower()):
+        status = "⚡ PARTIAL_SUCCESS"
+    elif success:
+        status = "⚡ PARTIAL_SUCCESS"
+    else:
+        status = "❌ FAILED"
+
     content = (
         f"{action_type} on {device_name} {status}: {params}"
         + (f" — {detail}" if detail else "")
         + f" at {now}"
     )
-    save_memory(db, tenant_id, "outcome", content, user_id=user_id)
+    save_memory(db, tenant_id, MTYPE_ACTION, content, user_id=user_id)
 
 
 def record_device_context(

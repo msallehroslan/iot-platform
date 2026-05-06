@@ -1906,17 +1906,16 @@ export function FleetMapWidget({ config }) {
         const icon = L.divIcon({
           className: "",
           html: `<div style="
-            width:32px;height:32px;border-radius:50% 50% 50% 0;
+            width:20px;height:20px;border-radius:50%;
             background:${color};border:2px solid white;
-            transform:rotate(-45deg);
-            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            box-shadow:0 2px 5px rgba(0,0,0,0.35);
             display:flex;align-items:center;justify-content:center;
-          "><span style="transform:rotate(45deg);color:white;font-size:10px;font-weight:700;line-height:1">
+          "><span style="color:white;font-size:8px;font-weight:700;line-height:1">
             ${d.name.charAt(0).toUpperCase()}
           </span></div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 32],
-          popupAnchor: [0, -34],
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+          popupAnchor: [0, -12],
         });
 
         const marker = L.marker([parseFloat(d.latitude), parseFloat(d.longitude)], { icon });
@@ -1926,7 +1925,8 @@ export function FleetMapWidget({ config }) {
             <strong style="font-size:13px">${d.name}</strong><br/>
             <span style="font-size:11px;color:#64748b">${statusLabel}</span><br/>
             <span style="font-size:10px;color:#94a3b8">${parseFloat(d.latitude).toFixed(5)}, ${parseFloat(d.longitude).toFixed(5)}</span><br/>
-            <a href="/dashboard/device/${d.id}" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">
+            <a href="#" onclick="window.dispatchEvent(new CustomEvent('taat-open-device',{detail:'${d.id}'}));return false;"
+               style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">
               → Open Dashboard
             </a>
           </div>
@@ -2044,14 +2044,13 @@ export function MapWidget({ config, liveTelem, deviceId }) {
       const icon = L.divIcon({
         className: "",
         html: `<div style="
-          width:32px;height:32px;border-radius:50% 50% 50% 0;
+          width:20px;height:20px;border-radius:50%;
           background:${statusColor};border:2px solid white;
-          transform:rotate(-45deg);
-          box-shadow:0 2px 6px rgba(0,0,0,0.3);
+          box-shadow:0 2px 5px rgba(0,0,0,0.35);
         "></div>`,
-        iconSize: [32, 32],
-        iconAnchor: [16, 32],
-        popupAnchor: [0, -34],
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -12],
       });
 
       const marker = L.marker([lat, lng], { icon }).addTo(map);
@@ -2066,7 +2065,7 @@ export function MapWidget({ config, liveTelem, deviceId }) {
           <span style="font-size:11px;color:#64748b">${statusLabel}</span><br/>
           <span style="font-size:10px;color:#94a3b8">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
           ${isLive ? '<br/><span style="font-size:10px;color:#10b981">📡 Live GPS</span>' : ""}
-          ${devId ? `<br/><a href="/dashboard/device/${devId}" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">→ Open Dashboard</a>` : ""}
+          ${devId ? `<br/><a href="#" onclick="window.dispatchEvent(new CustomEvent('taat-open-device',{detail:'${devId}'}));return false;" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">→ Open Dashboard</a>` : ""}
         </div>
       `);
 

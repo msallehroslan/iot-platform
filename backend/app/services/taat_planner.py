@@ -51,7 +51,8 @@ INTENT_CATEGORIES = [
     "REPORT",
     "RCA",
     "RECOMMEND",
-    "SCHEDULE",      # schedule/cancel future RPC commands
+    "SCHEDULE",
+    "REMEMBER",      # save semantic/location/preference memory
 ]
 
 CUSTOMER_ALLOWED_INTENTS = {"QUESTION", "REPORT"}
@@ -72,6 +73,7 @@ async def classify_intent(
 
 Categories:
 - QUESTION: asking about status, values, trends, history, "what is", "show me", "why", "how many"
+- REMEMBER: user wants to save a fact — "remember that", "note that", "X is located in", "X is used for", "X controls", "I prefer"
 - SCHEDULE: any command with a future time — "schedule", "at midnight", "at 9am", "tomorrow", "every Xh", "in X minutes", "in X hours", "in 2 min", "cancel scheduled". If the word 'schedule' appears OR a future time is mentioned → SCHEDULE, not DEVICE_CONTROL.
 - DEVICE_CONTROL: turn on/off RIGHT NOW, set value now, enable/disable now, toggle, reboot immediately
 - ALARM: acknowledge, clear, dismiss, resolve alarms
@@ -131,6 +133,10 @@ Respond with ONLY the category name, nothing else."""
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
         return "RECOMMEND"
+    if any(w in msg for w in ["remember that", "remember:", "note that", "save that",
+                               "is located in", "is used for", "is installed at",
+                               "controls the", "i prefer", "user prefers"]):
+        return "REMEMBER"
 
     return "QUESTION"
 
@@ -330,14 +336,20 @@ def build_system_prompt(
     ) or "  None"
 
     all_memories = ctx.get("memory", {}).get("memories", [])
-    # Separate scheduled dispatches — show proactively at top
-    dispatches = [m for m in all_memories if m.get("type") == "scheduled_dispatch"]
-    other_mem  = [m for m in all_memories if m.get("type") != "scheduled_dispatch"]
+    # Separate by type — semantic memories shown first (infrastructure knowledge)
+    semantic_mem  = [m for m in all_memories if m.get("type") == "semantic"]
+    dispatches    = [m for m in all_memories if m.get("type") == "scheduled_dispatch"]
+    other_mem     = [m for m in all_memories if m.get("type") not in ("semantic", "scheduled_dispatch")]
 
     dispatch_section = ""
     if dispatches:
         dispatch_lines = "\n".join(f"  ⏰ {m['content']}" for m in dispatches[:3])
         dispatch_section = f"\nRECENT SCHEDULED ACTIONS EXECUTED:\n{dispatch_lines}"
+
+    semantic_section = ""
+    if semantic_mem:
+        sem_lines = "\n".join(f"  📌 {m['content']}" for m in semantic_mem[:10])
+        semantic_section = f"\nINFRASTRUCTURE KNOWLEDGE (persistent):\n{sem_lines}"
 
     memory_lines = "\n".join(
         f"  [{m['type']}] {m['content']}"
@@ -380,6 +392,7 @@ def build_system_prompt(
     if ctx.get("decision_summary"):
         intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
     intel_section += dispatch_section
+    intel_section += semantic_section
 
     # Role capabilities
     if role == "CUSTOMER_USER":

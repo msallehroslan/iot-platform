@@ -1353,7 +1353,7 @@ async def ai_chat(
     action_result    = None
     verification     = None
 
-    write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE"}
+    write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE", "REMEMBER"}
 
     if intent in write_intents:
         allowed, deny_reason = check_permission(intent, {}, current_user, last_user_msg)
@@ -1571,6 +1571,25 @@ async def ai_chat(
                 except Exception as exc:
                     logger.error("user action failed: %s", exc)
 
+        # ── REMEMBER intent — save semantic/location/preference memory ──────
+        elif intent == "REMEMBER":
+            try:
+                from app.services.taat_memory_service import save_semantic_memory
+                # Extract the fact to remember — strip common prefixes
+                import re as _re
+                fact = last_user_msg
+                for prefix in ["remember that", "remember:", "note that", "save that", "please remember"]:
+                    fact = _re.sub(rf"^{prefix}\s*", "", fact, flags=_re.IGNORECASE).strip()
+                ok = save_semantic_memory(db, current_user.tenant_id, fact, user_id=current_user.id)
+                action_result = {
+                    "success":  ok,
+                    "remembered": fact,
+                    "type":     "semantic",
+                }
+                logger.info("semantic.saved tenant=%s content=%s", current_user.tenant_id, fact[:80])
+            except Exception as exc:
+                logger.error("remember failed: %s", exc)
+
     # ── Step 9: Build system prompt ───────────────────────────────────────────
     # Inject relevant memory for current device/key
     focus_device_name = action.get("device_name") if action else None
@@ -1626,6 +1645,16 @@ async def ai_chat(
 
         # Scheduled action response override
         if (
+            intent == "REMEMBER"
+            and isinstance(action_result, dict)
+            and action_result.get("success")
+        ):
+            fact = action_result.get("remembered", "")
+            update_instruction = (
+                f"Tell the user: ✅ I'll remember that: '{fact}'. "
+                f"This fact is saved permanently and I'll use it in future conversations."
+            )
+        elif (
             intent == "SCHEDULE"
             and isinstance(action_result, dict)
             and action_result.get("is_scheduled")

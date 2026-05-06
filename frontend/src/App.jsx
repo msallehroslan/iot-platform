@@ -2762,6 +2762,20 @@ export default function App() {
   const [alarmCount, setAlarmCount] = useState(0);
   const [dashDevice, setDashDevice] = useState(null);  // device open in device dashboard
 
+  // Listen for map pin "Open Dashboard" clicks — dispatched by Leaflet popup
+  useEffect(() => {
+    const handler = (e) => {
+      const deviceId = e.detail;
+      const found = allDevices?.find(d => String(d.id) === String(deviceId));
+      if (found) {
+        setDashDevice(found);
+        setPage("device-dashboards");
+      }
+    };
+    window.addEventListener("taat-open-device", handler);
+    return () => window.removeEventListener("taat-open-device", handler);
+  }, [allDevices]);
+
   // refreshKey drives: alarm badge count, Overview stats, manual refresh button.
   // Telemetry cards now use WebSocket (useDeviceTelemetry) so 3s polling is gone.
   // 30s is enough for alarm count and stat counters.

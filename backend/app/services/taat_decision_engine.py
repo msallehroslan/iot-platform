@@ -97,24 +97,38 @@ def build_decision(
         op     = alarm_action.get("action", "actioned")
         action_taken = f"{op.capitalize()} {count} alarm(s)"
 
-    # ── 7. Verification overlay ────────────────────────────────────────────────
+    # ── 7. Verification overlay — truthful state mapping ────────────────────────
     if verification_results:
-        verified   = verification_results.get("verified", False)
+        ver_state  = verification_results.get("overall",
+                     verification_results.get("verification_state", "UNVERIFIED"))
         ver_msg    = verification_results.get("message", "")
-        skipped    = verification_results.get("skipped", False)
 
-        if not skipped:
-            if verified:
-                confidence = min(confidence + 0.15, 1.0)
-                if action_taken:
-                    action_taken = f"{action_taken} — confirmed ✅"
-            else:
-                confidence = max(confidence - 0.1, 0.1)
-                risk = _escalate_risk(risk)
-                if action_taken and ver_msg:
-                    action_taken = f"{action_taken} — {ver_msg}"
-        else:
-            verified = True   # skipped = can't verify = assume ok
+        if ver_state == "SUCCESS":
+            verified   = True
+            confidence = min(confidence + 0.20, 1.0)
+            if action_taken:
+                action_taken = f"{action_taken} — confirmed ✅"
+
+        elif ver_state == "PARTIAL_SUCCESS":
+            # RPC sent but not telemetry-confirmed — do NOT claim success
+            verified   = False
+            confidence = min(confidence, 0.55)
+            if action_taken:
+                action_taken = f"{action_taken} — RPC sent, awaiting device confirmation"
+
+        elif ver_state == "UNVERIFIED":
+            # No telemetry available — cannot claim success
+            verified   = False
+            confidence = min(confidence, 0.40)
+            if action_taken:
+                action_taken = f"{action_taken} — unverified (no telemetry response)"
+
+        elif ver_state == "FAILED":
+            verified   = False
+            confidence = max(confidence - 0.2, 0.1)
+            risk       = _escalate_risk(risk)
+            if action_taken and ver_msg:
+                action_taken = f"{action_taken} — FAILED: {ver_msg}"
 
     # ── 8. Fallback defaults ──────────────────────────────────────────────────
     if not reason:
@@ -293,17 +307,18 @@ def summarize_decision(decision: dict) -> str:
     """
     One-line summary for injection into the Groq system prompt.
     The LLM narrates this — it never determines status itself.
+    Includes verification_state so LLM never claims false certainty.
     """
+    ver_state = decision.get("verification_state", "UNVERIFIED")
     parts = [
         f"STATUS: {decision.get('status', 'UNKNOWN')}",
         f"RISK: {decision.get('risk', 'LOW')}",
-        f"CONFIDENCE: {decision.get('confidence', 0.5)}",
+        f"CONFIDENCE: {decision.get('confidence', 0.5):.2f}",
+        f"VERIFICATION: {ver_state}",
         f"REASON: {decision.get('reason', '')}",
     ]
     if decision.get("action_taken"):
         parts.append(f"ACTION: {decision['action_taken']}")
-    if "verified" in decision:
-        parts.append(f"VERIFIED: {decision['verified']}")
     return " | ".join(parts)
 
 
