@@ -358,7 +358,7 @@ def parse_schedule_time(
         pass
 
     # "in X hours/minutes"
-    m = re.match(r"in\s+(\d+(?:\.\d+)?)\s*(h(?:ours?)?|m(?:in(?:utes?)?)?)", s)
+    m = re.match(r"in\s+(\d+(?:\.\d+)?)\s*(h(?:ours?)?|m(?:in(?:utes?)?)?|s(?:ec(?:onds?)?)?)", s)
     if m:
         val, unit = float(m.group(1)), m.group(2)
         delta = timedelta(hours=val) if unit.startswith("h") else timedelta(minutes=val)

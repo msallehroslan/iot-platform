@@ -431,8 +431,18 @@ async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temper
 # ── Groq model strategy ──────────────────────────────────────────────────────
 # 8b: high quota (14,400/day) — chat, RPC parsing, summaries, comparisons
 # 70b: low quota (1,000/day)  — RCA, alarm explanation, daily report
+# ── Model selection ───────────────────────────────────────────────────────────
+# Override via Render env vars to switch models without redeploying.
+#
+# Groq-hosted options (all free tier, just set env var):
+#   Llama:  llama-3.1-8b-instant   llama-3.3-70b-versatile
+#   Gemma:  gemma2-9b-it            gemma-7b-it
+#   Mixtral: mixtral-8x7b-32768
+#
+# FAST = used for every chat turn (intent + reply)
+# DEEP = used for RCA, alarm explanation, daily report
 GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
-GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.1-8b-instant")
+GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
 
 # ── Groq rate limiter ─────────────────────────────────────────────────────────
 # 20 chat requests per user per hour — prevents one user burning the shared quota.
@@ -1225,21 +1235,25 @@ async def ai_chat(
     All existing actions (RPC, alarms, rules, users) are preserved.
     CUSTOMER_USER now gets read-only TAAT (was fully blocked before).
     """
+    # ── Compound AI imports ──────────────────────────────────────────────────
     from app.services.taat_planner import (
         classify_intent, build_context, build_system_prompt,
         check_permission, get_action_risk, extract_action,
         CUSTOMER_ALLOWED_INTENTS,
     )
-    from app.services.taat_tools import (
-        tool_send_rpc, tool_ack_alarm, tool_clear_alarm,
-        tool_create_rule, tool_delete_rule, tool_save_memory,
+    from app.services.taat_agent_planner import make_plan
+    from app.services.taat_executor     import execute as run_plan
+    from app.services.taat_verification   import verify_rpc, verify_rule_created, verify_actions
+    from app.services.taat_decision_engine import build_decision, summarize_decision, build_failure_decision
+    from app.services.taat_memory_service import (
+        record_action_outcome, record_incident, get_relevant_memories, format_for_prompt
     )
 
     api_key = os.getenv("GROQ_API_KEY")
 
     # ── Gather tenant + devices ───────────────────────────────────────────────
     from app.models.models import Tenant
-    tenant  = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
+    tenant      = db.query(Tenant).filter(Tenant.id == current_user.tenant_id).first()
     tenant_name = tenant.name if tenant else "TriAxis Nexus"
 
     raw_devices = _scoped_devices(current_user, db).limit(50).all()
@@ -1274,21 +1288,19 @@ async def ai_chat(
             "engine": "rule-based",
         }
 
-    # ── Rate limit check ──────────────────────────────────────────────────────
+    # ── Rate limit ────────────────────────────────────────────────────────────
     rate_info = _check_groq_rate_limit(db, str(current_user.id), getattr(current_user, "email", ""))
 
-    # ── Confirm mode: user said "proceed" to a pending HIGH-risk action ───────
-    confirm_mode = False
+    # ── Confirm mode ──────────────────────────────────────────────────────────
+    confirm_mode   = False
     pending_action = body.pending_confirm if hasattr(body, "pending_confirm") else None
     if pending_action and last_user_msg.lower().strip() in ("proceed", "confirm", "yes", "ok", "do it", "proceed."):
         confirm_mode = True
 
     # ── Step 1: Classify intent ───────────────────────────────────────────────
-    # If user confirmed a HIGH-risk action, restore the original intent+action
-    # instead of classifying the "proceed" message
     if confirm_mode and pending_action:
         intent = pending_action.get("intent", "QUESTION")
-        logger.info("taat_v2 confirm_mode: restoring intent=%s action=%s", intent, pending_action.get("action"))
+        logger.info("taat_agent confirm_mode intent=%s", intent)
     else:
         try:
             intent = await classify_intent(api_key, last_user_msg, _call_groq)
@@ -1302,22 +1314,20 @@ async def ai_chat(
         ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
     except Exception as exc:
         logger.error("build_context failed: %s", exc)
-        ctx = {
-            "intent":      intent,
-            "device_list": devices,
-            "active_alarms": [],
-            "memory":      {"count": 0, "memories": []},
-        }
+        ctx = {"intent": intent, "device_list": devices,
+               "active_alarms": [], "memory": {"count": 0, "memories": []}}
 
     # ── Step 3: Permission check ──────────────────────────────────────────────
-    action = None
-    action_result = None
+    action           = None
+    trace            = None
     confirm_required = None
-    risk_level = "LOW"
+    risk_level       = "LOW"
+    action_result    = None
+    verification     = None
 
     write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE"}
 
-    if intent in write_intents and last_user_msg:
+    if intent in write_intents:
         allowed, deny_reason = check_permission(intent, {}, current_user, last_user_msg)
         if not allowed:
             return {
@@ -1327,8 +1337,7 @@ async def ai_chat(
                 "blocked": True,
             }
 
-        # Step 3a: Extract structured action
-        # On confirm_mode, restore original action from pending_confirm
+        # ── Step 4: Extract action ────────────────────────────────────────────
         if confirm_mode and pending_action:
             action = pending_action.get("action")
         else:
@@ -1337,144 +1346,258 @@ async def ai_chat(
             except Exception as exc:
                 logger.debug("action extraction failed: %s", exc)
 
-        # Step 3b: Assess risk
         if action:
-            risk_level = get_action_risk(intent, action, last_user_msg)
+            # ── Step 4b: Inject memory before planning ────────────────────────
+            focus_dev_pre = action.get("device_name")
+            focus_key_pre = next(iter(action.get("params", {}).keys()), None) if action.get("params") else None
+            ctx["memory"] = {
+                "count": 0, "memories":
+                get_relevant_memories(
+                    db, current_user.tenant_id,
+                    device_name=focus_dev_pre,
+                    key=focus_key_pre,
+                )
+            }
 
-            # HIGH risk → require confirmation (unless already confirmed)
+            # ── Step 5: Build plan ────────────────────────────────────────────
+            plan = make_plan(
+                intent    = intent,
+                ctx       = ctx,
+                action    = action,
+                message   = last_user_msg,
+                device_id = device_id_str,
+            )
+            risk_level = plan.risk
+
+            # HIGH risk → confirm card (unless already confirmed)
             if risk_level == "HIGH" and not confirm_mode:
                 confirm_required = {"intent": intent, "action": action, "risk": "HIGH"}
-                # Don't execute — let Groq explain what it will do and ask for confirm
                 ctx["pending_confirmation"] = confirm_required
 
-            # Execute write action
-            elif action:
+            else:
+                # ── Step 6: Execute plan ──────────────────────────────────────
                 try:
-                    if intent == "DEVICE_CONTROL" and action.get("device_name"):
-                        action_result = await tool_send_rpc(
-                            db, current_user,
-                            action["device_name"],
-                            action.get("method", "set"),
-                            action.get("params", {}),
+                    trace = await run_plan(
+                        plan         = plan,
+                        db           = db,
+                        current_user = current_user,
+                        extra_kwargs = {"devices": devices, "api_key": api_key},
+                    )
+                    action_result = trace.to_chip_data()
+
+                    # ── Step 7: Plan-aware verification ───────────────────
+                    try:
+                        verification = await verify_actions(plan, trace, db)
+                        ctx["verification"] = verification
+                    except Exception as exc:
+                        logger.debug("verify_actions skipped: %s", exc)
+                        verification = {"overall": "skipped", "verified": True,
+                                        "steps": {}, "message": ""}
+
+                    # ── Step 7b: Decision engine ─────────────────────────────
+                    if trace.errors:
+                        decision = build_failure_decision(trace)
+                    else:
+                        decision = build_decision(
+                            intent       = intent,
+                            plan         = plan,
+                            trace        = trace,
+                            verification = verification or {},
+                        )
+                    ctx["decision"] = decision
+
+                    # ── Step 8: Memory ────────────────────────────────────────
+                    if action_result:
+                        success = action_result.get("success", trace.all_success)
+                        dev_name = action.get("device_name", "device")
+                        ver_msg  = verification.message if verification else ""
+                        record_action_outcome(
+                            db        = db,
+                            tenant_id = current_user.tenant_id,
+                            plan      = plan,
+                            decision  = decision,
+                            user_id   = current_user.id,
                         )
 
-                    elif intent == "ALARM":
-                        if action.get("action") == "clear":
-                            action_result = tool_clear_alarm(
-                                db, current_user, device_id_str, action.get("severity")
-                            )
-                        else:
-                            action_result = tool_ack_alarm(
-                                db, current_user, device_id_str, action.get("severity")
-                            )
+                    # ── Successful action pattern learning ───────────────
+                    # Store ONLY when all conditions met — exact spec:
+                    #   risk=HIGH, verified=True, action_taken set,
+                    #   confidence>=0.85, not a failure
+                    if (
+                        decision.get("risk") == "HIGH"
+                        and decision.get("verified") is True
+                        and decision.get("action_taken")
+                        and decision.get("confidence", 0) >= 0.85
+                        and not decision.get("failure")
+                    ):
+                        try:
+                            import json as _json
+                            from app.services.taat_memory_service import save_memory
+                            from app.services.taat_policy import allows_auto_execute
 
-                    elif intent == "RULE":
-                        if action.get("action") == "delete":
-                            action_result = tool_delete_rule(
-                                db, current_user,
-                                key=action.get("key"),
-                                delete_all=action.get("delete_all", False),
-                            )
-                        elif action.get("action") == "create":
-                            action_result = tool_create_rule(
-                                db, current_user, devices,
-                                key       = action.get("key", "value"),
-                                condition = action.get("condition", "gt"),
-                                threshold = float(action.get("threshold", 0)),
-                                severity  = action.get("severity", "WARNING"),
-                                device_name=action.get("device_name"),
-                            )
-                        elif action.get("action") == "update":
-                            # Delegate to existing _execute_rule_from_chat for updates
-                            action_result = await _execute_rule_from_chat(
-                                db, current_user, devices, action
-                            )
+                            dev_name = action.get("device_name", "")
+                            prms     = action.get("params", {})
+                            key_name = next(iter(prms.keys()), "") if prms else ""
 
-                    elif intent == "USER" and current_user.role == "TENANT_ADMIN":
-                        from app.models.models import User as UserModel
-                        existing_users = db.query(UserModel).filter(
-                            UserModel.tenant_id == current_user.tenant_id
-                        ).all()
-                        action_result = await _execute_user_from_chat(
-                            db, current_user, action, existing_users
-                        )
+                            pattern_content = _json.dumps({
+                                "plan_intent":  plan.intent,
+                                "plan_steps":   [s.tool for s in plan.steps],
+                                "action_taken": decision["action_taken"],
+                                "confidence":   decision["confidence"],
+                                "note": (
+                                    "Successful high-risk remediation pattern. "
+                                    "Suggest next time, but do not auto-execute "
+                                    "without policy approval."
+                                ),
+                            }, default=str)
 
-                    elif intent == "SCHEDULE":
-                        from app.services.scheduled_rpc_service import (
-                            schedule_by_device_name, cancel_scheduled, list_scheduled,
-                            parse_schedule_time,
-                        )
-                        sched_action = action.get("action", "schedule")
-
-                        if sched_action == "list":
-                            action_result = list_scheduled(db, current_user)
-
-                        elif sched_action == "cancel":
-                            action_result = cancel_scheduled(
+                            save_memory(
                                 db,
-                                device_id    = None,
-                                current_user = current_user,
+                                tenant_id   = current_user.tenant_id,
+                                memory_type = "successful_action_pattern",
+                                content     = pattern_content,
+                                user_id     = current_user.id,
+                            )
+                            logger.info(
+                                "action_pattern stored device=%s key=%s confidence=%.2f",
+                                dev_name, key_name, decision["confidence"],
                             )
 
-                        elif sched_action == "schedule" and action.get("device_name"):
-                            # Parse the natural language time string
-                            scheduled_for = parse_schedule_time(
-                                action.get("time_str", "in 1 hour"),
-                                action.get("repeat_hours"),
-                            )
-                            action_result = await schedule_by_device_name(
-                                db,
-                                devices               = raw_devices,
-                                device_name           = action["device_name"],
-                                method                = action.get("method", "set"),
-                                params                = action.get("params", {}),
-                                scheduled_for         = scheduled_for,
-                                repeat_interval_hours = action.get("repeat_hours"),
-                                current_user          = current_user,
-                                source                = "taat_chat",
-                            )
+                            # Policy gate — recommend or approve auto-execute
+                            if allows_auto_execute(
+                                db        = db,
+                                tenant_id = current_user.tenant_id,
+                                device_id = device_id_str,
+                                key       = key_name,
+                                params    = prms,
+                            ):
+                                ctx["policy_auto_execute"] = True
+                                logger.info("policy: auto_execute approved %s %s", dev_name, prms)
+                            else:
+                                ctx["policy_auto_execute"] = False
+                                logger.info("policy: recommend-only %s %s", dev_name, prms)
+
+                        except Exception as exc:
+                            logger.debug("action_pattern save skipped: %s", exc)
 
                 except Exception as exc:
-                    logger.error("taat_v2 action execution failed: %s", exc)
+                    logger.error("plan execution failed: %s", exc)
                     db.rollback()
 
-    # ── Step 4: Build Groq messages ───────────────────────────────────────────
+        # ── SCHEDULE intent — direct execution (bypass planner) ───────────────
+        elif intent == "SCHEDULE":
+            try:
+                action = await extract_action(api_key, intent, last_user_msg, ctx, _call_groq) if not action else action
+                if action:
+                    from app.services.scheduled_rpc_service import (
+                        schedule_by_device_name, cancel_scheduled, list_scheduled,
+                        parse_schedule_time,
+                    )
+                    sched_action = action.get("action", "schedule")
+                    if sched_action == "list":
+                        action_result = list_scheduled(db, current_user)
+                    elif sched_action == "cancel":
+                        action_result = cancel_scheduled(db, device_id=None, current_user=current_user)
+                    elif sched_action == "schedule" and action.get("device_name"):
+                        scheduled_for = parse_schedule_time(
+                            action.get("time_str", "in 1 hour"),
+                            action.get("repeat_hours"),
+                        )
+                        action_result = await schedule_by_device_name(
+                            db,
+                            devices               = raw_devices,
+                            device_name           = action["device_name"],
+                            method                = action.get("method", "set"),
+                            params                = action.get("params", {}),
+                            scheduled_for         = scheduled_for,
+                            repeat_interval_hours = action.get("repeat_hours"),
+                            current_user          = current_user,
+                            source                = "taat_agent",
+                        )
+            except Exception as exc:
+                logger.error("schedule execution failed: %s", exc)
+                db.rollback()
+
+        # ── USER intent — direct execution ────────────────────────────────────
+        elif intent == "USER" and current_user.role == "TENANT_ADMIN":
+            if action:
+                try:
+                    from app.models.models import User as UserModel
+                    existing_users = db.query(UserModel).filter(
+                        UserModel.tenant_id == current_user.tenant_id
+                    ).all()
+                    action_result = await _execute_user_from_chat(
+                        db, current_user, action, existing_users
+                    )
+                except Exception as exc:
+                    logger.error("user action failed: %s", exc)
+
+    # ── Step 9: Build system prompt ───────────────────────────────────────────
+    # Inject relevant memory for current device/key
+    focus_device_name = action.get("device_name") if action else None
+    focus_key         = (action.get("params", {}) or {})
+    focus_key         = next(iter(focus_key.keys()), None) if isinstance(focus_key, dict) else None
+    relevant_memories = get_relevant_memories(
+        db, current_user.tenant_id,
+        device_name = focus_device_name,
+        key         = focus_key,
+    )
+    ctx["memory"] = {"count": len(relevant_memories), "memories": relevant_memories}
+
+    # Inject trace results + decision into context
+    if trace:
+        for key, val in trace.results.items():
+            if key not in ctx:
+                ctx[key] = val
+    # Build decision even for read-only flows (QUESTION, RCA, RECOMMEND)
+    if trace and not ctx.get("decision"):
+        ctx["decision"] = build_decision(
+            intent       = intent,
+            plan         = plan if "plan" in dir() else type("P", (), {"steps":[], "risk":"LOW", "intent":intent})(),
+            trace        = trace,
+            verification = verification if isinstance(verification, dict) else {},
+        )
+
+    # Inject verification result
+    if verification and verification.message:
+        ctx.setdefault("verification", {})["message"] = verification.message
+
+    # Decision engine summary — LLM narrates this, never determines it
+    if ctx.get("decision"):
+        ctx["decision_summary"] = summarize_decision(ctx["decision"])
     system_prompt = build_system_prompt(
-        tenant_name, intent, ctx, current_user, confirm_mode=confirm_mode
+        tenant_name  = tenant_name,
+        intent       = intent,
+        ctx          = ctx,
+        current_user = current_user,
+        confirm_mode = confirm_mode,
     )
 
+    # ── Step 10: Build Groq messages ──────────────────────────────────────────
     chat_messages = [{"role": "system", "content": system_prompt}]
 
-    # Inject action confirmations
     if action_result:
+        outcome = "✅ SUCCESS" if action_result.get("success", True) else "⚠️ FAILED"
+        ver_note = f" {ctx.get('verification', {}).get('message', '')}" if verification else ""
         chat_messages.append({
             "role":    "system",
-            "content": f"[ACTION EXECUTED ✅] {intent}: {json.dumps(action_result)}. Confirm naturally to the user.",
+            "content": f"[ACTION {outcome}] {intent}: {json.dumps(action_result)}.{ver_note} Confirm naturally to the user.",
         })
     if confirm_required:
         chat_messages.append({
             "role":    "system",
             "content": (
                 f"[HIGH RISK ACTION PENDING] Intent: {intent}. Action: {json.dumps(action)}. "
-                "Tell the user what you are about to do and ask them to reply 'proceed' to confirm. "
-                "Be specific about what will happen."
+                "Explain clearly what will happen and ask the user to reply 'proceed' to confirm."
             ),
         })
 
     for msg in body.messages:
         chat_messages.append({"role": msg.role, "content": msg.content})
 
-    # ── Step 5: Groq reply ────────────────────────────────────────────────────
+    # ── Step 11: Groq reply ───────────────────────────────────────────────────
     try:
         reply = await _call_groq(api_key, chat_messages, max_tokens=700, temperature=0.4)
-
-        # Auto-save notable events to memory
-        if action_result and action_result.get("success"):
-            try:
-                content = f"{intent} executed: {json.dumps(action_result)[:200]}"
-                tool_save_memory(db, current_user, "incident", content)
-            except Exception:
-                pass
 
         return {
             "reply":            reply,
@@ -1483,17 +1606,19 @@ async def ai_chat(
             "risk":             risk_level,
             "action_result":    action_result,
             "confirm_required": confirm_required,
-            # Legacy fields — keep for backward compat with existing frontend
+            "verification":     ctx.get("verification"),
+            "decision":         ctx.get("decision"),
+            # Legacy chip fields
             "rpc_executed":     action_result if intent in ("DEVICE_CONTROL", "SCHEDULE") and action_result else None,
-            "alarm_actioned":   action_result if intent == "ALARM" and action_result else None,
-            "rule_actioned":    action_result if intent == "RULE" and action_result else None,
-            "user_actioned":    action_result if intent == "USER" and action_result else None,
+            "alarm_actioned":   action_result if intent == "ALARM"  and action_result else None,
+            "rule_actioned":    action_result if intent == "RULE"   and action_result else None,
+            "user_actioned":    action_result if intent == "USER"   and action_result else None,
             "rate":             rate_info,
         }
 
     except Exception as exc:
         import traceback
-        logger.error("taat_v2 chat.failed: %s\n%s", exc, traceback.format_exc())
+        logger.error("taat_agent chat.failed: %s\n%s", exc, traceback.format_exc())
         return {
             "reply":  f"Sorry, I'm having trouble connecting right now. Error: {str(exc)[:120]}",
             "engine": "error",

@@ -72,7 +72,7 @@ async def classify_intent(
 
 Categories:
 - QUESTION: asking about status, values, trends, history, "what is", "show me", "why", "how many"
-- SCHEDULE: schedule/cancel FUTURE commands with a time — "at midnight", "at 9am", "tomorrow", "every 6h", "in 2 hours", "cancel scheduled"
+- SCHEDULE: schedule/cancel FUTURE commands with a time — "at midnight", "at 9am", "tomorrow", "every 6h", "in 2 hours", "in 1 minute", "in 5 minutes", "cancel scheduled"
 - DEVICE_CONTROL: turn on/off RIGHT NOW, set value now, enable/disable now, toggle, reboot immediately
 - ALARM: acknowledge, clear, dismiss, resolve alarms
 - RULE: create/update/delete threshold rules, alarm rules, "set alarm when"
@@ -105,7 +105,10 @@ Respond with ONLY the category name, nothing else."""
     # SCHEDULE must be checked FIRST — "turn on at midnight" has both control + time words
     schedule_time_words = ["at midnight", "at noon", "tomorrow at", "at 9", "at 10", "at 11",
                            "at 12", "every hour", "every 6h", "every 2h", "every 12h", "every 24h",
-                           "in 1 hour", "in 2 hours", "in 30 min", "cancel schedule", "list scheduled",
+                           "in 1 hour", "in 2 hours", "in 30 min", "in 1 minute", "in 5 minutes",
+                           "in 10 minutes", "in 15 minutes", "in 30 minutes", "in 45 minutes",
+                           "in 1 min", "in 2 min", "in 5 min", "in 10 min", "in 15 min",
+                           "cancel schedule", "list scheduled",
                            "schedule", "recurring", "tonight at", "nightly", "daily at"]
     if any(w in msg for w in schedule_time_words):
         return "SCHEDULE"
@@ -361,6 +364,8 @@ def build_system_prompt(
         if rh.get("count", 0) > 0:
             last = rh["commands"][0]
             intel_section += f"\nLAST RPC: {last['method']} {last['params']} → {last['status']}"
+    if ctx.get("decision_summary"):
+        intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
 
     # Role capabilities
     if role == "CUSTOMER_USER":
