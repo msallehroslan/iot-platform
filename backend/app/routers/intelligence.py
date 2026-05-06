@@ -1685,6 +1685,14 @@ async def ai_chat(
                 f"Tell the user: Command was sent to {dev_name}: {params}, but {ver_msg}. "
                 f"The device may be offline or firmware did not respond. Be direct."
             )
+        elif action_result.get("no_action"):
+
+            update_instruction = (
+                f"Tell the user EXACTLY: "
+                f"ℹ️ State already correct on {dev_name}. "
+                f"No action needed."
+            )
+            
         else:
             update_instruction = (
                 f"Tell the user: Command sent to {dev_name}: {params}. "
