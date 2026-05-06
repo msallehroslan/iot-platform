@@ -458,8 +458,15 @@ async def _extract_rpc_action(api_key, message, ctx, call_groq) -> Optional[dict
     if not device_names:
         return None
 
-    prompt = f"""Extract RPC command from: "{message}"
+    # Normalise common spacing in key names before passing to Groq
+    # e.g. "led 2" → "led2", "relay 1" → "relay1"
+    import re as _re
+    normalised_msg = _re.sub(r'\b(led|relay|pump|fan|motor|valve|gpio|pin)\s+(\d+)\b',
+                             lambda m: m.group(1) + m.group(2), message, flags=_re.IGNORECASE)
+
+    prompt = f"""Extract RPC command from: "{normalised_msg}"
 Devices: {json.dumps(device_names)}
+IMPORTANT: Key names have NO spaces — "led2" not "led 2", "relay1" not "relay 1".
 Respond JSON only: {{"device_name":"<name>","method":"set","params":{{"<key>":<value>}}}}
 If not a control command: null"""
     try:

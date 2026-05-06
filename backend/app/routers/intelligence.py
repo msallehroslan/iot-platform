@@ -2285,30 +2285,65 @@ async def daily_report(
     maintenance_needed  = [d["device"] for d in report_data if d["maintenance"]]
     critical_devices    = [d for d in report_data if d["health_label"] == "CRITICAL"]
 
+    from zoneinfo import ZoneInfo
+    MYT = ZoneInfo("Asia/Kuala_Lumpur")
+    now_myt = datetime.now(MYT)
+
+    # Add last_seen in MYT to each device
+    for i, device in enumerate(devices):
+        ls = device.last_seen_at
+        if ls:
+            if ls.tzinfo is None:
+                ls = ls.replace(tzinfo=timezone.utc)
+            report_data[i]["last_seen"] = ls.astimezone(MYT).strftime("%Y-%m-%d %H:%M MYT")
+        else:
+            report_data[i]["last_seen"] = "Never"
+
     summary = {
-        "generated_at":      datetime.now(timezone.utc).isoformat(),
-        "period":            "Last 24 hours",
-        "total_devices":     len(devices),
-        "active_alarms":     total_active_alarms,
+        "generated_at":       now_myt.strftime("%Y-%m-%d %H:%M MYT"),
+        "period":             "Last 24 hours",
+        "total_devices":      len(devices),
+        "active_alarms":      total_active_alarms,
         "maintenance_needed": maintenance_needed,
-        "critical_devices":  len(critical_devices),
-        "devices":           report_data,
+        "critical_devices":   len(critical_devices),
+        "devices":            report_data,
     }
 
     if not api_key:
         return {"report": summary, "narrative": "Add GROQ_API_KEY for AI narrative."}
 
-    prompt = f"""Generate a concise daily IoT fleet health report.
+    # Inject recent agent memory into report
+    memory_context = ""
+    try:
+        from app.services.taat_memory_service import get_relevant_memories
+        memories = get_relevant_memories(db, current_user.tenant_id, limit=10)
+        if memories:
+            memory_lines = "\n".join(
+                f"  - [{m['type']}] {m['content'][:120]}"
+                for m in memories
+            )
+            memory_context = f"\n\nRECENT AGENT MEMORY (actual actions taken):\n{memory_lines}"
+    except Exception:
+        pass
 
-Data:
+    prompt = f"""Generate a concise daily IoT fleet health report. All times are in MYT (Malaysia Time).
+
+Fleet Data:
 {json.dumps(summary, indent=2)}
+{memory_context}
 
-Write a professional 3-paragraph executive summary covering:
-1. Overall fleet health status
-2. Devices needing immediate attention
-3. Recommended actions for today
+Write a professional executive summary with these sections:
+**DEVICE STATUS** — list each device: name, status, last seen (MYT)
+**ACTIVE ALARMS** — list active alarms or "None"
+**RECENT SCHEDULED ACTIONS EXECUTED** — list from agent memory or "None"
+**AGENT MEMORY** — list actual recent outcomes from memory (do NOT say "available upon request" — show them)
+**RECOMMENDATIONS** — 2-3 actionable items
 
-Be direct and actionable. Use exact device names and numbers."""
+Rules:
+- Use exact device names
+- Show all times in MYT
+- Be direct and concise
+- If memory has entries, list them explicitly"""
 
     try:
         narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3, model=GROQ_MODEL_DEEP)
