@@ -1563,8 +1563,7 @@ async def ai_chat(
     # ── Step 9: Build system prompt ───────────────────────────────────────────
     # Inject relevant memory for current device/key
     focus_device_name = action.get("device_name") if action else None
-    focus_key         = (action.get("params", {}) or {})
-    focus_key         = next(iter(focus_key.keys()), None) if isinstance(focus_key, dict) else None
+    focus_key         = next(iter((action.get("params") or {}).keys()), None) if action else None
     relevant_memories = get_relevant_memories(
         db, current_user.tenant_id,
         device_name = focus_device_name,
