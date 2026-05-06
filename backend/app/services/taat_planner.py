@@ -421,6 +421,7 @@ RULES:
 5. Keep responses short unless asked for detail.
 6. If RECENT SCHEDULED ACTIONS EXECUTED section is present, proactively inform the user at the start of your reply.
 7. When showing scheduled commands, format them as readable text — never raw JSON. Example: "⏰ Turn off led2 on ESP32-e823 at 09:12 UTC".
+8. If AGENT MEMORY shows a recent outcome for the same device/action the user just requested, mention it: "Note: I already did this X minutes ago." Then proceed with the action.
 """
 
 
