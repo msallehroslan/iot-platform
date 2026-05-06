@@ -79,6 +79,7 @@ class CacheService:
             return
 
         logger.info("cache: attempting Redis connection to %s", redis_url)
+        print(f"[cache_service] attempting Redis connection to {redis_url}", flush=True)
 
         try:
             import redis.asyncio as aioredis
@@ -94,7 +95,9 @@ class CacheService:
             self._client  = client
             self._enabled = True
             logger.info("cache: Redis connected — caching enabled (%s)", redis_url)
+            print(f"[cache_service] Redis connected OK", flush=True)
         except Exception as exc:
+            print(f"[cache_service] Redis FAILED: {exc} ({type(exc).__name__})", flush=True)
             logger.warning(
                 "cache: Redis connection failed url=%s error=%s type=%s — falling back to DB-only mode",
                 redis_url, exc, type(exc).__name__,
