@@ -69,9 +69,16 @@ class CacheService:
         Connect to Redis. Call once at FastAPI startup.
         Silently disables caching if redis_url is None or connection fails.
         """
+        # Fallback: read directly from env if not passed (guards against import-order issues)
+        if not redis_url:
+            import os
+            redis_url = os.getenv("REDIS_URL")
+
         if not redis_url:
             logger.info("cache: REDIS_URL not set — caching disabled, all reads hit DB")
             return
+
+        logger.info("cache: attempting Redis connection to %s", redis_url)
 
         try:
             import redis.asyncio as aioredis
