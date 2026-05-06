@@ -241,8 +241,24 @@ def build_context(
                 all_alarms.append({**alarm, "device_name": d["name"]})
         ctx["active_alarms"] = all_alarms[:20]
 
+  
     # Device-specific context
-    focus_id = device_id or (devices[0]["id"] if len(devices) == 1 else None)
+    focus_id = device_id
+
+    # Auto-match device from message
+    if not focus_id and message:
+
+        msg_lower = message.lower()
+
+        for d in devices:
+
+            if d["name"].lower() in msg_lower:
+                focus_id = d["id"]
+                break
+
+    # Fallback if only one device exists
+    if not focus_id and len(devices) == 1:
+        focus_id = devices[0]["id"]
 
     if focus_id and intent in ("QUESTION", "DEVICE_CONTROL", "ALARM", "RCA", "RECOMMEND", "SCHEDULE"):
         ctx["telemetry"] = _safe(tool_get_latest_telemetry, db, focus_id)
