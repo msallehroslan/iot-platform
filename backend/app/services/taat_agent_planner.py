@@ -37,12 +37,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Step:
     """A single tool call in a plan."""
-    tool:   str                        # tool name from registry
-    args:   Dict[str, Any]             = field(default_factory=dict)
-    label:  str                        = ""   # human label for logging
-    # If output_key is set, the executor stores this step's result
-    # under that key so subsequent steps can reference it
-    output_key: Optional[str]          = None
+    tool:                   str                        # tool name from registry
+    args:                   Dict[str, Any]             = field(default_factory=dict)
+    label:                  str                        = ""
+    output_key:             Optional[str]              = None
+    requires_verification:  bool                       = False  # True → verify_actions() checks telemetry delta
 
 
 @dataclass
@@ -145,10 +144,11 @@ def _plan_device_control(ctx, action, message, device_id) -> Plan:
 
     # Step 2: Send the command
     steps.append(Step(
-        "send_rpc",
-        {"device_name": device_name, "method": method, "params": params},
-        f"Send {method} {params} to {device_name}",
-        "rpc_result",
+        tool                  = "send_rpc",
+        args                  = {"device_name": device_name, "method": method, "params": params},
+        label                 = f"Send {method} {params} to {device_name}",
+        output_key            = "rpc_result",
+        requires_verification = True,   # verify telemetry delta after RPC
     ))
 
     return Plan(

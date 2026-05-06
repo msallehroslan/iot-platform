@@ -326,7 +326,12 @@ def build_system_prompt(
     now = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M UTC")
 
     device_lines = "\n".join(
-        f"  - {d['name']} [{d.get('status','?')}]{(' | last seen: ' + d['last_seen_at'][:16].replace('T',' ') + ' UTC') if d.get('last_seen_at') else ''}"
+        (
+            f"  - {d['name']} [{d.get('status','?')}]"
+            + (f" | {d['label']}" if d.get('label') else "")
+            + (f" | lat:{d['latitude']:.4f} lng:{d['longitude']:.4f}" if d.get('latitude') and d.get('longitude') else "")
+            + (f" | last seen: {_fmt_myt(d['last_seen_at'])}" if d.get('last_seen_at') else "")
+        )
         for d in ctx.get("device_list", [])
     ) or "  None"
 

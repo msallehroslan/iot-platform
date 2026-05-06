@@ -1292,6 +1292,10 @@ async def ai_chat(
             "type":         d.device_type,
             "status":       d.status.value if hasattr(d.status, "value") else str(d.status),
             "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+            "label":        getattr(d, "label", None),        # e.g. "Building A"
+            "latitude":     getattr(d, "latitude", None),
+            "longitude":    getattr(d, "longitude", None),
+            "description":  getattr(d, "description", None),
         }
         for d in raw_devices
     ]
@@ -1651,8 +1655,8 @@ async def ai_chat(
         ):
             fact = action_result.get("remembered", "")
             update_instruction = (
-                f"Tell the user: ✅ I'll remember that: '{fact}'. "
-                f"This fact is saved permanently and I'll use it in future conversations."
+                f"Tell the user EXACTLY: ✅ Saved permanently: \"{fact}\". "
+                f"I will use this in all future conversations."
             )
         elif (
             intent == "SCHEDULE"
