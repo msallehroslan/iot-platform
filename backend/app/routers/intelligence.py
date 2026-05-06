@@ -1438,7 +1438,7 @@ async def ai_chat(
                     if action_result:
                         success = action_result.get("success", trace.all_success)
                         dev_name = action.get("device_name", "device")
-                        ver_msg  = verification.message if verification else ""
+                        ver_msg  = verification.get("message", "") if isinstance(verification, dict) else ""
                         record_action_outcome(
                             db        = db,
                             tenant_id = current_user.tenant_id,
@@ -1585,9 +1585,9 @@ async def ai_chat(
             verification = verification if isinstance(verification, dict) else {},
         )
 
-    # Inject verification result
-    if verification and verification.message:
-        ctx.setdefault("verification", {})["message"] = verification.message
+    # Inject verification result (verification is always a dict from verify_actions)
+    if verification and isinstance(verification, dict) and verification.get("message"):
+        ctx.setdefault("verification", {})["message"] = verification["message"]
 
     # Decision engine summary — LLM narrates this, never determines it
     if ctx.get("decision"):
