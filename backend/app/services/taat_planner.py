@@ -49,7 +49,6 @@ MYT = ZoneInfo("Asia/Kuala_Lumpur")
 
 def _fmt_myt(dt):
 
-```
 if not dt:
     return "unknown"
 
