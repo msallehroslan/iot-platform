@@ -1848,7 +1848,118 @@ export function TrendIndicatorWidget({ config, deviceId, liveTelem }) {
 // Uses OpenStreetMap static tiles — no API key needed.
 
 export function FleetMapWidget({ config }) {
-  const devices = (config.devices || []).filter(d => d.latitude && d.longitude);
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+
+  // Fetch all tenant devices with locations dynamically — don't rely on config.devices only
+  const [allDevices, setAllDevices] = useState(config.devices || []);
+  useEffect(() => {
+    import("../../services/api.js").then(({ apiFetch }) => {
+      apiFetch("/devices/?limit=100")
+        .then(r => { if (r?.items) setAllDevices(r.items); })
+        .catch(() => {});
+    });
+  }, []);
+
+  const devices = allDevices.filter(d => d.latitude && d.longitude);
+
+  useEffect(() => {
+    if (!devices.length) return;
+
+    // Invalidate map size whenever devices list changes (handles container resize)
+    if (mapInstanceRef.current) {
+      setTimeout(() => mapInstanceRef.current?.invalidateSize(), 100);
+      return;
+    }
+
+    // Load Leaflet CSS
+    if (!document.getElementById("leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+      document.head.appendChild(link);
+    }
+
+    // Load Leaflet JS then init map
+    const initMap = () => {
+      if (!mapRef.current || mapInstanceRef.current) return;
+      const L = window.L;
+
+      const lats = devices.map(d => parseFloat(d.latitude));
+      const lngs = devices.map(d => parseFloat(d.longitude));
+      const centerLat = lats.reduce((a, b) => a + b, 0) / lats.length;
+      const centerLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
+
+      const map = L.map(mapRef.current, { zoomControl: true, scrollWheelZoom: true });
+      mapInstanceRef.current = map;
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+
+      const STATUS_COLOR = { ACTIVE: "#10b981", INACTIVE: "#94a3b8", DISABLED: "#ef4444" };
+
+      devices.forEach(d => {
+        const color = STATUS_COLOR[d.status] || "#6B7F9F";
+        const icon = L.divIcon({
+          className: "",
+          html: `<div style="
+            width:32px;height:32px;border-radius:50% 50% 50% 0;
+            background:${color};border:2px solid white;
+            transform:rotate(-45deg);
+            box-shadow:0 2px 6px rgba(0,0,0,0.3);
+            display:flex;align-items:center;justify-content:center;
+          "><span style="transform:rotate(45deg);color:white;font-size:10px;font-weight:700;line-height:1">
+            ${d.name.charAt(0).toUpperCase()}
+          </span></div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 32],
+          popupAnchor: [0, -34],
+        });
+
+        const marker = L.marker([parseFloat(d.latitude), parseFloat(d.longitude)], { icon });
+        const statusLabel = d.status === "ACTIVE" ? "🟢 Online" : "⚫ Offline";
+        marker.bindPopup(`
+          <div style="min-width:140px;font-family:sans-serif">
+            <strong style="font-size:13px">${d.name}</strong><br/>
+            <span style="font-size:11px;color:#64748b">${statusLabel}</span><br/>
+            <span style="font-size:10px;color:#94a3b8">${parseFloat(d.latitude).toFixed(5)}, ${parseFloat(d.longitude).toFixed(5)}</span><br/>
+            <a href="/dashboard/device/${d.id}" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">
+              → Open Dashboard
+            </a>
+          </div>
+        `);
+        marker.addTo(map);
+      });
+
+      // Fit all markers
+      if (devices.length === 1) {
+        map.setView([lats[0], lngs[0]], config.zoom || 14);
+      } else {
+        map.fitBounds(devices.map(d => [parseFloat(d.latitude), parseFloat(d.longitude)]), { padding: [24, 24] });
+      }
+      // Ensure tiles load correctly after container renders
+      setTimeout(() => map.invalidateSize(), 150);
+    };
+
+    if (window.L) {
+      initMap();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+      script.onload = initMap;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
 
   if (!devices.length) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8}}>
@@ -1862,67 +1973,14 @@ export function FleetMapWidget({ config }) {
     </div>
   );
 
-  // Calculate bounding box for all device locations
-  const lats = devices.map(d => d.latitude);
-  const lngs = devices.map(d => d.longitude);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const centerLat = (minLat + maxLat) / 2;
-  const centerLng = (minLng + maxLng) / 2;
-  const zoom = config.zoom || 12;
-
-  // Convert lat/lng to pixel position in SVG viewport
-  const W = 460, H = 200;
-  const latToY = lat => H/2 - ((lat - centerLat) / (maxLat - minLat + 0.01)) * (H * 0.7);
-  const lngToX = lng => W/2 + ((lng - centerLng) / (maxLng - minLng + 0.01)) * (W * 0.7);
-
-  const STATUS_COLOR = { ACTIVE:"#10b981", INACTIVE:"#94a3b8", DISABLED:"#ef4444" };
-
   return (
-    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:4}}>
-      {/* Map background */}
-      <div style={{flex:1,background:"linear-gradient(135deg,#dbeafe 0%,#bfdbfe 40%,#e0f2fe 100%)",borderRadius:8,position:"relative",overflow:"hidden"}}>
-        {/* Grid lines to simulate map tiles */}
-        <svg style={{position:"absolute",inset:0,width:"100%",height:"100%"}} viewBox={`0 0 ${W} ${H}`}>
-          {/* Background grid */}
-          {Array.from({length:8},(_,i)=>(
-            <line key={`h${i}`} x1={0} y1={H/8*i} x2={W} y2={H/8*i} stroke="rgba(255,255,255,0.4)" strokeWidth="1"/>
-          ))}
-          {Array.from({length:12},(_,i)=>(
-            <line key={`v${i}`} x1={W/12*i} y1={0} x2={W/12*i} y2={H} stroke="rgba(255,255,255,0.4)" strokeWidth="1"/>
-          ))}
-          {/* Device pins */}
-          {devices.map((d,i)=>{
-            const x = devices.length === 1 ? W/2 : lngToX(d.longitude);
-            const y = devices.length === 1 ? H/2 : latToY(d.latitude);
-            const color = STATUS_COLOR[d.status] || "#94a3b8";
-            return (
-              <g key={d.id}>
-                {/* Pin shadow */}
-                <circle cx={x} cy={y+2} r={8} fill="rgba(0,0,0,0.15)"/>
-                {/* Pin circle */}
-                <circle cx={x} cy={y} r={8} fill={color} stroke="white" strokeWidth="2"/>
-                {/* Device initial */}
-                <text x={x} y={y+4} fontSize="7" fill="white" textAnchor="middle" fontWeight="bold">
-                  {d.name.charAt(0).toUpperCase()}
-                </text>
-                {/* Device name label */}
-                <rect x={x-30} y={y-26} width={60} height={14} rx={3} fill="rgba(11,20,38,0.75)"/>
-                <text x={x} y={y-15} fontSize="7" fill="white" textAnchor="middle">{d.name.slice(0,12)}</text>
-              </g>
-            );
-          })}
-        </svg>
-        {/* OSM attribution */}
-        <div style={{position:"absolute",bottom:4,right:6,fontSize:8,color:"rgba(0,0,0,0.4)"}}>© OpenStreetMap</div>
-      </div>
-      {/* Device list */}
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",paddingLeft:4}}>
-        {devices.map(d=>(
+    <div style={{height:"100%",display:"flex",flexDirection:"column",gap:0}}>
+      <div ref={mapRef} style={{flex:1,borderRadius:8,overflow:"hidden",minHeight:0}} />
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",padding:"4px 2px",flexShrink:0}}>
+        {devices.map(d => (
           <div key={d.id} style={{display:"flex",alignItems:"center",gap:4}}>
-            <div style={{width:8,height:8,borderRadius:"50%",background:STATUS_COLOR[d.status]||"#94a3b8",flexShrink:0}}/>
+            <div style={{width:7,height:7,borderRadius:"50%",background:d.status==="ACTIVE"?"#10b981":"#94a3b8",flexShrink:0}}/>
             <span style={{fontSize:10,color:"#64748b"}}>{d.name}</span>
-            <span style={{fontSize:9,color:"#cbd5e1"}}>({d.latitude?.toFixed(4)}, {d.longitude?.toFixed(4)})</span>
           </div>
         ))}
       </div>
@@ -1931,61 +1989,124 @@ export function FleetMapWidget({ config }) {
 }
 
 
-// ── Phase 3: Map Widget ───────────────────────────────────────────────────────
-// Displays device GPS location using lat/lng telemetry keys.
-// Uses OpenStreetMap tile URL as an img src — no JS map library needed.
-
 export function MapWidget({ config, liveTelem, deviceId }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
   const latKey = config.lat_key || "latitude";
   const lngKey = config.lng_key || "longitude";
-  const [deviceCoords, setDeviceCoords] = useState({ lat: null, lng: null, lastSeen: null, name: null });
+  const [deviceInfo, setDeviceInfo] = useState({ lat: null, lng: null, name: null, lastSeen: null, id: null });
 
-  // Fetch device coords directly if not already in config
   useEffect(() => {
     const id = config.device_id || deviceId;
-    if (id && config.fixed_lat == null && config.fixed_lng == null) {
+    if (id) {
       fetch(`${API_BASE}/devices/${id}`, {
         headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
       })
       .then(r => r.json())
-      .then(d => {
-        setDeviceCoords({
-          lat:      d.latitude  ?? null,
-          lng:      d.longitude ?? null,
-          lastSeen: d.last_seen_at ?? null,
-          name:     d.name ?? null,
-        });
-      })
+      .then(d => setDeviceInfo({ lat: d.latitude, lng: d.longitude, name: d.name, lastSeen: d.last_seen_at, id: d.id }))
       .catch(() => {});
     }
   }, [deviceId, config.device_id]);
 
-  // Priority: 1) live telemetry, 2) config fixed coords, 3) fetched device coords
   const liveLat = parseFloat(liveTelem?.[latKey]);
   const liveLng = parseFloat(liveTelem?.[lngKey]);
-  const fixedLat = parseFloat(config.fixed_lat ?? config.latitude ?? deviceCoords.lat);
-  const fixedLng = parseFloat(config.fixed_lng ?? config.longitude ?? deviceCoords.lng);
-
-  const lat = !isNaN(liveLat) ? liveLat : !isNaN(fixedLat) ? fixedLat : NaN;
-  const lng = !isNaN(liveLng) ? liveLng : !isNaN(fixedLng) ? fixedLng : NaN;
+  const lat = !isNaN(liveLat) ? liveLat : parseFloat(deviceInfo.lat);
+  const lng = !isNaN(liveLng) ? liveLng : parseFloat(deviceInfo.lng);
   const isLive = !isNaN(liveLat) && !isNaN(liveLng);
+  const OFFLINE_MS = 5 * 60 * 1000;
+  const isOnline = deviceInfo.lastSeen ? (Date.now() - new Date(deviceInfo.lastSeen).getTime()) < OFFLINE_MS : null;
+  const statusColor = isOnline === true ? "#10b981" : isOnline === false ? "#94a3b8" : "#f59e0b";
   const zoom = config.zoom || 15;
 
-  // Device status
-  const OFFLINE_MS = 5 * 60 * 1000;
-  const lastSeen = deviceCoords.lastSeen;
-  const isOnline = lastSeen ? (Date.now() - new Date(lastSeen).getTime()) < OFFLINE_MS : null;
-  const statusColor = isOnline === true ? "#10b981" : isOnline === false ? "#94a3b8" : "#f59e0b";
-  const statusLabel = isOnline === true ? "ONLINE" : isOnline === false ? "OFFLINE" : "UNKNOWN";
+  useEffect(() => {
+    if (isNaN(lat) || isNaN(lng) || !mapRef.current) return;
+
+    const initMap = () => {
+      if (!mapRef.current) return;
+      const L = window.L;
+
+      if (mapInstanceRef.current) {
+        // Update existing marker position (live GPS tracking)
+        if (markerRef.current) markerRef.current.setLatLng([lat, lng]);
+        mapInstanceRef.current.setView([lat, lng]);
+        return;
+      }
+
+      const map = L.map(mapRef.current, { zoomControl: true, scrollWheelZoom: true });
+      mapInstanceRef.current = map;
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+        maxZoom: 19,
+      }).addTo(map);
+
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="
+          width:32px;height:32px;border-radius:50% 50% 50% 0;
+          background:${statusColor};border:2px solid white;
+          transform:rotate(-45deg);
+          box-shadow:0 2px 6px rgba(0,0,0,0.3);
+        "></div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+        popupAnchor: [0, -34],
+      });
+
+      const marker = L.marker([lat, lng], { icon }).addTo(map);
+      markerRef.current = marker;
+
+      const name = deviceInfo.name || config.device_name || "Device";
+      const statusLabel = isOnline === true ? "🟢 Online" : isOnline === false ? "⚫ Offline" : "🟡 Unknown";
+      const devId = deviceInfo.id || config.device_id || deviceId;
+      marker.bindPopup(`
+        <div style="min-width:140px;font-family:sans-serif">
+          <strong style="font-size:13px">${name}</strong><br/>
+          <span style="font-size:11px;color:#64748b">${statusLabel}</span><br/>
+          <span style="font-size:10px;color:#94a3b8">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+          ${isLive ? '<br/><span style="font-size:10px;color:#10b981">📡 Live GPS</span>' : ""}
+          ${devId ? `<br/><a href="/dashboard/device/${devId}" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">→ Open Dashboard</a>` : ""}
+        </div>
+      `);
+
+      map.setView([lat, lng], zoom);
+      // Ensure map renders correctly inside widget container
+      setTimeout(() => map.invalidateSize(), 150);
+    };
+
+    if (!document.getElementById("leaflet-css")) {
+      const link = document.createElement("link");
+      link.id = "leaflet-css";
+      link.rel = "stylesheet";
+      link.href = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+      document.head.appendChild(link);
+    }
+
+    if (window.L) {
+      initMap();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+      script.onload = initMap;
+      document.head.appendChild(script);
+    }
+
+    return () => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+      }
+    };
+  }, [lat, lng]);
 
   if (isNaN(lat) || isNaN(lng)) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8,padding:12}}>
-      {/* Status header even without location */}
-      {deviceCoords.name && (
-        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+      {deviceInfo.name && (
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
           <div style={{width:7,height:7,borderRadius:"50%",background:statusColor}}/>
-          <span style={{fontSize:11,fontWeight:600,color:"#334866"}}>{deviceCoords.name}</span>
-          <span style={{fontSize:10,color:statusColor,fontWeight:600}}>{statusLabel}</span>
+          <span style={{fontSize:11,fontWeight:600,color:"#334866"}}>{deviceInfo.name}</span>
         </div>
       )}
       <svg style={{width:24,height:24,color:"#e2e8f0"}} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -1997,97 +2118,9 @@ export function MapWidget({ config, liveTelem, deviceId }) {
     </div>
   );
 
-  // Convert lat/lng to tile pixel position for overlay dot
-  const tileZ = zoom;
-  const tileX = Math.floor((lng + 180) / 360 * Math.pow(2, tileZ));
-  const tileY = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, tileZ));
-
-  // Use static tile image + SVG overlay instead of iframe
-  // 3x3 tile grid centered on device for better context
-  const tileSize = 256;
-  const tiles = [];
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      tiles.push({ tx: tileX + dx, ty: tileY + dy, dx, dy });
-    }
-  }
-
-  // Device pixel position within the 3x3 grid (center tile is at 256,256)
-  const lngToX = (l) => ((l + 180) / 360 * Math.pow(2, tileZ) - tileX + 1) * tileSize;
-  const latToY = (l) => ((1 - Math.log(Math.tan(l * Math.PI / 180) + 1 / Math.cos(l * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, tileZ) - tileY + 1) * tileSize;
-  const dotX = lngToX(lng);
-  const dotY = latToY(lat);
-  const mapW = tileSize * 3;
-  const mapH = tileSize * 3;
-
-  const dotColor = isOnline === true ? "#10b981" : isOnline === false ? "#ef4444" : "#f59e0b";
-  const ringColor = isOnline === true ? "rgba(16,185,129,0.3)" : isOnline === false ? "rgba(239,68,68,0.3)" : "rgba(245,158,11,0.3)";
-
-  return (
-    <div style={{height:"100%",display:"flex",flexDirection:"column",borderRadius:8,overflow:"hidden",position:"relative"}}>
-      {/* Status bar */}
-      <div style={{padding:"5px 10px",background:"#0B1426",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-        <div style={{width:7,height:7,borderRadius:"50%",background:dotColor,flexShrink:0,
-          boxShadow: isOnline ? `0 0 6px ${dotColor}` : "none"}}/>
-        <span style={{fontSize:11,fontWeight:600,color:"white",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-          {deviceCoords.name || "Device"}
-        </span>
-        <span style={{fontSize:9,fontWeight:700,color:dotColor}}>{statusLabel}</span>
-        {isLive && <span style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:"rgba(16,185,129,0.2)",color:"#6ee7b7",fontWeight:700}}>LIVE</span>}
-      </div>
-
-      {/* Map tiles + custom dot overlay */}
-      <div style={{flex:1,position:"relative",overflow:"hidden",background:"#e8f4f0"}}>
-        <div style={{position:"absolute",top:"50%",left:"50%",
-          width:mapW,height:mapH,
-          transform:`translate(${-(dotX)}px, ${-(dotY)}px)`}}>
-          {/* OSM tiles */}
-          {tiles.map(({tx,ty,dx,dy})=>(
-            <img key={`${tx},${ty}`}
-              src={`https://tile.openstreetmap.org/${tileZ}/${tx}/${ty}.png`}
-              style={{position:"absolute",left:(dx+1)*tileSize,top:(dy+1)*tileSize,width:tileSize,height:tileSize,display:"block"}}
-              alt=""
-            />
-          ))}
-          {/* Pulsing ring */}
-          <div style={{
-            position:"absolute",
-            left:dotX, top:dotY,
-            width:22, height:22,
-            borderRadius:"50%",
-            background:ringColor,
-            transform:"translate(-50%,-50%)",
-            animation:"mapPulse 2s ease-out infinite",
-          }}/>
-          {/* Dot */}
-          <div style={{
-            position:"absolute",
-            left:dotX, top:dotY,
-            width:12, height:12,
-            borderRadius:"50%",
-            background:dotColor,
-            border:"2px solid white",
-            transform:"translate(-50%,-50%)",
-            boxShadow:`0 2px 6px rgba(0,0,0,0.3), 0 0 8px ${dotColor}`,
-            zIndex:10,
-          }}/>
-        </div>
-        <style>{`@keyframes mapPulse{0%{transform:translate(-50%,-50%) scale(1);opacity:0.8}100%{transform:translate(-50%,-50%) scale(3);opacity:0}}`}</style>
-      </div>
-
-      {/* Footer */}
-      <div style={{padding:"4px 10px",background:"white",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-        <span style={{fontSize:10,color:"#64748b",fontFamily:"monospace"}}>{lat.toFixed(5)}, {lng.toFixed(5)}</span>
-        <a href={`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=${zoom}/${lat}/${lng}`}
-           target="_blank" rel="noopener noreferrer"
-           style={{fontSize:10,color:"#3b82f6",textDecoration:"none"}}>Open ↗</a>
-      </div>
-    </div>
-  );
+  return <div ref={mapRef} style={{height:"100%",width:"100%",borderRadius:8,overflow:"hidden"}} />;
 }
 
-// ── Phase 3: Device Summary Widget ────────────────────────────────────────────
-// Shows device metadata: status, last seen, and configurable key metrics.
 
 export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceId }) {
   const devId = deviceId || config.device_id;

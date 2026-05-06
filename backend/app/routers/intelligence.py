@@ -2326,24 +2326,59 @@ async def daily_report(
     except Exception:
         pass
 
-    prompt = f"""Generate a concise daily IoT fleet health report. All times are in MYT (Malaysia Time).
+    # Build explicit device list for prompt — Groq must use these exact values
+    device_lines = "\n".join(
+        f"  - {d['device']}: {d['status']}, last seen: {d['last_seen']}, health: {d.get('health_label','UNKNOWN')}"
+        for d in report_data
+    )
 
-Fleet Data:
-{json.dumps(summary, indent=2)}
-{memory_context}
+    memory_lines_direct = ""
+    try:
+        from app.services.taat_memory_service import get_relevant_memories
+        mems = get_relevant_memories(db, current_user.tenant_id, limit=10)
+        if mems:
+            memory_lines_direct = "\n".join(
+                f"  - [{m['type']}] {m['content'][:150]}"
+                for m in mems
+            )
+        else:
+            memory_lines_direct = "  None"
+    except Exception:
+        memory_lines_direct = "  None"
 
-Write a professional executive summary with these sections:
-**DEVICE STATUS** — list each device: name, status, last seen (MYT)
-**ACTIVE ALARMS** — list active alarms or "None"
-**RECENT SCHEDULED ACTIONS EXECUTED** — list from agent memory or "None"
-**AGENT MEMORY** — list actual recent outcomes from memory (do NOT say "available upon request" — show them)
-**RECOMMENDATIONS** — 2-3 actionable items
+    prompt = f"""Write a daily IoT fleet health report. Use ONLY the data provided below — do not invent or rephrase timestamps.
 
-Rules:
-- Use exact device names
-- Show all times in MYT
-- Be direct and concise
-- If memory has entries, list them explicitly"""
+Generated: {now_myt.strftime("%Y-%m-%d %H:%M MYT")}
+Period: Last 24 hours
+
+DEVICES:
+{device_lines}
+
+ACTIVE ALARMS: {total_active_alarms if total_active_alarms else "None"}
+
+AGENT MEMORY (copy these exactly, do not summarise):
+{memory_lines_direct}
+
+Output format — use exactly these section headers:
+**DEVICE STATUS**
+[list each device with name, status, last seen — use the exact MYT times above]
+
+**ACTIVE ALARMS**
+[list or "None"]
+
+**RECENT SCHEDULED ACTIONS EXECUTED**
+[from agent memory where type=scheduled_dispatch, or "None"]
+
+**AGENT MEMORY**
+[list every memory entry above — do NOT write "available upon request"]
+
+**RECOMMENDATIONS**
+[2-3 actionable items based on the data]
+
+RULES:
+- Copy timestamps exactly as given — never convert or reformat them
+- Show ALL memory entries — never hide them
+- Be concise and direct"""
 
     try:
         narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3, model=GROQ_MODEL_DEEP)
