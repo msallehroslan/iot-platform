@@ -166,9 +166,9 @@ Respond with ONLY the category name, nothing else."""
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
         return "RECOMMEND"
-    if any(w in msg for w in ["remember that", "remember:", "note that", "save that",
-                               "is located in", "is used for", "is installed at",
-                               "controls the", "i prefer", "user prefers"]):
+    if any(w in msg for w in ["remember that","remember:","note that", "save that", "please remember","store this","memorize this","i prefer", "user prefers",
+    
+    ]):
         return "REMEMBER"
 
     return "QUESTION"
