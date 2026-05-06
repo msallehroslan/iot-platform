@@ -1628,13 +1628,19 @@ async def ai_chat(
         if (
             intent == "SCHEDULE"
             and isinstance(action_result, dict)
-            and action_result.get("scheduled_display")
+            and action_result.get("is_scheduled")
         ):
+            # Use scheduled_display (MYT) if available, else human_label, else raw scheduled_for
+            disp = (
+                action_result.get("scheduled_display")
+                or action_result.get("human_label")
+                or action_result.get("scheduled_for", "")
+            )
+            dev  = action_result.get("device_name", "device")
+            prms = action_result.get("params", {})
             update_instruction = (
-                f"Tell the user: "
-                f"⏰ Command scheduled successfully for "
-                f"{action_result['scheduled_display']}. "
-                f"Be brief and direct."
+                f"Output EXACTLY this line, no changes: "
+                f"⏰ Scheduled → {dev}: {prms} at {disp}"
             )
         elif ver_overall == "success" and ver_msg:
             update_instruction = (

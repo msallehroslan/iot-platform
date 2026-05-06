@@ -89,7 +89,8 @@ class CacheService:
             logger.info("cache: Redis connected — caching enabled (%s)", redis_url)
         except Exception as exc:
             logger.warning(
-                "cache: Redis connection failed (%s) — falling back to DB-only mode", exc
+                "cache: Redis connection failed url=%s error=%s type=%s — falling back to DB-only mode",
+                redis_url, exc, type(exc).__name__,
             )
             self._client  = None
             self._enabled = False
