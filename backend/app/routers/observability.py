@@ -104,15 +104,18 @@ def system_metrics(
         redis_status = f"error: {exc}"
 
     # Phase 11: cache stats from CacheService
+    # Sync-safe: read properties directly, no async call needed
     cache_stats = {"enabled": False, "status": "disabled"}
     try:
         from app.services.cache_service import cache as _cache_svc
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running() and _cache_svc.enabled:
-            import concurrent.futures
-            fut = asyncio.run_coroutine_threadsafe(_cache_svc.stats(), loop)
-            cache_stats = fut.result(timeout=2)
+        if _cache_svc.enabled and _cache_svc._client is not None:
+            cache_stats = {
+                "enabled": True,
+                "status":  "connected",
+                "backend": "redis",
+            }
+        elif not _cache_svc.enabled:
+            cache_stats = {"enabled": False, "status": "disabled"}
     except Exception:
         pass
 
