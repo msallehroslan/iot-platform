@@ -40,6 +40,39 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+# ── Timezone Helpers ─────────────────────────────────────────────────────────
+
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+MYT = ZoneInfo("Asia/Kuala_Lumpur")
+
+def _fmt_myt(dt):
+
+```
+if not dt:
+    return "unknown"
+
+try:
+
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(
+            dt.replace("Z", "+00:00")
+        )
+
+    if dt.tzinfo is None:
+        dt = dt.replace(
+            tzinfo=timezone.utc
+        )
+
+    return dt.astimezone(MYT).strftime(
+        "%Y-%m-%d %H:%M MYT"
+    )
+
+except Exception:
+    return str(dt)
+
+
 # ── Intent definitions ────────────────────────────────────────────────────────
 
 INTENT_CATEGORIES = [
