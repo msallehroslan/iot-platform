@@ -257,10 +257,34 @@ def _build_decision_from_results(intent: str, results: dict, verification: dict)
         confidence = 0.85
 
     rpc = results.get("rpc_result") or {}
+
     if rpc:
+
         dev  = rpc.get("device_name", "device")
         prms = rpc.get("params", {})
-        action_taken = f"Sent command to {dev}: {prms}" if rpc.get("success") else                        f"Command failed: {rpc.get('reason', 'unknown')}"
+
+        # ── No-op / already correct state ───────────────────
+        if rpc.get("no_action"):
+
+            action_taken = (
+                f"State already correct on {dev}. "
+                f"No action needed."
+            )
+
+        # ── Actual RPC executed ─────────────────────────────
+        elif rpc.get("success"):
+
+            action_taken = (
+                f"Sent command to {dev}: {prms}"
+            )
+
+        # ── Failure ─────────────────────────────────────────
+        else:
+
+            action_taken = (
+                f"Command failed: "
+                f"{rpc.get('reason', 'unknown')}"
+            )
 
     rule = results.get("rule_result") or {}
     if rule and not action_taken:
