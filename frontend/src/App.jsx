@@ -3,7 +3,7 @@
  * Dashboard logic lives in pages/DashboardPage.jsx
  * API calls use services/api.js + services/dashboardService.js
  */
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
 import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi } from "./services/api.js";
@@ -93,7 +93,7 @@ const NAV = [
   { id:"audit-log",         label:"Audit Log",          icon:"M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" },
 ];
 
-function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
+const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
   const [col, setCol] = useState(false);
   const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
@@ -147,9 +147,9 @@ function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
       </div>
     </aside>
   );
-}
+}); // end Sidebar memo
 
-function Header({ title, onRefresh, refreshing }) {
+const Header = React.memo(function Header({ title, onRefresh, refreshing }) {
   const [time, setTime] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
@@ -162,13 +162,7 @@ function Header({ title, onRefresh, refreshing }) {
       </div>
     </header>
   );
-}
-// ── Overview page ────────────────────────────────────────────────────────────
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// INTELLIGENCE LAYER — Smart Overview Cards + AI Chatbot
-// ═══════════════════════════════════════════════════════════════════════════════
-
+}); // end Header memo
 
 function OverviewPage({ refreshKey, onToast }) {
   const [stats,setStats]=useState(null); const [devices,setDevices]=useState([]); const [alarms,setAlarms]=useState([]); const [loading,setLoading]=useState(true);
@@ -187,10 +181,16 @@ function OverviewPage({ refreshKey, onToast }) {
 
   useEffect(()=>{fetchAll();},[refreshKey]);
 
-  // Fetch AI summaries for active devices
+  // Fetch AI summaries for active devices — throttled to run at most once/60s
+  // Previously ran every 30s refreshKey tick. Intelligence summaries don't change
+  // that fast — 60s cadence cuts API calls to the intelligence endpoint in half.
+  const lastSummaryRef = useRef(0);
   useEffect(()=>{
     const activeDevs = devices.filter(d=>d.status==="ACTIVE").slice(0,6);
     if(!activeDevs.length) return;
+    const now = Date.now();
+    if (now - lastSummaryRef.current < 60_000) return;  // throttle to 60s
+    lastSummaryRef.current = now;
     setSummaryLoading(true);
     Promise.allSettled(activeDevs.map(d=>intelligenceApi.summary(d.id).then(r=>({id:d.id,data:r}))))
       .then(results=>{
@@ -199,7 +199,7 @@ function OverviewPage({ refreshKey, onToast }) {
         setSummaries(map);
       })
       .finally(()=>setSummaryLoading(false));
-  },[devices.length]);
+  },[devices.length, refreshKey]);
 
   useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{const ks=r?.keys||[];setChartKeys(ks);if(ks.length>0&&!ks.includes(chartKey))setChartKey(ks[0]);}).catch(()=>{});},[chartDev?.id]);
   useEffect(()=>{
@@ -600,7 +600,7 @@ function AlarmsPage({ onToast, user }) {
 }
 
 // ── Device Drawer ─────────────────────────────────────────────────────────────
-function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast, user }) {
+const DrawerMemo = React.memo(function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast, user }) {
   const isAdmin = user?.role === "TENANT_ADMIN";
   const [device,setDevice]=useState(initDev); const [chartData,setChartData]=useState([]); const [selKey,setSelKey]=useState(""); const [copied,setCopied]=useState(false); const [regen,setRegen]=useState(false);
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
@@ -638,9 +638,10 @@ function DeviceDrawer({ device: initDev, onClose, refreshKey, onToast, user }) {
       <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
     </div>
   );
-}
+}, (prev, next) => prev.device?.id === next.device?.id && prev.user?.id === next.user?.id);
 
 // ── Settings + misc pages ─────────────────────────────────────────────────────
+
 function SettingsPage({ user, onLogout }) {
   const BASE_URL=(typeof import.meta!=="undefined"&&import.meta.env?.VITE_API_URL)||"http://localhost:8000";
   const WS_BASE=BASE_URL.replace(/^http/,"ws");
@@ -2166,7 +2167,7 @@ const PAGE_TITLES = {
 };
 
 // ── AI Chatbot Widget ─────────────────────────────────────────────────────────
-function AIChatbot({ user }) {
+const AIChatbot = React.memo(function AIChatbot({ user }) {
   const STORAGE_KEY = "taat_chat_history";
   const MAX_STORED  = 20;
 
@@ -2751,6 +2752,8 @@ function AIChatbot({ user }) {
 }
 
 
+}); // end AIChatbot memo
+
 export default function App() {
   const [user,       setUser]       = useState(() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } });
   const [authed,     setAuthed]     = useState(() => !!localStorage.getItem("access_token"));
@@ -2792,18 +2795,50 @@ export default function App() {
     alarmApi.list({ status: "ACTIVE_UNACK", limit: 100 }).then(as => setAlarmCount(as.length)).catch(() => {});
   }, [refreshKey, authed]);
 
-  const handleRefresh = () => { setRefreshing(true); setRefreshKey(k => k + 1); setTimeout(() => setRefreshing(false), 700); };
-  const handleLogin   = u => { setUser(u); setAuthed(true); };
-  const handleLogout  = async () => {
-    // Revoke refresh token on server before clearing local state
+  // useCallback ensures these functions are stable references across re-renders.
+  // Without this, every App() re-render (toast, refreshKey tick, alarm count update)
+  // creates new function references and invalidates React.memo on every child page.
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setRefreshKey(k => k + 1);
+    setTimeout(() => setRefreshing(false), 700);
+  }, []);
+
+  const handleLogin = useCallback(u => { setUser(u); setAuthed(true); }, []);
+
+  const handleLogout = useCallback(async () => {
     try {
       const refreshToken = localStorage.getItem("refresh_token");
       if (refreshToken) await authApi.logout(refreshToken);
     } catch (_) {}
     localStorage.clear();
     setUser(null); setAuthed(false); setPage("overview");
-  };
-  const showToast     = (msg, type = "success") => setToast({ msg, type });
+  }, []);
+
+  // Stable toast — inline arrow would create new reference on every render
+  const showToast = useCallback((msg, type = "success") => {
+    setToast({ msg, type });
+  }, []);
+
+  // Stable sidebar setPage handler
+  const handleSetPage = useCallback(p => {
+    setPage(p);
+    setDrawer(null);
+    if (p !== "device-dashboards") setDashDevice(null);
+  }, []);
+
+  // Stable drawer opener for DevicesPage
+  const handleOpenDrawer = useCallback(device => setDrawer(device), []);
+
+  // Stable dashDevice setter for DeviceListForDashboards
+  const handleOpenDash = useCallback(d => setDashDevice(d), []);
+  const handleBackDash = useCallback(() => setDashDevice(null), []);
+
+  // Stable drawer close — new arrow fn every render would remount DeviceDrawer
+  const handleCloseDrawer = useCallback(() => setDrawer(null), []);
+
+  // Stable toast dismiss
+  const handleDismissToast = useCallback(() => setToast(null), []);
 
   if (!authed) return <LoginPage onLogin={handleLogin} />;
 
@@ -2811,15 +2846,15 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{background:"#F4F8FF"}}>
-      <Sidebar page={page} setPage={p => { setPage(p); setDrawer(null); if (p !== "device-dashboards") setDashDevice(null); }} user={user} onLogout={handleLogout} alarmCount={alarmCount} />
+      <Sidebar page={page} setPage={handleSetPage} user={user} onLogout={handleLogout} alarmCount={alarmCount} />
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
         <Header title={pageTitle} onRefresh={handleRefresh} refreshing={refreshing} />
         <main className={`flex-1 ${page === "user-dashboards" ? "overflow-hidden" : "overflow-y-auto p-6"}`} style={{background:"#F4F8FF"}}>
           {page === "overview"           && <OverviewPage refreshKey={refreshKey} onToast={showToast} />}
           {page === "user-dashboards"     && <UserDashboardPage onToast={showToast} user={user} />}
-          {page === "device-dashboards"  && !dashDevice && <DeviceListForDashboards onOpen={d => setDashDevice(d)} />}
-          {page === "device-dashboards"  && dashDevice  && <DashboardPage device={dashDevice} onBack={() => setDashDevice(null)} user={user} />}
-          {page === "devices"            && <DevicesPage onOpenDrawer={setDrawer} onToast={showToast} user={user} />}
+          {page === "device-dashboards"  && !dashDevice && <DeviceListForDashboards onOpen={handleOpenDash} />}
+          {page === "device-dashboards"  && dashDevice  && <DashboardPage device={dashDevice} onBack={handleBackDash} user={user} />}
+          {page === "devices"            && <DevicesPage onOpenDrawer={handleOpenDrawer} onToast={showToast} user={user} />}
           {page === "alarms"             && <AlarmsPage onToast={showToast} user={user} />}
           {page === "rule-chains"        && <RuleChainsPage onToast={showToast} user={user} />}
           {page === "customers"          && <CustomersPage onToast={showToast} user={user} />}
@@ -2830,8 +2865,8 @@ export default function App() {
           {page === "audit-log"          && <AuditLogPage onToast={showToast} />}
         </main>
       </div>
-      {drawer && <DeviceDrawer device={drawer} onClose={() => setDrawer(null)} refreshKey={refreshKey} onToast={showToast} user={user} />}
-      {toast  && <Toast msg={toast.msg} type={toast.type} onDone={() => setToast(null)} />}
+      {drawer && <DrawerMemo device={drawer} onClose={handleCloseDrawer} refreshKey={refreshKey} onToast={showToast} user={user} />}
+      {toast  && <Toast msg={toast.msg} type={toast.type} onDone={handleDismissToast} />}
       {user?.role !== "CUSTOMER_USER" && <AIChatbot user={user} />}
     </div>
   );
