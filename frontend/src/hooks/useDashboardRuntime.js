@@ -164,22 +164,6 @@ export function useDashboardRuntime(activeDash, user) {
   useEffect(() => {
     if (!widgetDeviceIds.length) return;
 
-    // Seed history for each device in parallel — non-blocking, doesn't delay dashboard
-    // Each device independently fetches its last 60 points while WS connects
-    widgetDeviceIds.forEach(deviceId => {
-      telemetryApi.keys(deviceId).then(res => {
-        const keys = res?.keys || [];
-        if (!keys.length) return;
-        return telemetryApi.bulkHistory(deviceId, keys.slice(0, 8), 60);
-      }).then(res => {
-        if (!res?.data) return;
-        setHistoryData(prev => ({
-          ...prev,
-          [deviceId]: { ...(prev[deviceId] || {}), ...res.data },
-        }));
-      }).catch(() => {});
-    });
-
     // Subscribe to one WS connection per device
     // WS callback writes ONLY to refs — no setState here
     const unsubs = widgetDeviceIds.map(deviceId => {

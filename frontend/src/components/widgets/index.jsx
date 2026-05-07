@@ -1932,6 +1932,32 @@ const MULTI_COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4
 
 export function MultiAxisChartWidget({ config, historyData, deviceId }) {
   const keys = config.keys || [];
+  const devId = deviceId || config.device_id;
+
+  // Self-fetch history for all keys — same lazy pattern as LineChartWidget.
+  // This fires once on mount and when keys/devId change.
+  // historyData prop (from WS updates) overlays on top.
+  const [fetchedHistory, setFetchedHistory] = useState({});
+  useEffect(() => {
+    if (!devId || !keys.length) return;
+    let cancelled = false;
+    Promise.allSettled(
+      keys.map(k =>
+        widgetApi.lineChart(devId, k, { hours: 1, limit: 100, resolution: "raw" })
+          .then(res => ({ key: k, pts: res?.points || [] }))
+          .catch(() => ({ key: k, pts: [] }))
+      )
+    ).then(results => {
+      if (cancelled) return;
+      const hist = {};
+      results.forEach(r => {
+        if (r.status === "fulfilled") hist[r.value.key] = r.value.pts;
+      });
+      setFetchedHistory(hist);
+    });
+    return () => { cancelled = true; };
+  }, [devId, keys.join(",")]);
+
   if (!keys.length) return (
     <div style={{ display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:12,color:"#94a3b8" }}>
       Configure keys in Edit
@@ -1940,9 +1966,17 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
   const W=460, H=170, pad={t:8,r:48,b:28,l:44};
   const w=W-pad.l-pad.r, h=H-pad.t-pad.b;
 
+  // Merge fetched history with WS live updates from historyData prop
+  const mergedHistory = { ...fetchedHistory };
+  if (historyData) {
+    Object.entries(historyData).forEach(([k, pts]) => {
+      if (pts?.length) mergedHistory[k] = pts;
+    });
+  }
+
   // Build series with individual min/max for true multi-axis
   const series = keys.map((k,i)=>{
-    const pts = (historyData?.[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0}));
+    const pts = (mergedHistory[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0}));
     const vals = pts.map(p=>p.value);
     const mn = vals.length ? Math.min(...vals) : 0;
     const mx = vals.length ? Math.max(...vals) : 1;
