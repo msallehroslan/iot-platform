@@ -2749,9 +2749,6 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
       `}</style>
     </>
   );
-}
-
-
 }); // end AIChatbot memo
 
 export default function App() {
