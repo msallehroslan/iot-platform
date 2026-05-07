@@ -398,7 +398,6 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const isN   = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
   const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
-  const [agg, setAgg]       = useState({ avg: null, min: null, max: null });
   const [window, setWindow] = useState("1h");
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
@@ -2033,8 +2032,6 @@ const TREND_CONFIG = {
 export function TrendIndicatorWidget({ config, deviceId, liveTelem, intelligence }) {
   const key      = config.key || "";
   const label    = config.label || key || "Trend";
-  const [loading] = useState(false);
-
   const [trendFetched, setTrendFetched] = useState(null);
   const [loading, setLoading] = useState(false);
 
