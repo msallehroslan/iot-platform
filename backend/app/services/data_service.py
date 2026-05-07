@@ -38,7 +38,7 @@ from app.services.trend_service import get_all_key_trends
 from app.services.cache_service import (
     cache,
     TTL_LATEST, TTL_ALARMS, TTL_UNIFIED,
-    TTL_ANOMALY, TTL_HEALTH, TTL_BASELINE,
+    TTL_ANOMALY, TTL_HEALTH, TTL_BASELINE, TTL_TREND,
 )
 
 logger = logging.getLogger(__name__)
@@ -519,30 +519,23 @@ def get_unified_intelligence(
             "generated_at": "..."
         }
     """
-    # Each sub-function is individually cached — unified gets its own
-    # shorter TTL so the merged status/reason stays fresh
-    def _build_unified():
-        _telem    = get_latest_telemetry(db, device_id)
-        _alarms   = get_active_alarms(db, device_id)
-        _baseline = get_baseline_now(db, device_id)
-        _anomaly  = get_anomaly_summary(db, device_id, hours=24)
-        _health   = get_health_summary(db, device_id)
-        return _telem, _alarms, _baseline, _anomaly, _health
-
-    # Since sub-functions are already cached, calling _build_unified
-    # is cheap on cache hit. We still wrap unified itself for the
-    # merged status/reason/recommendation fields.
-    # NOTE: unified is NOT cached here because it depends on device object
-    # (last_seen_at) which changes on every ingest — sub-function caches suffice.
+    # All 5 sub-functions are individually cached (TTL 10–300s).
+    # Trends are now also cached (TTL 60s) — previously uncached causing N DB queries.
+    # The assembled unified result is cached below after construction (TTL 30s).
+    # Coordinator invalidates iot:unified on every 250ms flush — always fresh enough.
     telemetry = get_latest_telemetry(db, device_id)
     alarms    = get_active_alarms(db, device_id)
     baseline  = get_baseline_now(db, device_id)
     anomaly   = get_anomaly_summary(db, device_id, hours=24)
     health    = get_health_summary(db, device_id)
 
-    # Trends (already exists in trend_service)
+    # Trends — cached at TTL_TREND (60s) — was uncached, causing N DB queries per call
     try:
-        raw_trends = get_all_key_trends(db, device_id, minutes=30)
+        raw_trends = _sync_cache(
+            key   = f"iot:trends:{device_id}",
+            fetch = lambda: get_all_key_trends(db, device_id, minutes=30),
+            ttl   = TTL_TREND,
+        )
         trends = {k: v.get("trend", "UNKNOWN") for k, v in raw_trends.items()}
     except Exception:
         trends = {}
@@ -582,7 +575,7 @@ def get_unified_intelligence(
 
     confidence = "high" if (has_baseline and has_health) else "medium" if has_health else "low"
 
-    return {
+    result = {
         "device_id":      device_id,
         "device_name":    device_name,
         "status":         status,
@@ -606,6 +599,28 @@ def get_unified_intelligence(
         },
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Cache the fully assembled unified result.
+    # On next request within TTL_UNIFIED (30s): one Redis GET → return, zero DB queries.
+    # Coordinator calls cache.invalidate_device() every 250ms flush → always stays fresh.
+    try:
+        if cache.enabled:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                asyncio.run_coroutine_threadsafe(
+                    cache._client.setex(
+                        f"iot:unified:{device_id}",
+                        TTL_UNIFIED,
+                        __import__("json").dumps(result, default=str),
+                    ),
+                    loop,
+                ).result(timeout=1)
+    except Exception:
+        pass  # cache write failure never blocks the response
+
+    return result
 
 
 # ── Private: status / risk / reason / recommendation builders ─────────────────
