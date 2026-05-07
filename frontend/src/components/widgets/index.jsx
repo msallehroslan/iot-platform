@@ -9,25 +9,69 @@ import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../servic
 import { useTelemSlice } from "../../hooks/useTelemetry.js";
 
 // ── Intent context hook (Phase 10) ────────────────────────────────────────────
-// Fetches unified intelligence for a device once on mount.
-// Shared by ValueCard and GaugeWidget — one fetch per widget.
+// ── Module-level intel cache ──────────────────────────────────────────────────
+// Prevents N widgets on the same device from each firing their own
+// intelligenceApi.unified() call. One fetch per device per 60 seconds.
+// Stored outside React so it survives re-renders and is shared across widgets.
+const _intelCache    = new Map(); // deviceId → { data, ts }
+const _intelPending  = new Map(); // deviceId → Promise
+const INTEL_CACHE_MS = 60_000;    // reuse cached result for 60 seconds
+
+function _fetchIntelCached(deviceId) {
+  const cached = _intelCache.get(deviceId);
+  if (cached && Date.now() - cached.ts < INTEL_CACHE_MS) {
+    return Promise.resolve(cached.data);
+  }
+  if (_intelPending.has(deviceId)) {
+    return _intelPending.get(deviceId);
+  }
+  const promise = intelligenceApi.unified(deviceId)
+    .then(data => {
+      _intelCache.set(deviceId, { data, ts: Date.now() });
+      _intelPending.delete(deviceId);
+      return data;
+    })
+    .catch(err => {
+      _intelPending.delete(deviceId);
+      throw err;
+    });
+  _intelPending.set(deviceId, promise);
+  return promise;
+}
+
+// useIntelContext — shared cached fetch, one API call per device per 60s.
+// Multiple widgets on the same device all receive the same cached result.
 function useIntelContext(deviceId, key) {
-  const [intel,   setIntel]   = useState(null);
+  const [intel,    setIntel]    = useState(() => _intelCache.get(deviceId)?.data || null);
   const [keyIntel, setKeyIntel] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading,  setLoading]  = useState(false);
 
   useEffect(() => {
     if (!deviceId) return;
+
+    // If already cached, set immediately — zero network call
+    const cached = _intelCache.get(deviceId);
+    if (cached && Date.now() - cached.ts < INTEL_CACHE_MS) {
+      setIntel(cached.data);
+      if (key && cached.data?.enriched_keys) {
+        const kd = cached.data.enriched_keys?.find(k2 => k2.key === key);
+        if (kd) setKeyIntel(kd);
+      }
+      return;
+    }
+
     setLoading(true);
-
-    const fetches = [intelligenceApi.unified(deviceId)];
-    if (key) fetches.push(intelligenceApi.unifiedKey(deviceId, key));
-
-    Promise.allSettled(fetches)
-      .then(([unifiedRes, keyRes]) => {
-        if (unifiedRes.status === "fulfilled") setIntel(unifiedRes.value);
-        if (keyRes && keyRes.status === "fulfilled") setKeyIntel(keyRes.value);
+    const keyParam = key ? `?key=${encodeURIComponent(key)}` : "";
+    _fetchIntelCached(deviceId)
+      .then(data => {
+        setIntel(data);
+        // Extract key intel from enriched_keys if present
+        if (key && data?.enriched_keys) {
+          const kd = data.enriched_keys.find(k2 => k2.key === key);
+          if (kd) setKeyIntel(kd);
+        }
       })
+      .catch(() => {})
       .finally(() => setLoading(false));
   }, [deviceId, key]);
 
@@ -344,25 +388,26 @@ export function PieChartSVG({ data = [] }) {
 
 // ── Widget type components ────────────────────────────────────────────────────
 
-function ValueCard({ config, liveTelem, historyData, deviceId }) {
+function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const devId = deviceId || config.device_id;
-  // useTelemSlice: subscribes only to config.key — this widget never re-renders
-  // when other keys change. Falls back to liveTelem prop if devId unavailable.
-  const { value: sliceVal, history: sliceHistory } = useTelemSlice(devId, config.key);
-  const raw   = sliceVal !== null ? sliceVal : liveTelem?.[config.key];
+  // Use liveTelem prop directly — data comes from dashboard preload + WS flush.
+  // Do NOT call useTelemSlice here: it fires its own API calls per-widget
+  // which exhausts the DB connection pool on dashboards with many widgets.
+  const raw   = liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const isN   = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
-  // Use slice history if available (key-isolated), fall back to historyData prop
-  const histArr = sliceHistory?.length > 0
-    ? sliceHistory
-    : (historyData?.[config.key] || []);
-  const history = histArr.slice(-20).map(p => p.value);
+  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
   const [agg, setAgg]       = useState({ avg: null, min: null, max: null });
   const [window, setWindow] = useState("1h");
 
-  // ── Phase 10 + Gap 3: intent context (KeyIntelligence preferred) ──────────
-  const { intel, keyIntel } = useIntelContext(devId, config.key);
+  // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
+  // (for device-scoped dashboard, or if preload intelligence wasn't available).
+  const { intel: intelFallback, keyIntel } = useIntelContext(
+    intelligence ? null : devId,  // skip fetch if we have it from runtime
+    config.key
+  );
+  const intel = intelligence || intelFallback;
   // Prefer enriched KeyIntelligence schema (Gap 1) when available
   const badge = keyIntel
     ? getBadgeFromKeyIntel(keyIntel)
@@ -377,26 +422,19 @@ function ValueCard({ config, liveTelem, historyData, deviceId }) {
   // Recommended action from KeyIntelligence (shown in tooltip / detail)
   const recommendedAction = keyIntel?.recommended_action || null;
 
-  useEffect(() => {
-    if (!devId || !config.key) return;
-    // Single call via widget abstraction layer — replaces 3× telemetryApi.aggregate
-    const WINDOW_HOURS = { "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24 };
-   
-      widgetApi.lineChart(devId, config.key, { hours: WINDOW_HOURS[window] || 1, limit: 300, resolution: "raw" })
-        .then(res => {
-          const vals = (res?.points || []).map(p => p.value).filter(v => v !== null && !isNaN(v));
-          if (vals.length) {
-            const sum = vals.reduce((a, b) => a + b, 0);
-            setAgg({
-              avg: Math.round((sum / vals.length) * 100) / 100,
-              min: Math.round(Math.min(...vals) * 100) / 100,
-              max: Math.round(Math.max(...vals) * 100) / 100,
-            });
-          }
-        })
-        .catch(() => {});
-  
-  }, [devId, config.key, window]);
+  // Compute agg from historyData prop — no API call needed.
+  // historyData is hydrated by dashboard preload + WS updates.
+  const aggData = historyData?.[config.key] || [];
+  const agg = (() => {
+    const vals = aggData.map(p => p.value).filter(v => v !== null && !isNaN(v));
+    if (!vals.length) return { avg: null, min: null, max: null };
+    const sum = vals.reduce((a, b) => a + b, 0);
+    return {
+      avg: Math.round((sum / vals.length) * 100) / 100,
+      min: Math.round(Math.min(...vals) * 100) / 100,
+      max: Math.round(Math.max(...vals) * 100) / 100,
+    };
+  })();
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
   const WINDOWS = ["15m","30m","1h","6h","24h"];
@@ -646,15 +684,20 @@ export function LineChartWidget({ config, historyData, deviceId }) {
   );
 }
 
-export function GaugeWidget({ config, liveTelem, deviceId }) {
+export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
   const raw   = liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const devId = deviceId || config.device_id;
   const [window, setWindow] = useState("24h");
   const [agg, setAgg]       = useState({ min: null, max: null, avg: null });
 
-  // ── Phase 10 + Gap 3: intent context (KeyIntelligence preferred) ──────────
-  const { intel, keyIntel } = useIntelContext(devId, config.key);
+  // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
+  // (for device-scoped dashboard, or if preload intelligence wasn't available).
+  const { intel: intelFallback, keyIntel } = useIntelContext(
+    intelligence ? null : devId,  // skip fetch if we have it from runtime
+    config.key
+  );
+  const intel = intelligence || intelFallback;
   const badge = keyIntel
     ? getBadgeFromKeyIntel(keyIntel)
     : !isNaN(num) ? getBaselineBadge(num, config.key, intel?.baseline?.keys || {}) : null;
@@ -1173,20 +1216,20 @@ export function HtmlCard({ config, liveTelem }) {
 
 
 // ── Anomaly Score Widget ──────────────────────────────────────────────────────
-export function AnomalyWidget({ config, deviceId }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+export function AnomalyWidget({ config, deviceId, intelligence }) {
+  const [fetched, setFetched] = useState(null);
+  // Primary: intelligence slice from DashboardRuntime (zero fetch).
+  // Fallback: fetch once for device-scoped DashboardPage where intelligence prop is null.
   useEffect(() => {
-    if (!deviceId) return;
-    // widgetApi.anomalyScore → GET /widgets/data/{id}/anomaly_score
+    if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.anomalyScore(deviceId, config.key || "", 24)
-        .then(d => setData(d))
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        .then(d => setFetched(d)).catch(() => {});
     });
-  }, [deviceId, config.key]);
+  }, [deviceId, config.key, !!intelligence]);
+  const anomalyData = intelligence?.anomaly || fetched || null;
+  const data    = anomalyData;
+  const loading = !anomalyData;
 
   const label = config.key || "all";
 
@@ -1266,20 +1309,18 @@ export function AnomalyWidget({ config, deviceId }) {
 }
 
 // ── Baseline / Adaptive Threshold Widget ──────────────────────────────────────
-export function BaselineWidget({ config, deviceId }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+export function BaselineWidget({ config, deviceId, intelligence }) {
+  const [fetched, setFetched] = useState(null);
   useEffect(() => {
-    if (!deviceId) return;
-    // widgetApi.baseline → GET /widgets/data/{id}/baseline
+    if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.baseline(deviceId, config.key || "")
-        .then(d => setData(d))
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        .then(d => setFetched(d)).catch(() => {});
     });
-  }, [deviceId, config.key]);
+  }, [deviceId, config.key, !!intelligence]);
+  const baselineData = intelligence?.baseline || fetched || null;
+  const data    = baselineData;
+  const loading = !baselineData;
 
   const key = config.key;
 
@@ -1342,20 +1383,18 @@ export function BaselineWidget({ config, deviceId }) {
 }
 
 // ── Health Score Widget ───────────────────────────────────────────────────────
-export function HealthScoreWidget({ config, deviceId }) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
+export function HealthScoreWidget({ config, deviceId, intelligence }) {
+  const [fetched, setFetched] = useState(null);
   useEffect(() => {
-    if (!deviceId) return;
-    // widgetApi.healthScore → GET /widgets/data/{id}/health_score
+    if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.healthScore(deviceId)
-        .then(d => setData(d))
-        .catch(() => {})
-        .finally(() => setLoading(false));
+        .then(d => setFetched(d)).catch(() => {});
     });
-  }, [deviceId]);
+  }, [deviceId, !!intelligence]);
+  const healthRaw = intelligence?.health || fetched || null;
+  const data    = healthRaw ? { ...healthRaw, health: healthRaw } : null;
+  const loading = !healthRaw;
 
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}>
@@ -1677,7 +1716,7 @@ export const WIDGET_COMPONENT_MAP = {
  * DashboardPage (device-scoped) passes the device-level liveTelem/historyData
  * directly — no change needed there.
  */
-export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null, allDevices = [], currentDevice = null }) {
+export function WidgetRenderer({ widget, liveTelem, historyData, alarms, intelligence = null, missingDevice = false, deviceLastSeen = null, userRole = "TENANT_ADMIN", deviceId = null, allDevices = [], currentDevice = null }) {
   // Backward-compat: old widgets that have no device_id show a non-crashing prompt
   if (missingDevice) {
     return (
@@ -1709,7 +1748,7 @@ export function WidgetRenderer({ widget, liveTelem, historyData, alarms, missing
         fixed_lng: widget.config?.fixed_lng ?? _mapDevice?.longitude,
       }
     : widget.config || {};
-  const props = { config: effectiveConfig, liveTelem, historyData, alarms, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
+  const props = { config: effectiveConfig, liveTelem, historyData, alarms, intelligence, deviceId: widget.config?.device_id || deviceId, deviceLastSeen };
 
   // ── Role-based widget access control ─────────────────────────────────────
   // Matches the access table exactly:
@@ -1991,37 +2030,36 @@ const TREND_CONFIG = {
   UNKNOWN:  { icon: "M12 8v4m0 4h.01",        color: "#94a3b8", label: "No data",  bg: "#f8fafc" },
 };
 
-export function TrendIndicatorWidget({ config, deviceId, liveTelem }) {
+export function TrendIndicatorWidget({ config, deviceId, liveTelem, intelligence }) {
   const key      = config.key || "";
   const label    = config.label || key || "Trend";
-  const BASE     = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
-  const [trend, setTrend]     = useState(null);
+  const [loading] = useState(false);
+
+  const [trendFetched, setTrendFetched] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  const fetchTrend = useCallback(async () => {
-    if (!deviceId || !key) return;
-    setLoading(true);
-    try {
-      const token = localStorage.getItem("access_token");
-      const res = await fetch(`${BASE}/api/v1/intelligence/trend/${deviceId}/${key}?minutes=30`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) setTrend(await res.json());
-    } catch {}
-    finally { setLoading(false); }
-  }, [deviceId, key]);
+  // Primary: read trend from intelligence slice (DashboardRuntime — zero fetch).
+  // Fallback: fetch once if intelligence not provided (device-scoped DashboardPage).
+  const trendFromIntel = intelligence?.trends?.[key] || null;
 
-  useEffect(() => { fetchTrend(); }, [fetchTrend]);
-
-  // Refresh when live telemetry updates (new reading arrived)
-  const latestVal = liveTelem?.[key];
-  const prevVal   = useRef(latestVal);
   useEffect(() => {
-    if (latestVal !== prevVal.current) {
-      prevVal.current = latestVal;
-      fetchTrend();
-    }
-  }, [latestVal]);
+    if (trendFromIntel || !deviceId || !key) return; // already have it
+    setLoading(true);
+    const token = localStorage.getItem("access_token") || "";
+    let base = "/api/v1";
+    import("../../services/api.js").then(({ API_BASE }) => { base = API_BASE; }).catch(() => {});
+    fetch(`${base}/intelligence/trend/${deviceId}/${key}?minutes=30`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setTrendFetched(d); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [deviceId, key, !!trendFromIntel]);
+
+  const trend = trendFromIntel
+    ? { trend: trendFromIntel, confidence: 0.7, change_pct: 0 }
+    : trendFetched;
 
   if (!deviceId || !key) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%",fontSize:11,color:"#94a3b8"}}>
@@ -2259,17 +2297,16 @@ export function MapWidget({ config, liveTelem, deviceId }) {
   const lngKey = config.lng_key || "longitude";
   const [deviceInfo, setDeviceInfo] = useState({ lat: null, lng: null, name: null, lastSeen: null, id: null });
 
+  // Device lat/lng comes from config (set by WidgetRenderer from allDevices/currentDevice).
+  // Last seen status comes from liveTelem updates — no independent device fetch needed.
   useEffect(() => {
-    const id = config.device_id || deviceId;
-    if (id) {
-      fetch(`${API_BASE}/devices/${id}`, {
-        headers: { "Authorization": `Bearer ${localStorage.getItem("access_token")}` }
-      })
-      .then(r => r.json())
-      .then(d => setDeviceInfo({ lat: d.latitude, lng: d.longitude, name: d.name, lastSeen: d.last_seen_at, id: d.id }))
-      .catch(() => {});
+    // Seed from config if available (WidgetRenderer injects fixed_lat/fixed_lng)
+    const lat = config.fixed_lat ?? config.latitude ?? null;
+    const lng = config.fixed_lng ?? config.longitude ?? null;
+    if (lat !== null && lng !== null) {
+      setDeviceInfo(prev => ({ ...prev, lat, lng }));
     }
-  }, [deviceId, config.device_id]);
+  }, [config.fixed_lat, config.fixed_lng, config.latitude, config.longitude]);
 
   const liveLat = parseFloat(liveTelem?.[latKey]);
   const liveLng = parseFloat(liveTelem?.[lngKey]);
@@ -2383,7 +2420,7 @@ export function MapWidget({ config, liveTelem, deviceId }) {
 }
 
 
-export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceId }) {
+export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceId, intelligence }) {
   const devId = deviceId || config.device_id;
   const OFFLINE_MS = 5 * 60 * 1000;
   const connStatus = !deviceLastSeen ? "UNKNOWN"
@@ -2391,18 +2428,9 @@ export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceI
   const CONN_COLOR = { ONLINE: "#10b981", OFFLINE: "#94a3b8", UNKNOWN: "#f59e0b" };
   const keys = config.keys || Object.keys(liveTelem || {}).slice(0, 4);
 
-  // Try snapshot first (~2ms) then fall through to useIntelContext if needed
-  const [snapIntel, setSnapIntel] = React.useState(null);
-  useEffect(() => {
-    if (!devId) return;
-    const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
-    const token = typeof localStorage !== "undefined" ? localStorage.getItem("access_token") || "" : "";
-    fetch(`${apiBase}/api/v1/intelligence/snapshot/${devId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    }).then(r => r.ok ? r.json() : null).then(d => { if (d) setSnapIntel(d); }).catch(() => {});
-  }, [devId]);
-  const { intel: intelFull } = useIntelContext(devId, "");
-  const intel = snapIntel || intelFull;
+  // Use intelligence from DashboardRuntime prop first. Cache fallback for device dashboard.
+  const { intel: intelFallback } = useIntelContext(intelligence ? null : devId, "");
+  const intel = intelligence || intelFallback;
   const intelStatus = intel?.status;
   const intelRisk   = intel?.risk;
   const intelReason = intel?.reason;
@@ -2480,39 +2508,30 @@ export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceI
 // The "WOW" widget — shows status + reason + risk + recommended action
 // for a specific key or the whole device, powered by KeyIntelligence.
 
-export function TaatInsightWidget({ config, deviceId }) {
+export function TaatInsightWidget({ config, deviceId, intelligence }) {
   const devId = deviceId || config.device_id;
   const key   = config.key || "";
 
   const [data,    setData]    = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Use intelligence slice from DashboardRuntime.
+  // If intelligence prop is available (from preload), use it immediately.
+  // Fallback: fetch once if intelligence not yet in runtime (e.g. device dashboard).
   useEffect(() => {
     if (!devId) return;
+    if (intelligence) {
+      setData(intelligence);
+      setLoading(false);
+      return;
+    }
+    // Fallback for device-scoped dashboard (not using DashboardRuntime)
     setLoading(true);
-    // Try intelligence snapshot first (~2ms Redis) — fall back to unified (~50ms)
-    const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
-    const token   = typeof localStorage !== "undefined" ? localStorage.getItem("access_token") || "" : "";
-    const snapshotUrl = `${apiBase}/api/v1/intelligence/snapshot/${devId}`;
-    fetch(snapshotUrl, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.ok ? r.json() : Promise.reject(r.status))
-      .then(snap => {
-        // If key is requested, fall through to unified key endpoint
-        if (key) throw new Error("key mode");
-        setData(snap);
-        setLoading(false);
-      })
-      .catch(() => {
-        // Fall back to full unified or key intelligence
-        const fallback = key
-          ? import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unifiedKey(devId, key))
-          : import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unified(devId));
-        fallback
-          .then(res => setData(res))
-          .catch(() => {})
-          .finally(() => setLoading(false));
-      });
-  }, [devId, key]);
+    _fetchIntelCached(devId)
+      .then(res => setData(res))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [devId, key, intelligence]);
 
   const RISK_COLOR  = { LOW: "#10b981", MEDIUM: "#f59e0b", HIGH: "#ef4444", CRITICAL: "#dc2626" };
   const STATUS_COLOR = { NORMAL: "#10b981", WARNING: "#f59e0b", CRITICAL: "#ef4444", HEALTHY: "#10b981", OFFLINE: "#94a3b8", UNKNOWN: "#94a3b8" };

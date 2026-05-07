@@ -29,10 +29,10 @@ import {
 import {
   persistLayout, applyLayoutToWidgets, getDefaultPositionForType,
 } from "../services/widgetService.js";
-import { TelemetrySocket } from "../services/websocket.js";
-import { useDashboardPreload } from "../hooks/useTelemetry.js";
-// Pull in existing API helpers — no new endpoints needed
-import { deviceApi, telemetryApi, alarmApi } from "../services/api.js";
+// DashboardRuntime: centralized owner of all dashboard state
+// Widgets are passive — they receive slices, never fetch independently
+import { useDashboardRuntime } from "../hooks/useDashboardRuntime.js";
+import { deviceApi } from "../services/api.js";
 
 const ACTIVE_DASH_KEY = "active_user_dashboard_id";
 const ACCENT_COLORS   = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#84cc16"];
@@ -585,20 +585,25 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function UserDashboardPage({ onToast, user }) {
 
-  // ── Remote state — ALL from API ───────────────────────────────────────────
+  // ── Dashboard navigation state ────────────────────────────────────────────
   const [dashboardList, setDashboardList] = useState([]);
   const [activeDash,    setActiveDash]    = useState(null);
-  const [devices,       setDevices]       = useState([]);  // for WidgetModal dropdown
+  const [devices,       setDevices]       = useState([]);
 
-  // liveTelem and historyData are now keyed by device_id:
-  //   liveTelem  = { [deviceId]: { temperature: 28.5, humidity: 70 } }
-  //   historyData = { [deviceId]: { temperature: [{ts,value},...] } }
-  const [liveTelem,   setLiveTelem]   = useState({});
-  const [historyData, setHistoryData] = useState({});
+  // ── DashboardRuntime: single source of truth for all widget data ──────────
+  // Owns: preload, WS subscriptions, telemetry, history, alarms, intelligence
+  // Widgets receive slices — never fetch independently
+  const {
+    liveTelem,
+    historyData,
+    alarmsData,
+    intellData,
+    wsConnected: wsConnectedMap,
+    preloadDone,
+  } = useDashboardRuntime(activeDash, user);
 
-  // alarmsData is keyed by device_id — same pattern as liveTelem / historyData
-  //   alarmsData = { [deviceId]: [{id, alarm_type, severity, ...}] }
-  const [alarmsData, setAlarmsData] = useState({});
+  // Derive single wsConnected bool for header indicator
+  const wsConnected = Object.values(wsConnectedMap).some(Boolean);
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [loadingList,  setLoadingList]  = useState(true);
@@ -611,7 +616,6 @@ export default function UserDashboardPage({ onToast, user }) {
   const [editingWidget,setEditingWidget]= useState(null);
   const [saving,       setSaving]       = useState(false);
   const [layoutSaving, setLayoutSaving] = useState(false);
-  const [wsConnected,  setWsConnected]  = useState(false);
 
   // ── Fetch device list once on mount ───────────────────────────────────────
   useEffect(() => {
@@ -778,158 +782,9 @@ export default function UserDashboardPage({ onToast, user }) {
     }
   }, [activeDash?.id, onToast]);
 
-  // ── WebSocket subscriptions — one per unique device_id across all widgets ─
-  //
-  // OPT 3: WS callbacks write to refs only. A shared flush interval drains
-  // refs into React state every 250ms. This prevents a render storm when
-  // multiple devices fire simultaneously — all updates batch into one render.
-  //
-  // liveTelem  is keyed { [deviceId]: { key: value } }
-  // historyData is keyed { [deviceId]: { key: [{ts,value}] } }
-  const widgetDeviceIds = [...new Set(
-    (activeDash?.widgets || [])
-      .map(w => w.config?.device_id)
-      .filter(Boolean)
-  )];
-
-  // Pending buffers — written by WS callbacks, drained by flush interval
-  const pendingTelemRef   = useRef({});   // { [deviceId]: { key: value } }
-  const pendingHistoryRef = useRef({});   // { [deviceId]: { key: [{ts,value}] } }
-
-  useEffect(() => {
-    if (!widgetDeviceIds.length) return;
-
-    // ── Preload: one request seeds all device state at dashboard open ──────
-    // Replaces N×M individual widget fetches (telemetry + history + alarms per device)
-    // with a single GET /user-dashboards/{id}/preload call.
-    if (activeDash?.id) {
-      const token = localStorage.getItem("access_token") || "";
-      const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
-      fetch(`${apiBase}/api/v1/user-dashboards/${activeDash.id}/preload`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-        .then(data => {
-          const devicesPayload = data.devices || {};
-          // Hydrate telemetry, history, alarms and intelligence all at once
-          const newTelem   = {};
-          const newHistory = {};
-          const newAlarms  = {};
-          Object.entries(devicesPayload).forEach(([devId, devData]) => {
-            if (devData.telemetry)    newTelem[devId]   = devData.telemetry;
-            if (devData.history)      newHistory[devId] = devData.history;
-            if (devData.alarms)       newAlarms[devId]  = devData.alarms;
-          });
-          setLiveTelem(prev => ({ ...prev, ...newTelem }));
-          setHistoryData(prev => ({ ...prev, ...newHistory }));
-          setAlarmsData(prev => ({ ...prev, ...newAlarms }));
-        })
-        .catch(() => {
-          // Fallback: individual REST fetches per device if preload fails
-          widgetDeviceIds.forEach(deviceId => {
-            alarmApi.list({ device_id: deviceId, limit: 50 })
-              .then(rows => setAlarmsData(prev => ({ ...prev, [deviceId]: rows || [] })))
-              .catch(() => {});
-            telemetryApi.latest(deviceId)
-              .then(rows => {
-                if (!rows?.length) return;
-                const values = {};
-                rows.forEach(r => { values[r.key] = r.value; });
-                setLiveTelem(prev => ({ ...prev, [deviceId]: { ...(prev[deviceId] || {}), ...values } }));
-              })
-              .catch(() => {});
-          });
-        });
-    }
-
-    // Open one WS subscription per device — live updates maintain freshness
-    const unsubs = widgetDeviceIds.map(deviceId => {
-      // OPT 3: WS callback accumulates into refs only — zero setState here
-      return TelemetrySocket.subscribe(deviceId, null, (values, ts) => {
-        // Merge live values into pending telem buffer
-        if (!pendingTelemRef.current[deviceId]) {
-          pendingTelemRef.current[deviceId] = {};
-        }
-        Object.assign(pendingTelemRef.current[deviceId], values);
-
-        // Accumulate history points into pending history buffer
-        if (!pendingHistoryRef.current[deviceId]) {
-          pendingHistoryRef.current[deviceId] = {};
-        }
-        const pendingDevHist = pendingHistoryRef.current[deviceId];
-        Object.entries(values).forEach(([k, v]) => {
-          if (!pendingDevHist[k]) pendingDevHist[k] = [];
-          pendingDevHist[k].push({ ts: ts || new Date().toISOString(), value: v });
-        });
-      });
-    });
-
-    // Flush timer: drain pending refs into React state every 250ms
-    // All device updates that arrived since the last flush are applied in one
-    // setState call per state slice — one render covers all devices.
-    const flushTimer = setInterval(() => {
-      const pt = pendingTelemRef.current;
-      const ph = pendingHistoryRef.current;
-      const hasTelem   = Object.keys(pt).length > 0;
-      const hasHistory = Object.keys(ph).length > 0;
-      if (!hasTelem && !hasHistory) return;
-
-      // Atomically swap refs before state work
-      pendingTelemRef.current   = {};
-      pendingHistoryRef.current = {};
-
-      if (hasTelem) {
-        setLiveTelem(prev => {
-          const next = { ...prev };
-          Object.entries(pt).forEach(([devId, vals]) => {
-            next[devId] = { ...(prev[devId] || {}), ...vals };
-          });
-          return next;
-        });
-      }
-
-      if (hasHistory) {
-        setHistoryData(prev => {
-          const next = { ...prev };
-          Object.entries(ph).forEach(([devId, keyMap]) => {
-            const deviceHistory = { ...(prev[devId] || {}) };
-            Object.entries(keyMap).forEach(([k, newPoints]) => {
-              const arr = [...(deviceHistory[k] || [])];
-              for (const pt of newPoints) {
-                arr.push(pt);
-                if (arr.length > 50) arr.shift();
-              }
-              deviceHistory[k] = arr;
-            });
-            next[devId] = deviceHistory;
-          });
-          return next;
-        });
-      }
-
-      // Update WS indicator
-      const anyConnected = widgetDeviceIds.some(
-        id => TelemetrySocket.getStatus(id).connected
-      );
-      setWsConnected(anyConnected);
-    }, 250);
-
-    // Poll connection status for the indicator
-    const statusTimer = setInterval(() => {
-      const anyConnected = widgetDeviceIds.some(
-        id => TelemetrySocket.getStatus(id).connected
-      );
-      setWsConnected(anyConnected);
-    }, 2000);
-
-    return () => {
-      unsubs.forEach(u => u());
-      clearInterval(flushTimer);
-      clearInterval(statusTimer);
-      pendingTelemRef.current   = {};
-      pendingHistoryRef.current = {};
-    };
-  }, [widgetDeviceIds.join(",")]);
+  // ── WebSocket + telemetry state is now owned by useDashboardRuntime ────────
+  // liveTelem, historyData, alarmsData, intellData, wsConnected
+  // are all provided by the runtime above. No subscriptions here.
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1040,12 +895,12 @@ export default function UserDashboardPage({ onToast, user }) {
               renderWidget={widget => (
                 <WidgetRenderer
                   widget={widget}
-                  // Pass ONLY this widget's device telemetry, keyed by device_id
                   liveTelem={liveTelem[widget.config?.device_id] || {}}
                   historyData={historyData[widget.config?.device_id] || {}}
                   alarms={alarmsData[widget.config?.device_id] || []}
-                  // Flag for backward compat — no device_id = show warning
+                  intelligence={intellData[widget.config?.device_id] || null}
                   missingDevice={!widget.config?.device_id}
+                  deviceId={widget.config?.device_id || null}
                   userRole={user?.role}
                 />
               )}

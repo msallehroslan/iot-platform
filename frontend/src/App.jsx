@@ -2752,7 +2752,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
 }
 
 
-); // end AIChatbot memo
+}); // end AIChatbot memo
 
 export default function App() {
   const [user,       setUser]       = useState(() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } });

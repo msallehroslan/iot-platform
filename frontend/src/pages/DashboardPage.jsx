@@ -428,6 +428,7 @@ export default function DashboardPage({ device, onBack, user }) {
   const [activeDash,    setActiveDash]    = useState(null);
   const [liveTelem,     setLiveTelem]     = useState({});
   const [historyData,   setHistoryData]   = useState({});
+  const [intelligence,  setIntelligence]  = useState(null);
   const [availableKeys, setAvailableKeys] = useState([]);
   const [alarms,        setAlarms]        = useState([]);
 
@@ -500,15 +501,17 @@ export default function DashboardPage({ device, onBack, user }) {
 
     async function loadTelemetry() {
       try {
-        // Parallel: keys + latest + alarms
-        const [ks, latest, deviceAlarms] = await Promise.all([
+        // Parallel: keys + latest + alarms + intelligence
+        const [ks, latest, deviceAlarms, intel] = await Promise.all([
           getTelemetryKeys(device.id),
           getLatestTelemetry(device.id),
           getDeviceAlarms(device.id),
+          intelligenceApi.unified(device.id).catch(() => null),
         ]);
         setAvailableKeys(ks);
         setLiveTelem(latest);
         setAlarms(deviceAlarms);
+        if (intel) setIntelligence(intel);
 
         if (!ks.length) return;
 
@@ -523,6 +526,15 @@ export default function DashboardPage({ device, onBack, user }) {
     }
 
     loadTelemetry();
+
+    // Refresh intelligence every 60s — keeps anomaly/health widgets current
+    const intelTimer = setInterval(async () => {
+      try {
+        const intel = await intelligenceApi.unified(device.id);
+        if (intel) setIntelligence(intel);
+      } catch (_) {}
+    }, 60_000);
+    return () => clearInterval(intelTimer);
   }, [device?.id]);
 
   // ── 4. WebSocket ──────────────────────────────────────────────────────────
@@ -972,6 +984,7 @@ export default function DashboardPage({ device, onBack, user }) {
               liveTelem={liveTelem}
               historyData={historyData}
               alarms={alarms}
+              intelligence={intelligence}
               deviceLastSeen={device?.last_seen_at}
               userRole={user?.role}
               deviceId={device?.id}
