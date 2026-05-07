@@ -217,7 +217,7 @@ export const intelligenceApi = {
   unifiedKeys:     (deviceId, keys = [])          => apiFetch(`/intelligence/unified/${deviceId}?keys=${encodeURIComponent(keys.join(','))}`),
 
   widgetTelemetry: (deviceId, key, opts = {})     => {
-    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    const { hours = 24, limit = 50, resolution = "5min" } = opts;
     return apiFetch(`/intelligence/unified/${deviceId}/telemetry?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
   },
 };
@@ -236,15 +236,15 @@ export const widgetApi = {
   gauge:          (deviceId, key)                     => apiFetch(`/widgets/data/${deviceId}/gauge?key=${encodeURIComponent(key)}`),
   valueCard:      (deviceId, key)                     => apiFetch(`/widgets/data/${deviceId}/value_card?key=${encodeURIComponent(key)}`),
   lineChart:      (deviceId, key, opts = {})          => {
-    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    const { hours = 24, limit = 50, resolution = "5min" } = opts;
     return apiFetch(`/widgets/data/${deviceId}/line_chart?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
   },
   barChart:       (deviceId, key, opts = {})          => {
-    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    const { hours = 24, limit = 50, resolution = "5min" } = opts;
     return apiFetch(`/widgets/data/${deviceId}/bar_chart?key=${encodeURIComponent(key)}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
   },
   multiAxisChart: (deviceId, keys = [], opts = {})    => {
-    const { hours = 24, limit = 200, resolution = "raw" } = opts;
+    const { hours = 24, limit = 50, resolution = "5min" } = opts;
     return apiFetch(`/widgets/data/${deviceId}/multi_axis_chart?keys=${encodeURIComponent(keys.join(","))}&hours=${hours}&limit=${limit}&resolution=${resolution}`);
   },
   timeseriesTable:(deviceId, key, opts = {})          => {
