@@ -126,11 +126,10 @@ def _value_card_data(db, device_id, device, key: str = "", **_):
         "most_anomalous_key": anomaly.get("most_anomalous_key"),
     }
 
-
 def _line_chart_data(
     db, device_id, device,
-    key: str = "", hours: int = 24, limit: int = 200,
-    resolution: str = "raw", **_
+    key: str = "", hours: int = 24, limit: int = 50,
+    resolution: str = "5min", **_
 ):
     return {
         "widget_type": "line_chart",
@@ -143,8 +142,8 @@ def _line_chart_data(
 
 def _bar_chart_data(
     db, device_id, device,
-    key: str = "", hours: int = 24, limit: int = 200,
-    resolution: str = "raw", **_
+    key: str = "", hours: int = 24, limit: int = 50,
+    resolution: str = "5min", **_
 ):
     result = get_aggregated_telemetry(
         db, device_id, key,
@@ -265,8 +264,8 @@ def _baseline_data(db, device_id, device, key: str = "", **_):
 
 def _multi_axis_chart_data(
     db, device_id, device,
-    keys: str = "", hours: int = 24, limit: int = 200,
-    resolution: str = "raw", **_
+    keys: str = "", hours: int = 24, limit: int = 50,
+    resolution: str = "5min", **_
 ):
     """Multi-axis: fetch history for multiple comma-separated keys."""
     key_list = [k.strip() for k in keys.split(",") if k.strip()] if keys else []
@@ -303,7 +302,7 @@ def _timeseries_table_data(
 ):
     result = get_aggregated_telemetry(
         db, device_id, key,
-        hours=hours, limit=limit, resolution="raw",
+        hours=hours, limit=limit, resolution="5min",
     )
     # Return newest first for table display
     result["points"] = list(reversed(result.get("points", [])))
@@ -472,8 +471,8 @@ def widget_line_chart(
     device_id:  UUID,
     key:        str = Query(""),
     hours:      int = Query(24),
-    limit:      int = Query(200),
-    resolution: str = Query("raw"),
+    limit:      int = Query(50),
+    resolution: str = Query("5min"),
     db:         Session = Depends(get_db),
     current_user        = Depends(get_current_user),
 ):
@@ -486,8 +485,8 @@ def widget_bar_chart(
     device_id:  UUID,
     key:        str = Query(""),
     hours:      int = Query(24),
-    limit:      int = Query(200),
-    resolution: str = Query("raw"),
+    limit:      int = Query(50),
+    resolution: str = Query("5min"),
     db:         Session = Depends(get_db),
     current_user        = Depends(get_current_user),
 ):
@@ -500,8 +499,8 @@ def widget_multi_axis(
     device_id:  UUID,
     keys:       str = Query(""),
     hours:      int = Query(24),
-    limit:      int = Query(200),
-    resolution: str = Query("raw"),
+    limit:      int = Query(50),
+    resolution: str = Query("5min"),
     db:         Session = Depends(get_db),
     current_user        = Depends(get_current_user),
 ):
