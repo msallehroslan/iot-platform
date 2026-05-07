@@ -528,20 +528,90 @@ export default function DashboardPage({ device, onBack, user }) {
   // ── 4. WebSocket ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!device?.id) return;
-    const unsub = TelemetrySocket.subscribe(device.id, null, (values, ts) => {
-      setWsConnected(TelemetrySocket.getStatus(device.id).connected);
-      setLiveTelem(prev => ({ ...prev, ...values }));
-      setHistoryData(prev => {
-        const next = { ...prev };
+    let telemetryBuffer = {};
+    let historyBuffer = {};
+    let updateTimer = null;
+
+    const unsub = TelemetrySocket.subscribe(
+      device.id,
+      null,
+      (values, ts) => {
+
+        setWsConnected(
+          TelemetrySocket
+            .getStatus(device.id)
+            .connected
+        );
+
+        // ================= BUFFER TELEMETRY =================
+
+        Object.assign(
+          telemetryBuffer,
+          values
+        );
+
+        // ================= BUFFER HISTORY =================
+
         Object.entries(values).forEach(([k, v]) => {
-          const arr = [...(next[k] || [])];
-          arr.push({ ts: ts || new Date().toISOString(), value: v });
-          if (arr.length > 50) arr.shift();
-          next[k] = arr;
+
+          if (!historyBuffer[k]) {
+            historyBuffer[k] = [];
+          }
+
+          historyBuffer[k].push({
+            ts: ts || new Date().toISOString(),
+            value: v,
+          });
+
+          // Prevent oversized temporary buffers
+          if (historyBuffer[k].length > 10) {
+            historyBuffer[k].shift();
+          }
         });
-        return next;
-      });
-    });
+
+        // ================= BATCH UPDATE =================
+
+        if (!updateTimer) {
+  
+          updateTimer = setTimeout(() => {
+
+            // ---------- LIVE TELEMETRY ----------
+
+            setLiveTelem(prev => ({
+              ...prev,
+              ...telemetryBuffer,
+            }));
+
+            // ---------- HISTORY ----------
+
+            setHistoryData(prev => {
+
+              const next = { ...prev };
+
+              Object.entries(historyBuffer)
+                .forEach(([k, arr]) => {
+
+                  next[k] = [
+                    ...(next[k] || []),
+                    ...arr,
+                  ].slice(-50);
+
+                });
+
+              return next;
+            });
+
+            // ---------- RESET ----------
+
+            telemetryBuffer = {};
+            historyBuffer = {};
+            updateTimer = null;
+
+          }, 500); // batch every 500ms
+        }
+      }
+    );
+
     const statusTimer = setInterval(() => {
       setWsConnected(TelemetrySocket.getStatus(device.id).connected);
     }, 2000);
