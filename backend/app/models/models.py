@@ -115,6 +115,11 @@ class Device(Base):
     telemetry_keys = relationship("TelemetryKey", back_populates="device", cascade="all, delete-orphan")
     dashboards = relationship("Dashboard", back_populates="device", cascade="all, delete-orphan")
     threshold_rules = relationship("ThresholdRule", back_populates="device", cascade="all, delete-orphan")
+    # Phase 7 tables — must be in cascade list so db.delete(device) works cleanly
+    rpc_commands     = relationship("RpcCommand",       back_populates=None, cascade="all, delete-orphan", foreign_keys="RpcCommand.device_id")
+    anomaly_scores   = relationship("AnomalyScore",     back_populates=None, cascade="all, delete-orphan", foreign_keys="AnomalyScore.device_id")
+    baselines        = relationship("DeviceBaseline",   back_populates=None, cascade="all, delete-orphan", foreign_keys="DeviceBaseline.device_id")
+    health_scores    = relationship("DeviceHealthScore",back_populates=None, cascade="all, delete-orphan", foreign_keys="DeviceHealthScore.device_id")
 
 
 class TelemetryData(Base):

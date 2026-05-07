@@ -181,6 +181,22 @@ def delete_device(
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
           action="device.delete", resource="device", resource_id=str(device_id),
           detail={"name": device.name})
+
+    # Explicit pre-delete cleanup for tables that may not have SQLAlchemy
+    # relationships loaded (belt-and-suspenders alongside model cascade).
+    # Prevents FK constraint violations from RpcCommand, AnomalyScore,
+    # DeviceBaseline, DeviceHealthScore which were previously missing from
+    # the Device relationship cascade list.
+    from app.models.models import (
+        RpcCommand, AnomalyScore, DeviceBaseline, DeviceHealthScore,
+        TelemetryData, LatestTelemetry, Alarm, ThresholdRule, TelemetryKey,
+    )
+    did = device_id
+    db.query(RpcCommand).filter(RpcCommand.device_id == did).delete(synchronize_session=False)
+    db.query(AnomalyScore).filter(AnomalyScore.device_id == did).delete(synchronize_session=False)
+    db.query(DeviceBaseline).filter(DeviceBaseline.device_id == did).delete(synchronize_session=False)
+    db.query(DeviceHealthScore).filter(DeviceHealthScore.device_id == did).delete(synchronize_session=False)
+
     db.delete(device)
     db.commit()
 

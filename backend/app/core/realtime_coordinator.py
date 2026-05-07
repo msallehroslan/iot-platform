@@ -235,6 +235,17 @@ class RealtimeCoordinator:
                 device_id, key, z,
             )
 
+        # Notify IntelligenceCoordinator — marks device dirty for snapshot refresh
+        # Non-blocking: create_task() returns immediately, never delays ingest path
+        try:
+            from app.core.intelligence_coordinator import intelligence_coordinator as _intel
+            asyncio.create_task(
+                _intel.notify_telemetry(device_id, values, tenant_id or ""),
+                name=f"intel_notify_{device_id[:8]}",
+            )
+        except Exception:
+            pass  # IntelligenceCoordinator failure never blocks ingest
+
     # ── Flush loop ────────────────────────────────────────────────────────────
 
     async def _flush_loop(self) -> None:

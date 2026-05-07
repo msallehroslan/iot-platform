@@ -651,3 +651,113 @@ def get_widget_telemetry(
         db, str(device_id), key,
         hours=hours, limit=limit, resolution=resolution,
     )
+
+# ── Priority 5: Intelligence snapshot endpoint ────────────────────────────────
+
+@router_data.get("/snapshot/{device_id}")
+def get_intelligence_snapshot(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Priority 5 — Intelligence Snapshot.
+
+    Returns pre-computed snapshot from Redis (written by IntelligenceCoordinator).
+    Avoids re-running the full unified intelligence pipeline on every request.
+
+    Falls back to get_unified_intelligence() if snapshot not yet available.
+
+    Response includes causal degradation signals from the deterministic
+    causal reasoning engine (Priority 8).
+
+    Cache: served from Redis iot:snapshot:{device_id} — refreshed every 2s.
+    """
+    import asyncio
+    device = _assert_device(device_id, current_user, db)
+    device_id_str = str(device_id)
+
+    # Try snapshot from IntelligenceCoordinator first
+    snapshot = None
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            import concurrent.futures
+            from app.core.intelligence_coordinator import intelligence_coordinator as _ic
+            fut = asyncio.run_coroutine_threadsafe(_ic.get_snapshot(device_id_str), loop)
+            snapshot = fut.result(timeout=1)
+    except Exception:
+        pass
+
+    if snapshot:
+        snapshot["source"] = "snapshot"
+        return snapshot
+
+    # Fallback: compute fresh unified intelligence
+    result = get_unified_intelligence(db, device_id_str, device=device)
+    result["source"] = "computed"
+    return result
+
+
+# ── Priority 8: Causal RCA endpoint ──────────────────────────────────────────
+
+@router_data.get("/causal/{device_id}")
+def get_causal_analysis(
+    device_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """
+    Priority 8 — Causal Degradation Analysis.
+
+    Returns deterministic causal assessment from the IntelligenceCoordinator's
+    causal reasoning engine. No LLM involved — pure operational logic.
+
+    Correlates:
+        - velocity trends (DE/NDE asymmetry)
+        - thermal trends
+        - health decline trajectory
+        - anomaly persistence
+
+    Response:
+    {
+        "device_id": str,
+        "causal_signals": {
+            "pattern":    str,   # identified degradation pattern
+            "signals":    list,  # contributing observations
+            "severity":   str,   # LOW | MEDIUM | HIGH
+            "confidence": float
+        },
+        "degradation_rate": float,   # health pts/hr
+        "health_score":     float,
+        "status":           str,
+        "recommendation":   str,
+    }
+    """
+    from app.services.data_service import get_latest_telemetry, get_unified_intelligence
+    from app.services.trend_service import get_all_key_trends
+    from app.core.intelligence_coordinator import _assess_causal_degradation
+
+    device = _assert_device(device_id, current_user, db)
+    device_id_str = str(device_id)
+
+    telemetry = get_latest_telemetry(db, device_id_str)
+    values    = telemetry.get("values", {})
+    trends    = get_all_key_trends(db, device_id_str, minutes=30)
+    trend_map = {k: v.get("trend", "UNKNOWN") for k, v in trends.items()}
+
+    intel       = get_unified_intelligence(db, device_id_str, device=device)
+    health      = intel.get("health", {})
+    health_score = health.get("health_score") or 0.0
+
+    causal = _assess_causal_degradation(values, trend_map, health_score)
+
+    return {
+        "device_id":       device_id_str,
+        "causal_signals":  causal,
+        "health_score":    health_score,
+        "status":          intel.get("status", "UNKNOWN"),
+        "risk":            intel.get("risk", "LOW"),
+        "recommendation":  intel.get("recommendation", ""),
+        "degradation_rate": 0.0,   # populated by coordinator snapshot if available
+    }

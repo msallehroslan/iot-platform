@@ -61,6 +61,11 @@ async def lifespan(app: FastAPI):
     await _rt_coordinator.start()
     logger.info("RealtimeCoordinator started")
 
+    # IntelligenceCoordinator — async intelligence snapshot engine
+    from app.core.intelligence_coordinator import intelligence_coordinator as _intel_coord
+    await _intel_coord.start()
+    logger.info("IntelligenceCoordinator started")
+
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
 
@@ -181,6 +186,9 @@ async def lifespan(app: FastAPI):
     await _rt_coordinator.stop()
     logger.info("RealtimeCoordinator stopped")
 
+    await _intel_coord.stop()
+    logger.info("IntelligenceCoordinator stopped")
+
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):
         await _ws_manager.shutdown()
@@ -278,6 +286,7 @@ def status(user_id: str = Depends(get_current_user_id)):
             "active_devices": ws_manager.active_devices(),
         },
         "realtime_coordinator": rt_coordinator.stats(),
+        "intelligence_coordinator": __import__("app.core.intelligence_coordinator", fromlist=["intelligence_coordinator"]).intelligence_coordinator.stats(),
     }
 
 

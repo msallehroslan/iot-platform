@@ -245,3 +245,117 @@ export function useDeviceTelemetry(deviceId) {
 
   return { values, ts, connected };
 }
+
+
+// ── Priority 3: Per-widget telemetry slice hook ───────────────────────────────
+// Subscribes to ONLY the keys a widget needs.
+// Prevents global liveTelem reference changes from triggering unrelated renders.
+//
+// Usage in a widget:
+//   const { value, history } = useTelemSlice(deviceId, "temperature");
+//
+// The widget receives a stable primitive (value) not a whole object slice.
+// React.memo comparators can then do simple === checks.
+
+export function useTelemSlice(deviceId, key) {
+  const [value,   setValue]   = useState(null);
+  const [history, setHistory] = useState([]);
+  const [ts,      setTs]      = useState(null);
+
+  const pendingRef    = useRef(null);
+  const historyRef    = useRef([]);
+
+  useEffect(() => {
+    if (!deviceId || !key) return;
+
+    // Seed from REST
+    import("../services/api.js").then(({ telemetryApi }) => {
+      telemetryApi.latest(deviceId).then(rows => {
+        const row = rows?.find(r => r.key === key);
+        if (row) { setValue(row.value); setTs(row.ts); }
+      }).catch(() => {});
+
+      telemetryApi.bulkHistory(deviceId, [key], MAX_HISTORY).then(res => {
+        const pts = res?.data?.[key] || [];
+        historyRef.current = pts;
+        setHistory(pts);
+      }).catch(() => {});
+    });
+
+    const unsub = TelemetrySocket.subscribe(deviceId, [key], (values, newTs) => {
+      if (key in values) {
+        pendingRef.current = { value: values[key], ts: newTs };
+      }
+    });
+
+    const flushTimer = setInterval(() => {
+      const p = pendingRef.current;
+      if (!p) return;
+      pendingRef.current = null;
+      setValue(p.value);
+      setTs(p.ts);
+      const arr = [...historyRef.current, { ts: p.ts, value: p.value }];
+      if (arr.length > MAX_HISTORY) arr.shift();
+      historyRef.current = arr;
+      setHistory(arr);
+    }, FLUSH_INTERVAL_MS);
+
+    return () => {
+      unsub();
+      clearInterval(flushTimer);
+      pendingRef.current = null;
+    };
+  }, [deviceId, key]);
+
+  return { value, history, ts };
+}
+
+
+// ── Priority 4: Dashboard preload hook ───────────────────────────────────────
+// Fetches all dashboard data in a single preload request.
+// Returns preloaded slices that widgets can consume without individual fetches.
+//
+// Usage in UserDashboardPage:
+//   const { preload, loading } = useDashboardPreload(dashboardId);
+//   // preload.devices[deviceId].telemetry
+//   // preload.devices[deviceId].intelligence
+//   // preload.devices[deviceId].alarms
+//   // preload.devices[deviceId].history[key]
+
+export function useDashboardPreload(dashboardId) {
+  const [preload, setPreload] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState(null);
+
+  useEffect(() => {
+    if (!dashboardId) return;
+    let cancelled = false;
+
+    setLoading(true);
+    setError(null);
+
+    import("../services/api.js").then(({ API_BASE }) => {
+      const token = localStorage.getItem("access_token") || "";
+      fetch(`${API_BASE}/user-dashboards/${dashboardId}/preload`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => {
+          if (!cancelled) {
+            setPreload(data);
+            setLoading(false);
+          }
+        })
+        .catch(err => {
+          if (!cancelled) {
+            setError(err);
+            setLoading(false);
+          }
+        });
+    });
+
+    return () => { cancelled = true; };
+  }, [dashboardId]);
+
+  return { preload, loading, error };
+}

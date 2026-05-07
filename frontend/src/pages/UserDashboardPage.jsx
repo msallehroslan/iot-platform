@@ -30,6 +30,7 @@ import {
   persistLayout, applyLayoutToWidgets, getDefaultPositionForType,
 } from "../services/widgetService.js";
 import { TelemetrySocket } from "../services/websocket.js";
+import { useDashboardPreload } from "../hooks/useTelemetry.js";
 // Pull in existing API helpers — no new endpoints needed
 import { deviceApi, telemetryApi, alarmApi } from "../services/api.js";
 
@@ -798,38 +799,51 @@ export default function UserDashboardPage({ onToast, user }) {
   useEffect(() => {
     if (!widgetDeviceIds.length) return;
 
-    // Open one subscription per device and collect unsubscribe functions
-    const unsubs = widgetDeviceIds.map(deviceId => {
-      // Seed telemetry + alarms from REST on first subscription for this device
-      alarmApi.list({ device_id: deviceId, limit: 50 })
-        .then(rows => {
-          setAlarmsData(prev => ({ ...prev, [deviceId]: rows || [] }));
+    // ── Preload: one request seeds all device state at dashboard open ──────
+    // Replaces N×M individual widget fetches (telemetry + history + alarms per device)
+    // with a single GET /user-dashboards/{id}/preload call.
+    if (activeDash?.id) {
+      const token = localStorage.getItem("access_token") || "";
+      const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+      fetch(`${apiBase}/api/v1/user-dashboards/${activeDash.id}/preload`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => {
+          const devicesPayload = data.devices || {};
+          // Hydrate telemetry, history, alarms and intelligence all at once
+          const newTelem   = {};
+          const newHistory = {};
+          const newAlarms  = {};
+          Object.entries(devicesPayload).forEach(([devId, devData]) => {
+            if (devData.telemetry)    newTelem[devId]   = devData.telemetry;
+            if (devData.history)      newHistory[devId] = devData.history;
+            if (devData.alarms)       newAlarms[devId]  = devData.alarms;
+          });
+          setLiveTelem(prev => ({ ...prev, ...newTelem }));
+          setHistoryData(prev => ({ ...prev, ...newHistory }));
+          setAlarmsData(prev => ({ ...prev, ...newAlarms }));
         })
-        .catch(() => {});
-
-      telemetryApi.latest(deviceId)
-        .then(rows => {
-          if (!rows?.length) return;
-          const values = {};
-          rows.forEach(r => { values[r.key] = r.value; });
-          setLiveTelem(prev => ({ ...prev, [deviceId]: { ...(prev[deviceId] || {}), ...values } }));
-
-          // Seed history for each key so line charts show data immediately on load
-          rows.forEach(r => {
-            telemetryApi.history(deviceId, r.key, 50)
-              .then(pts => {
-                if (!pts?.length) return;
-                setHistoryData(prev => {
-                  const deviceHistory = { ...(prev[deviceId] || {}) };
-                  deviceHistory[r.key] = pts;
-                  return { ...prev, [deviceId]: deviceHistory };
-                });
+        .catch(() => {
+          // Fallback: individual REST fetches per device if preload fails
+          widgetDeviceIds.forEach(deviceId => {
+            alarmApi.list({ device_id: deviceId, limit: 50 })
+              .then(rows => setAlarmsData(prev => ({ ...prev, [deviceId]: rows || [] })))
+              .catch(() => {});
+            telemetryApi.latest(deviceId)
+              .then(rows => {
+                if (!rows?.length) return;
+                const values = {};
+                rows.forEach(r => { values[r.key] = r.value; });
+                setLiveTelem(prev => ({ ...prev, [deviceId]: { ...(prev[deviceId] || {}), ...values } }));
               })
               .catch(() => {});
           });
-        })
-        .catch(() => {});
+        });
+    }
 
+    // Open one WS subscription per device — live updates maintain freshness
+    const unsubs = widgetDeviceIds.map(deviceId => {
       // OPT 3: WS callback accumulates into refs only — zero setState here
       return TelemetrySocket.subscribe(deviceId, null, (values, ts) => {
         // Merge live values into pending telem buffer

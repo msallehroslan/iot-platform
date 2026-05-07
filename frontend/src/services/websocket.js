@@ -44,6 +44,10 @@ function _getState(deviceId) {
     _connections.set(deviceId, {
       ws:             null,
       subscribers:    [],
+      // Priority 2: key-indexed subscriber map for O(1) dispatch per key
+      // keyIndex: Map<key_string, Set<subscriber_id>>
+      // "null" key means "subscribe to all keys"
+      keyIndex:       new Map(),
       pingTimer:      0,
       reconnectTimer: 0,
       reconnectDelay: RECONNECT_BASE_MS,
@@ -60,18 +64,64 @@ function _getState(deviceId) {
 }
 
 function _dispatchToSubscribers(state, values, ts) {
-  for (const sub of state.subscribers) {
-    if (sub.keys && sub.keys.length > 0) {
-      const filtered = {};
-      let hasMatch = false;
-      for (const k of sub.keys) {
-        if (k in values) { filtered[k] = values[k]; hasMatch = true; }
+  // Priority 2: key-indexed dispatch — only notify subscribers whose keys changed.
+  // Build a per-subscriber filtered payload in one pass over changed keys.
+  // Cost: O(changed_keys × avg_subscribers_per_key) instead of O(all_subscribers × all_keys).
+  const changedKeys = Object.keys(values);
+  if (changedKeys.length === 0) return;
+
+  // Accumulate per-subscriber filtered values
+  const subPayloads = new Map(); // sub_id → {values: {}, sub}
+
+  for (const k of changedKeys) {
+    // Notify key-specific subscribers
+    const keySubs = state.keyIndex.get(k);
+    if (keySubs) {
+      for (const subId of keySubs) {
+        const sub = state._subById?.get(subId);
+        if (!sub) continue;
+        let payload = subPayloads.get(subId);
+        if (!payload) { payload = { values: {}, sub }; subPayloads.set(subId, payload); }
+        payload.values[k] = values[k];
       }
-      if (hasMatch) sub.callback(filtered, ts);
-    } else {
-      sub.callback(values, ts);
+    }
+    // Notify wildcard subscribers (keys=null — subscribe to everything)
+    const wildcardSubs = state.keyIndex.get(null);
+    if (wildcardSubs) {
+      for (const subId of wildcardSubs) {
+        const sub = state._subById?.get(subId);
+        if (!sub) continue;
+        let payload = subPayloads.get(subId);
+        if (!payload) { payload = { values: {}, sub }; subPayloads.set(subId, payload); }
+        payload.values[k] = values[k];
+      }
     }
   }
+
+  for (const { values: filtered, sub } of subPayloads.values()) {
+    sub.callback(filtered, ts);
+  }
+}
+
+// Build or rebuild keyIndex from current subscribers array
+function _rebuildKeyIndex(state) {
+  const index = new Map();
+  const byId  = new Map();
+  for (const sub of state.subscribers) {
+    byId.set(sub.id, sub);
+    if (!sub.keys || sub.keys.length === 0) {
+      // Wildcard — interested in all keys
+      if (!index.has(null)) index.set(null, new Set());
+      index.get(null).add(sub.id);
+    } else {
+      for (const k of sub.keys) {
+        if (!index.has(k)) index.set(k, new Set());
+        index.get(k).add(sub.id);
+      }
+    }
+  }
+  state.keyIndex  = index;
+  state._subById  = byId;
 }
 
 function _clearTimers(state) {
@@ -249,10 +299,12 @@ function subscribe(deviceId, keys, callback) {
   const sub   = { id: _nextSubId(), keys: keys || null, callback };
 
   state.subscribers.push(sub);
+  _rebuildKeyIndex(state);  // Priority 2: update key index
   _connect(deviceId);
 
   return () => {
     state.subscribers = state.subscribers.filter(s => s.id !== sub.id);
+    _rebuildKeyIndex(state);  // rebuild after removal
     if (!state.subscribers.length) _disconnect(deviceId);
   };
 }

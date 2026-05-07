@@ -5,6 +5,8 @@
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../services/api.js";
+// useTelemSlice: subscribes to exactly ONE key — prevents unrelated renders
+import { useTelemSlice } from "../../hooks/useTelemetry.js";
 
 // ── Intent context hook (Phase 10) ────────────────────────────────────────────
 // Fetches unified intelligence for a device once on mount.
@@ -343,12 +345,19 @@ export function PieChartSVG({ data = [] }) {
 // ── Widget type components ────────────────────────────────────────────────────
 
 function ValueCard({ config, liveTelem, historyData, deviceId }) {
-  const raw   = liveTelem?.[config.key];
+  const devId = deviceId || config.device_id;
+  // useTelemSlice: subscribes only to config.key — this widget never re-renders
+  // when other keys change. Falls back to liveTelem prop if devId unavailable.
+  const { value: sliceVal, history: sliceHistory } = useTelemSlice(devId, config.key);
+  const raw   = sliceVal !== null ? sliceVal : liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const isN   = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
-  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
-  const devId = deviceId || config.device_id;
+  // Use slice history if available (key-isolated), fall back to historyData prop
+  const histArr = sliceHistory?.length > 0
+    ? sliceHistory
+    : (historyData?.[config.key] || []);
+  const history = histArr.slice(-20).map(p => p.value);
   const [agg, setAgg]       = useState({ avg: null, min: null, max: null });
   const [window, setWindow] = useState("1h");
 
@@ -1467,15 +1476,155 @@ export const WIDGET_REGISTRY = [
 //
 // Nothing else changes. No switch-case to update.
 //
-export const MemoValueCard          = React.memo(ValueCard);
-export const MemoLineChartWidget    = React.memo(LineChartWidget);
-export const MemoGaugeWidget        = React.memo(GaugeWidget);
-export const MemoTimeseriesTable    = React.memo(TimeseriesTable);
-export const MemoBarChartWidget     = React.memo(BarChartWidget);
-export const MemoMultiAxisChart     = React.memo(MultiAxisChartWidget);
-export const MemoTrendIndicator     = React.memo(TrendIndicatorWidget);
-export const MemoTaatInsightWidget  = React.memo(TaatInsightWidget);
-export const MemoDeviceSummary      = React.memo(DeviceSummaryWidget);
+// ── Priority 1: Custom equality comparators ──────────────────────────────────
+// Each widget only re-renders when its OWN data changes.
+// liveTelem: compare only the key this widget cares about (config.key)
+// historyData: compare only the key's array length + last point ts
+// config: shallow compare (configs are stable objects from dashboard state)
+// alarms: compare count + first alarm id
+
+function _configEq(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.key === b.key &&
+    a.keys === b.keys &&
+    a.device_id === b.device_id &&
+    a.color === b.color &&
+    a.min === b.min &&
+    a.max === b.max &&
+    a.label === b.label &&
+    a.unit === b.unit &&
+    a.decimals === b.decimals &&
+    a.threshold_high === b.threshold_high
+  );
+}
+
+function _telemKeyEq(key) {
+  // Returns comparator that only checks prevTelem[key] vs nextTelem[key]
+  return (prev, next) => prev?.[key] === next?.[key];
+}
+
+function _histKeyEq(key) {
+  // Returns comparator: history changed only if array length or last ts changed
+  return (prev, next) => {
+    const pa = prev?.[key]; const na = next?.[key];
+    if (pa === na) return true;
+    if (!pa || !na) return pa === na;
+    if (pa.length !== na.length) return false;
+    if (pa.length === 0) return true;
+    return pa[pa.length - 1]?.ts === na[na.length - 1]?.ts;
+  };
+}
+
+function _alarmsEq(prev, next) {
+  if (prev === next) return true;
+  if (!prev || !next) return prev === next;
+  if (prev.length !== next.length) return false;
+  if (prev.length === 0) return true;
+  return prev[0]?.id === next[0]?.id && prev[0]?.status === next[0]?.status;
+}
+
+// ValueCard: rerenders when its specific key value changes
+export const MemoValueCard = React.memo(ValueCard, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  prev.liveTelem?.[prev.config?.key] === next.liveTelem?.[next.config?.key] &&
+  _histKeyEq(prev.config?.key)(prev.historyData, next.historyData) &&
+  prev.deviceId === next.deviceId
+);
+
+// LineChartWidget: rerenders when its key's history changes
+export const MemoLineChartWidget = React.memo(LineChartWidget, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  _histKeyEq(prev.config?.key)(prev.historyData, next.historyData) &&
+  prev.deviceId === next.deviceId
+);
+
+// GaugeWidget: rerenders when its key's live value or history changes
+export const MemoGaugeWidget = React.memo(GaugeWidget, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  prev.liveTelem?.[prev.config?.key] === next.liveTelem?.[next.config?.key] &&
+  _histKeyEq(prev.config?.key)(prev.historyData, next.historyData) &&
+  prev.deviceId === next.deviceId
+);
+
+// TimeseriesTable: rerenders when history length changes for its key
+export const MemoTimeseriesTable = React.memo(TimeseriesTable, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  _histKeyEq(prev.config?.key)(prev.historyData, next.historyData) &&
+  prev.deviceId === next.deviceId
+);
+
+// BarChartWidget: rerenders when its key's history changes
+export const MemoBarChartWidget = React.memo(BarChartWidget, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  _histKeyEq(prev.config?.key)(prev.historyData, next.historyData) &&
+  prev.deviceId === next.deviceId
+);
+
+// MultiAxisChart: rerenders when ANY of its keys' history changes
+export const MemoMultiAxisChart = React.memo(MultiAxisChartWidget, (prev, next) => {
+  if (!_configEq(prev.config, next.config)) return false;
+  if (prev.deviceId !== next.deviceId) return false;
+  const keys = prev.config?.keys || [];
+  return keys.every(k => _histKeyEq(k)(prev.historyData, next.historyData));
+});
+
+// TrendIndicator: rerenders when its key's live value changes
+export const MemoTrendIndicator = React.memo(TrendIndicatorWidget, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  prev.liveTelem?.[prev.config?.key] === next.liveTelem?.[next.config?.key] &&
+  prev.deviceId === next.deviceId
+);
+
+// TaatInsightWidget: rerenders only when deviceId or key changes (fetches own data)
+export const MemoTaatInsightWidget = React.memo(TaatInsightWidget, (prev, next) =>
+  prev.deviceId === next.deviceId &&
+  prev.config?.key === next.config?.key &&
+  _configEq(prev.config, next.config)
+);
+
+// DeviceSummary: rerenders when any live value changes (shows multiple keys)
+export const MemoDeviceSummary = React.memo(DeviceSummaryWidget, (prev, next) => {
+  if (!_configEq(prev.config, next.config)) return false;
+  if (prev.deviceId !== next.deviceId) return false;
+  if (prev.deviceLastSeen !== next.deviceLastSeen) return false;
+  // Compare all values in the liveTelem object shallowly
+  const pk = Object.keys(prev.liveTelem || {});
+  const nk = Object.keys(next.liveTelem || {});
+  if (pk.length !== nk.length) return false;
+  return pk.every(k => prev.liveTelem[k] === next.liveTelem[k]);
+});
+
+// StatusLight, AlarmList, RpcToggle — also memo with appropriate comparators
+export const MemoStatusLight = React.memo(StatusLight, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  prev.liveTelem?.[prev.config?.key] === next.liveTelem?.[next.config?.key] &&
+  prev.deviceLastSeen === next.deviceLastSeen
+);
+
+export const MemoAlarmList = React.memo(AlarmListWidget, (prev, next) =>
+  _alarmsEq(prev.alarms, next.alarms)
+);
+
+export const MemoRpcToggle = React.memo(RpcToggleWidget, (prev, next) =>
+  _configEq(prev.config, next.config) &&
+  prev.liveTelem?.[prev.config?.key] === next.liveTelem?.[next.config?.key] &&
+  prev.deviceId === next.deviceId
+);
+
+export const MemoPieChart = React.memo(PieChartWidget, (prev, next) => {
+  if (!_configEq(prev.config, next.config)) return false;
+  const keys = prev.config?.keys || [];
+  return keys.every(k => prev.liveTelem?.[k] === next.liveTelem?.[k]);
+});
+
+export const MemoEntityTable = React.memo(EntityTable, (prev, next) => {
+  const pk = Object.keys(prev.liveTelem || {});
+  const nk = Object.keys(next.liveTelem || {});
+  if (pk.length !== nk.length) return false;
+  return pk.every(k => prev.liveTelem[k] === next.liveTelem[k]);
+});
 
 export const WIDGET_COMPONENT_MAP = {
   // ── Data ──────────────────────────────────────────────────────────────────
@@ -1485,19 +1634,19 @@ export const WIDGET_COMPONENT_MAP = {
   gauge:             MemoGaugeWidget,
   bar_chart:         MemoBarChartWidget,
   timeseries_table:  MemoTimeseriesTable,
-  pie_chart:         PieChartWidget,
-  entity_table:      EntityTable,
+  pie_chart:         MemoPieChart,
+  entity_table:      MemoEntityTable,
   // ── Status ─────────────────────────────────────────────────────────────────
-  status_light:      StatusLight,
+  status_light:      MemoStatusLight,
   device_summary:    MemoDeviceSummary,
   taat_insight:      MemoTaatInsightWidget,
-  alarm_list:        AlarmListWidget,
+  alarm_list:        MemoAlarmList,
   map:               MapWidget,
   fleet_map:         FleetMapWidget,
   trend_indicator:   MemoTrendIndicator,
   // ── Control ────────────────────────────────────────────────────────────────
   rpc_button:        RpcButtonWidget,
-  rpc_toggle:        RpcToggleWidget,
+  rpc_toggle:        MemoRpcToggle,
   rpc_input:         RpcInputWidget,
   // ── Intelligence ───────────────────────────────────────────────────────────
   anomaly_score:     AnomalyWidget,
@@ -2242,8 +2391,18 @@ export function DeviceSummaryWidget({ config, liveTelem, deviceLastSeen, deviceI
   const CONN_COLOR = { ONLINE: "#10b981", OFFLINE: "#94a3b8", UNKNOWN: "#f59e0b" };
   const keys = config.keys || Object.keys(liveTelem || {}).slice(0, 4);
 
-  // Fetch unified intelligence for status/reason/risk
-  const { intel } = useIntelContext(devId, "");
+  // Try snapshot first (~2ms) then fall through to useIntelContext if needed
+  const [snapIntel, setSnapIntel] = React.useState(null);
+  useEffect(() => {
+    if (!devId) return;
+    const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+    const token = typeof localStorage !== "undefined" ? localStorage.getItem("access_token") || "" : "";
+    fetch(`${apiBase}/api/v1/intelligence/snapshot/${devId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(r => r.ok ? r.json() : null).then(d => { if (d) setSnapIntel(d); }).catch(() => {});
+  }, [devId]);
+  const { intel: intelFull } = useIntelContext(devId, "");
+  const intel = snapIntel || intelFull;
   const intelStatus = intel?.status;
   const intelRisk   = intel?.risk;
   const intelReason = intel?.reason;
@@ -2331,13 +2490,28 @@ export function TaatInsightWidget({ config, deviceId }) {
   useEffect(() => {
     if (!devId) return;
     setLoading(true);
-    const fetch = key
-      ? import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unifiedKey(devId, key))
-      : import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unified(devId));
-    fetch
-      .then(res => setData(res))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    // Try intelligence snapshot first (~2ms Redis) — fall back to unified (~50ms)
+    const apiBase = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+    const token   = typeof localStorage !== "undefined" ? localStorage.getItem("access_token") || "" : "";
+    const snapshotUrl = `${apiBase}/api/v1/intelligence/snapshot/${devId}`;
+    fetch(snapshotUrl, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(snap => {
+        // If key is requested, fall through to unified key endpoint
+        if (key) throw new Error("key mode");
+        setData(snap);
+        setLoading(false);
+      })
+      .catch(() => {
+        // Fall back to full unified or key intelligence
+        const fallback = key
+          ? import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unifiedKey(devId, key))
+          : import("../../services/api.js").then(({ intelligenceApi }) => intelligenceApi.unified(devId));
+        fallback
+          .then(res => setData(res))
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      });
   }, [devId, key]);
 
   const RISK_COLOR  = { LOW: "#10b981", MEDIUM: "#f59e0b", HIGH: "#ef4444", CRITICAL: "#dc2626" };
