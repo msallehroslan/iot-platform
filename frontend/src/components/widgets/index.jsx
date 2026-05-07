@@ -1467,17 +1467,21 @@ export const WIDGET_REGISTRY = [
 //
 // Nothing else changes. No switch-case to update.
 //
-export const MemoValueCard = React.memo(ValueCard);
-export const MemoLineChartWidget = React.memo(LineChartWidget);
-export const MemoGaugeWidget = React.memo(GaugeWidget);
-export const MemoTimeseriesTable = React.memo(TimeseriesTable);
-export const MemoBarChartWidget = React.memo(BarChartWidget);
+export const MemoValueCard          = React.memo(ValueCard);
+export const MemoLineChartWidget    = React.memo(LineChartWidget);
+export const MemoGaugeWidget        = React.memo(GaugeWidget);
+export const MemoTimeseriesTable    = React.memo(TimeseriesTable);
+export const MemoBarChartWidget     = React.memo(BarChartWidget);
+export const MemoMultiAxisChart     = React.memo(MultiAxisChartWidget);
+export const MemoTrendIndicator     = React.memo(TrendIndicatorWidget);
+export const MemoTaatInsightWidget  = React.memo(TaatInsightWidget);
+export const MemoDeviceSummary      = React.memo(DeviceSummaryWidget);
 
 export const WIDGET_COMPONENT_MAP = {
   // ── Data ──────────────────────────────────────────────────────────────────
   value_card:        MemoValueCard,
   line_chart:        MemoLineChartWidget,
-  multi_axis_chart:  MultiAxisChartWidget,
+  multi_axis_chart:  MemoMultiAxisChart,
   gauge:             MemoGaugeWidget,
   bar_chart:         MemoBarChartWidget,
   timeseries_table:  MemoTimeseriesTable,
@@ -1485,12 +1489,12 @@ export const WIDGET_COMPONENT_MAP = {
   entity_table:      EntityTable,
   // ── Status ─────────────────────────────────────────────────────────────────
   status_light:      StatusLight,
-  device_summary:    DeviceSummaryWidget,
-  taat_insight:      TaatInsightWidget,
+  device_summary:    MemoDeviceSummary,
+  taat_insight:      MemoTaatInsightWidget,
   alarm_list:        AlarmListWidget,
   map:               MapWidget,
   fleet_map:         FleetMapWidget,
-  trend_indicator:   TrendIndicatorWidget,
+  trend_indicator:   MemoTrendIndicator,
   // ── Control ────────────────────────────────────────────────────────────────
   rpc_button:        RpcButtonWidget,
   rpc_toggle:        RpcToggleWidget,

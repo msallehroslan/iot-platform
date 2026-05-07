@@ -16,7 +16,7 @@
  * Backward compat: widgets with no config.device_id show a warning prompt
  * inside the widget body instead of crashing.
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import DashboardSidebar from "../components/sidebar/DashboardSidebar.jsx";
 import GridLayout from "../components/dashboard/GridLayout.jsx";
 import { WidgetRenderer, WIDGET_REGISTRY } from "../components/widgets/index.jsx";
@@ -779,17 +779,21 @@ export default function UserDashboardPage({ onToast, user }) {
 
   // ── WebSocket subscriptions — one per unique device_id across all widgets ─
   //
-  // Key change: subscribe to ALL device IDs on the dashboard (not just [0]).
+  // OPT 3: WS callbacks write to refs only. A shared flush interval drains
+  // refs into React state every 250ms. This prevents a render storm when
+  // multiple devices fire simultaneously — all updates batch into one render.
+  //
   // liveTelem  is keyed { [deviceId]: { key: value } }
   // historyData is keyed { [deviceId]: { key: [{ts,value}] } }
-  //
-  // This means adding a widget for a different device automatically opens a
-  // new WS connection without touching the existing ones.
   const widgetDeviceIds = [...new Set(
     (activeDash?.widgets || [])
       .map(w => w.config?.device_id)
       .filter(Boolean)
   )];
+
+  // Pending buffers — written by WS callbacks, drained by flush interval
+  const pendingTelemRef   = useRef({});   // { [deviceId]: { key: value } }
+  const pendingHistoryRef = useRef({});   // { [deviceId]: { key: [{ts,value}] } }
 
   useEffect(() => {
     if (!widgetDeviceIds.length) return;
@@ -826,32 +830,75 @@ export default function UserDashboardPage({ onToast, user }) {
         })
         .catch(() => {});
 
+      // OPT 3: WS callback accumulates into refs only — zero setState here
       return TelemetrySocket.subscribe(deviceId, null, (values, ts) => {
-        // Update live values for this specific device
-        setLiveTelem(prev => ({
-          ...prev,
-          [deviceId]: { ...(prev[deviceId] || {}), ...values },
-        }));
+        // Merge live values into pending telem buffer
+        if (!pendingTelemRef.current[deviceId]) {
+          pendingTelemRef.current[deviceId] = {};
+        }
+        Object.assign(pendingTelemRef.current[deviceId], values);
 
-        // Append to per-device history
-        setHistoryData(prev => {
-          const deviceHistory = { ...(prev[deviceId] || {}) };
-          Object.entries(values).forEach(([k, v]) => {
-            const arr = [...(deviceHistory[k] || [])];
-            arr.push({ ts: ts || new Date().toISOString(), value: v });
-            if (arr.length > 50) arr.shift();
-            deviceHistory[k] = arr;
-          });
-          return { ...prev, [deviceId]: deviceHistory };
+        // Accumulate history points into pending history buffer
+        if (!pendingHistoryRef.current[deviceId]) {
+          pendingHistoryRef.current[deviceId] = {};
+        }
+        const pendingDevHist = pendingHistoryRef.current[deviceId];
+        Object.entries(values).forEach(([k, v]) => {
+          if (!pendingDevHist[k]) pendingDevHist[k] = [];
+          pendingDevHist[k].push({ ts: ts || new Date().toISOString(), value: v });
         });
-
-        // Update global WS indicator — connected if any device is live
-        const anyConnected = widgetDeviceIds.some(
-          id => TelemetrySocket.getStatus(id).connected
-        );
-        setWsConnected(anyConnected);
       });
     });
+
+    // Flush timer: drain pending refs into React state every 250ms
+    // All device updates that arrived since the last flush are applied in one
+    // setState call per state slice — one render covers all devices.
+    const flushTimer = setInterval(() => {
+      const pt = pendingTelemRef.current;
+      const ph = pendingHistoryRef.current;
+      const hasTelem   = Object.keys(pt).length > 0;
+      const hasHistory = Object.keys(ph).length > 0;
+      if (!hasTelem && !hasHistory) return;
+
+      // Atomically swap refs before state work
+      pendingTelemRef.current   = {};
+      pendingHistoryRef.current = {};
+
+      if (hasTelem) {
+        setLiveTelem(prev => {
+          const next = { ...prev };
+          Object.entries(pt).forEach(([devId, vals]) => {
+            next[devId] = { ...(prev[devId] || {}), ...vals };
+          });
+          return next;
+        });
+      }
+
+      if (hasHistory) {
+        setHistoryData(prev => {
+          const next = { ...prev };
+          Object.entries(ph).forEach(([devId, keyMap]) => {
+            const deviceHistory = { ...(prev[devId] || {}) };
+            Object.entries(keyMap).forEach(([k, newPoints]) => {
+              const arr = [...(deviceHistory[k] || [])];
+              for (const pt of newPoints) {
+                arr.push(pt);
+                if (arr.length > 50) arr.shift();
+              }
+              deviceHistory[k] = arr;
+            });
+            next[devId] = deviceHistory;
+          });
+          return next;
+        });
+      }
+
+      // Update WS indicator
+      const anyConnected = widgetDeviceIds.some(
+        id => TelemetrySocket.getStatus(id).connected
+      );
+      setWsConnected(anyConnected);
+    }, 250);
 
     // Poll connection status for the indicator
     const statusTimer = setInterval(() => {
@@ -863,7 +910,10 @@ export default function UserDashboardPage({ onToast, user }) {
 
     return () => {
       unsubs.forEach(u => u());
+      clearInterval(flushTimer);
       clearInterval(statusTimer);
+      pendingTelemRef.current   = {};
+      pendingHistoryRef.current = {};
     };
   }, [widgetDeviceIds.join(",")]);
 

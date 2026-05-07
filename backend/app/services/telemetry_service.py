@@ -439,22 +439,29 @@ async def ingest_telemetry(
             try: db.rollback()
             except: pass
 
-    # Phase 11: Invalidate Redis cache for this device (non-fatal)
+    # OPT 1: Hand off to RealtimeCoordinator for batched WS broadcast +
+    # deferred cache invalidation. This replaces the direct ws_manager.broadcast()
+    # and immediate cache.invalidate_device() calls that ran on every ingest.
+    # The coordinator flushes every 250ms, coalescing multiple readings per device.
     try:
-        from app.services.cache_service import cache as _cache
-        await _cache.invalidate_device(str(device.id))
-    except Exception as exc:
-        logger.debug("cache invalidation skipped: %s", exc)
-
-    # WebSocket broadcast (non-fatal)
-    try:
-        from app.core.websocket_manager import manager as ws_manager
-        await ws_manager.broadcast(
-            device_id=str(device.id),
-            values=coerced_values,
-            ts=ts.isoformat(),
+        from app.core.realtime_coordinator import coordinator as _rt_coordinator
+        await _rt_coordinator.add_telemetry(
+            device_id = str(device.id),
+            values    = coerced_values,
+            ts        = ts,
+            tenant_id = str(device.tenant_id),
         )
     except Exception as exc:
-        logger.warning("WS broadcast failed device=%s: %s", device.id, exc)
+        # Non-fatal: fall back to direct broadcast so telemetry is never lost
+        logger.warning("coordinator.add_telemetry failed — falling back to direct broadcast: %s", exc)
+        try:
+            from app.core.websocket_manager import manager as ws_manager
+            await ws_manager.broadcast(
+                device_id=str(device.id),
+                values=coerced_values,
+                ts=ts.isoformat(),
+            )
+        except Exception as ws_exc:
+            logger.warning("WS broadcast fallback failed device=%s: %s", device.id, ws_exc)
 
     return {"device_id": str(device.id), "ts": ts.isoformat(), "keys_saved": keys_saved}

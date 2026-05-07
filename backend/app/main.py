@@ -3,6 +3,7 @@ app/main.py — FastAPI application entry point.
 FIX 7:  MQTT broker configured via env vars (no public broker default warning)
 FIX 11: APScheduler runs telemetry retention purge daily
 FIX 13: /health does a real DB ping, returns 503 if Postgres is down
+OPT 1:  RealtimeCoordinator started at lifespan — batched WS + deferred cache
 """
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,6 +55,11 @@ async def lifespan(app: FastAPI):
     if hasattr(_ws_manager, "startup"):
         await _ws_manager.startup()
         logger.info("RedisManager started")
+
+    # OPT 1: RealtimeCoordinator — batched WS broadcast + deferred cache invalidation
+    from app.core.realtime_coordinator import coordinator as _rt_coordinator
+    await _rt_coordinator.start()
+    logger.info("RealtimeCoordinator started")
 
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
@@ -171,6 +177,10 @@ async def lifespan(app: FastAPI):
     health_task.cancel()
     sched_rpc_task.cancel()
 
+    # OPT 1: Stop coordinator — flushes remaining buffer before shutdown
+    await _rt_coordinator.stop()
+    logger.info("RealtimeCoordinator stopped")
+
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):
         await _ws_manager.shutdown()
@@ -259,6 +269,7 @@ def health():
 def status(user_id: str = Depends(get_current_user_id)):
     from app.services.mqtt_client import mqtt_client
     from app.core.websocket_manager import manager as ws_manager
+    from app.core.realtime_coordinator import coordinator as rt_coordinator
     return {
         "status": "ok",
         "mqtt": mqtt_client.status(),
@@ -266,6 +277,7 @@ def status(user_id: str = Depends(get_current_user_id)):
             "total_clients": ws_manager.total_clients(),
             "active_devices": ws_manager.active_devices(),
         },
+        "realtime_coordinator": rt_coordinator.stats(),
     }
 
 
