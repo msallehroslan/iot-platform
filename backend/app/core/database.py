@@ -4,41 +4,45 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from app.core.config import settings
 
 
-# ── Render free tier PostgreSQL connection limits ─────────────────────────────
-# Free PostgreSQL on Render allows a MAXIMUM of 5 concurrent connections.
-# pool_size=20 + max_overflow=40 = 60 attempted connections → instant exhaustion.
-# Every request then queues for 30s (pool_timeout) before failing.
+# ── Render free tier PostgreSQL — connection budget ──────────────────────────
 #
-# Correct settings for Render free tier:
-#   pool_size=3    → 3 persistent connections (leaves 2 for admin/migrations)
-#   max_overflow=1 → 1 burst connection maximum (never exceeds 4 total)
-#   pool_timeout=10 → fail fast rather than queue for 30s
+# Render free PostgreSQL hard limit: 5 concurrent connections TOTAL.
 #
-# If you upgrade to Render's paid PostgreSQL (Standard plan), you can increase
-# pool_size to 8 and max_overflow to 4.
+# Connection consumers in this single-process app:
+#   - FastAPI request handlers     (via get_db dependency)
+#   - WebSocket auth               (SessionLocal on connect)
+#   - MQTT message handlers        (SessionLocal on ingest)
+#   - RealtimeCoordinator          (SessionLocal for anomaly memory writes)
+#   - IntelligenceCoordinator      (SessionLocal every 10s per device)
+#   - Scheduled RPC dispatcher     (SessionLocal every 5s)
+#   - Offline checker              (SessionLocal every 2min)
+#
+# Budget allocation:
+#   pool_size=2    → 2 persistent connections for API requests
+#   max_overflow=2 → 2 burst connections (total cap = 4, leaving 1 for admin)
+#   pool_timeout=5 → fail fast, don't queue — background tasks retry naturally
+#
+# Background tasks MUST open and close sessions within milliseconds.
+# If they hold sessions across async awaits, pool exhaustion occurs.
 engine = create_engine(
     settings.DATABASE_URL,
 
-    # Validate dead/stale connections — essential for Render's idle-disconnect behavior
     pool_pre_ping=True,
 
-    # Render free PostgreSQL: max 5 connections total across ALL processes.
-    # With --workers 1 (single process), keep pool_size low to avoid exhaustion.
-    pool_size=3,
+    # 2 persistent + 2 overflow = 4 max. Leaves 1 slot for migrations/admin.
+    pool_size=2,
+    max_overflow=2,
 
-    # Allow 1 burst connection during spikes (total cap = pool_size + max_overflow = 4)
-    max_overflow=1,
+    # 5 second timeout — background tasks that can't get a connection will
+    # log and retry on next cycle rather than blocking API requests.
+    pool_timeout=5,
 
-    # Fail fast — don't make requests queue for 30s waiting for a connection slot
-    pool_timeout=10,
-
-    # Recycle connections every 10 minutes — Render drops idle connections after ~10min
+    # Recycle every 10 minutes — Render drops idle PG connections around this mark
     pool_recycle=600,
 
     connect_args={
         "connect_timeout": 10,
-        # Reduce connection overhead on Render's internal network
-        "options": "-c statement_timeout=25000",  # 25s statement timeout
+        "options": "-c statement_timeout=20000",  # 20s max per statement
     },
 )
 

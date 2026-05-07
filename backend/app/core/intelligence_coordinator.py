@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-INTEL_FLUSH_INTERVAL_MS  = 2_000    # recompute intelligence every 2s for dirty devices
+INTEL_FLUSH_INTERVAL_MS  = 30_000   # recompute intelligence every 30s — reduces DB pressure on free tier
 SNAPSHOT_TTL_S           = 120      # Redis snapshot TTL — refreshed every flush cycle
 SNAPSHOT_KEY             = "iot:snapshot:{device_id}"
 DEGRADATION_WINDOW_S     = 600      # 10-min window for degradation velocity
@@ -159,6 +159,8 @@ class IntelligenceCoordinator:
 
     async def _intelligence_loop(self) -> None:
         interval = INTEL_FLUSH_INTERVAL_MS / 1000.0
+        # First run: wait one full interval so startup DB pressure is avoided
+        await asyncio.sleep(interval)
         while self._running:
             t0 = time.monotonic()
             try:
@@ -177,11 +179,13 @@ class IntelligenceCoordinator:
             snapshot = dict(self._dirty)
             self._dirty = {}
 
+        # Process sequentially — each opens a DB session.
+        # Concurrent tasks would exhaust the connection pool on free tier.
         for device_id, entry in snapshot.items():
-            asyncio.create_task(
-                self._update_device_intelligence(entry),
-                name=f"intel_{device_id[:8]}",
-            )
+            try:
+                await self._update_device_intelligence(entry)
+            except Exception as exc:
+                logger.debug("intel_coordinator: device %s failed: %s", device_id[:8], exc)
 
     # ── Device intelligence update ─────────────────────────────────────────────
 

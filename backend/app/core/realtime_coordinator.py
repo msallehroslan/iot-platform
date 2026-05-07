@@ -58,7 +58,7 @@ FLUSH_INTERVAL_MS       = 250        # WS batch flush interval
 ANOMALY_THRESHOLD       = 3.0        # |z| > 3.0 → anomaly
 MIN_SAMPLES_ZSCORE      = 20         # Welford: min samples before scoring
 ANOMALY_SCORE_EVERY_N   = 10         # write non-anomaly scores every Nth sample
-INTELLIGENCE_DIRTY_TTL  = 5.0        # seconds between intelligence events per device
+INTELLIGENCE_DIRTY_TTL  = 60.0       # seconds between DB memory writes per device (free tier: be conservative)
 
 
 # ── Welford online statistics accumulator ────────────────────────────────────
