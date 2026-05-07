@@ -3,8 +3,8 @@
  * Rendering components for each widget type.
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
-import { useState, useEffect, useRef, useCallback } from "react";
-import { telemetryApi, intelligenceApi, API_BASE } from "../../services/api.js";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../services/api.js";
 
 // ── Intent context hook (Phase 10) ────────────────────────────────────────────
 // Fetches unified intelligence for a device once on mount.
@@ -307,7 +307,7 @@ export function PieChartSVG({ data = [] }) {
 
 // ── Widget type components ────────────────────────────────────────────────────
 
-export function ValueCard({ config, liveTelem, historyData, deviceId }) {
+function ValueCard({ config, liveTelem, historyData, deviceId }) {
   const raw   = liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const isN   = !isNaN(num);
@@ -337,7 +337,7 @@ export function ValueCard({ config, liveTelem, historyData, deviceId }) {
     if (!devId || !config.key) return;
     // Single call via widget abstraction layer — replaces 3× telemetryApi.aggregate
     const WINDOW_HOURS = { "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24 };
-    import("../../services/api.js").then(({ widgetApi }) => {
+   
       widgetApi.lineChart(devId, config.key, { hours: WINDOW_HOURS[window] || 1, limit: 300, resolution: "raw" })
         .then(res => {
           const vals = (res?.points || []).map(p => p.value).filter(v => v !== null && !isNaN(v));
@@ -351,7 +351,7 @@ export function ValueCard({ config, liveTelem, historyData, deviceId }) {
           }
         })
         .catch(() => {});
-    });
+  
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
@@ -474,33 +474,44 @@ export function LineChartWidget({ config, historyData, deviceId }) {
   // Live WebSocket points appended to raw view only
   const livePoints = historyData?.[key] || [];
 
+  const round2 = v => Math.round(v * 100) / 100;
+
   useEffect(() => {
     if (!devId || !key) return;
-    const { hours, resolution } = WINDOW_CONFIG[window] || { hours: 1, resolution: "raw" };
+
+    const { hours, resolution } = WINDOW_CONFIG[window] || {
+      hours: 1,
+      resolution: "raw",
+    };
+
     setLoading(true);
 
-    // widgetApi.lineChart calls GET /widgets/data/{id}/line_chart via data_service
-    import("../../services/api.js").then(({ widgetApi }) => {
-      widgetApi.lineChart(devId, key, { hours, limit: 300, resolution })
-        .then(res => {
-          const pts = res?.points || [];
-          setChartData(pts);
-          if (pts.length) {
-            const vals = pts.map(p => p.value).filter(v => v !== null);
-            const sum  = vals.reduce((a, b) => a + b, 0);
-            setStats({
-              avg:   vals.length ? round2(sum / vals.length) : null,
-              min:   vals.length ? round2(Math.min(...vals)) : null,
-              max:   vals.length ? round2(Math.max(...vals)) : null,
-              count: pts.length,
-            });
-          } else {
-            setStats({ avg: null, min: null, max: null, count: 0 });
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+    widgetApi
+      .lineChart(devId, key, {
+        hours,
+        limit: 300,
+        resolution,
+      })
+      .then(res => {
+        const pts = res?.points || [];
+        setChartData(pts);
+
+        if (pts.length) {
+          const vals = pts.map(p => p.value).filter(v => v !== null);
+          const sum = vals.reduce((a, b) => a + b, 0);
+
+          setStats({
+            avg: vals.length ? round2(sum / vals.length) : null,
+            min: vals.length ? round2(Math.min(...vals)) : null,
+            max: vals.length ? round2(Math.max(...vals)) : null,
+            count: pts.length,
+          });
+        } else {
+          setStats({ avg: null, min: null, max: null, count: 0 });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [devId, key, window]);
 
   // For raw windows, append live WebSocket points on top of fetched data
@@ -511,7 +522,6 @@ export function LineChartWidget({ config, historyData, deviceId }) {
 
   const { resolution } = WINDOW_CONFIG[window] || {};
   const fmt  = v => v === null ? "—" : Number(v).toFixed(2);
-  const round2 = v => Math.round(v * 100) / 100;
 
   const RES_LABEL = { raw: "raw", "5min": "5 min avg", "1h": "1 h avg", "1d": "1 day avg" };
 
@@ -610,23 +620,36 @@ export function GaugeWidget({ config, liveTelem, deviceId }) {
 
   useEffect(() => {
     if (!devId || !config.key) return;
-    // Single call via widget abstraction layer — replaces 3× telemetryApi.aggregate
-    const WINDOW_HOURS = { "1h": 1, "6h": 6, "24h": 24, "7d": 168 };
-    import("../../services/api.js").then(({ widgetApi }) => {
-      widgetApi.lineChart(devId, config.key, { hours: WINDOW_HOURS[window] || 24, limit: 300, resolution: "raw" })
-        .then(res => {
-          const vals = (res?.points || []).map(p => p.value).filter(v => v !== null && !isNaN(v));
-          if (vals.length) {
-            const sum = vals.reduce((a, b) => a + b, 0);
-            setAgg({
-              avg: Math.round((sum / vals.length) * 100) / 100,
-              min: Math.round(Math.min(...vals) * 100) / 100,
-              max: Math.round(Math.max(...vals) * 100) / 100,
-            });
-          }
-        })
-        .catch(() => {});
-    });
+
+    const WINDOW_HOURS = {
+      "1h": 1,
+      "6h": 6,
+      "24h": 24,
+      "7d": 168,
+    };
+
+    widgetApi
+      .lineChart(devId, config.key, {
+        hours: WINDOW_HOURS[window] || 24,
+        limit: 300,
+        resolution: "raw",
+      })
+      .then(res => {
+        const vals = (res?.points || [])
+          .map(p => p.value)
+          .filter(v => v !== null && !isNaN(v));
+
+        if (vals.length) {
+          const sum = vals.reduce((a, b) => a + b, 0);
+
+          setAgg({
+            avg: Math.round((sum / vals.length) * 100) / 100,
+            min: Math.round(Math.min(...vals) * 100) / 100,
+            max: Math.round(Math.max(...vals) * 100) / 100,
+          });
+        }
+      })
+      .catch(() => {});
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(1);
@@ -784,30 +807,40 @@ export function BarChartWidget({ config, historyData, deviceId }) {
 
   useEffect(() => {
     if (!devId || !key) return;
-    const { hours, resolution } = WINDOW_CONFIG[window] || { hours: 1, resolution: "raw" };
+
+    const { hours, resolution } = WINDOW_CONFIG[window] || {
+      hours: 1,
+      resolution: "raw",
+    };
+
     setLoading(true);
 
-    import("../../services/api.js").then(({ widgetApi }) => {
-      widgetApi.barChart(devId, key, { hours, limit: 300, resolution })
-        .then(res => {
-          const pts = res?.points || [];
-          setChartData(pts);
-          if (pts.length) {
-            const vals = pts.map(p => p.value).filter(v => v !== null);
-            const sum  = vals.reduce((a, b) => a + b, 0);
-            setStats({
-              avg:   vals.length ? Math.round((sum / vals.length) * 100) / 100 : null,
-              min:   vals.length ? Math.round(Math.min(...vals) * 100) / 100 : null,
-              max:   vals.length ? Math.round(Math.max(...vals) * 100) / 100 : null,
-              count: pts.length,
-            });
-          } else {
-            setStats({ avg: null, min: null, max: null, count: 0 });
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+    widgetApi
+      .barChart(devId, key, {
+        hours,
+        limit: 300,
+        resolution,
+      })
+      .then(res => {
+        const pts = res?.points || [];
+        setChartData(pts);
+
+        if (pts.length) {
+          const vals = pts.map(p => p.value).filter(v => v !== null);
+          const sum = vals.reduce((a, b) => a + b, 0);
+
+          setStats({
+            avg: vals.length ? Math.round((sum / vals.length) * 100) / 100 : null,
+            min: vals.length ? Math.round(Math.min(...vals) * 100) / 100 : null,
+            max: vals.length ? Math.round(Math.max(...vals) * 100) / 100 : null,
+            count: pts.length,
+          });
+        } else {
+          setStats({ avg: null, min: null, max: null, count: 0 });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [devId, key, window]);
 
   const isRaw = (WINDOW_CONFIG[window]?.resolution ?? "raw") === "raw";
@@ -910,31 +943,46 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
 
   useEffect(() => {
     if (!devId || !config.key) return;
-    // Single call via widgetApi.timeseriesTable — replaces 4× telemetryApi.aggregate
-    const WINDOW_HOURS = { "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24 };
+
+    const WINDOW_HOURS = {
+      "15m": 0.25,
+      "30m": 0.5,
+      "1h": 1,
+      "6h": 6,
+      "24h": 24,
+    };
+
     const hours = WINDOW_HOURS[window] || 1;
     setLoading(true);
-    import("../../services/api.js").then(({ widgetApi }) => {
-      widgetApi.timeseriesTable(devId, config.key, { hours, limit: 100 })
-        .then(res => {
-          const pts = res?.points || [];
-          setPoints(pts);
-          const vals = pts.map(p => p.value).filter(v => v !== null && !isNaN(v));
-          if (vals.length) {
-            const sum = vals.reduce((a, b) => a + b, 0);
-            setAgg({
-              avg:   Math.round((sum / vals.length) * 100) / 100,
-              min:   Math.round(Math.min(...vals) * 100) / 100,
-              max:   Math.round(Math.max(...vals) * 100) / 100,
-              count: pts.length,
-            });
-          } else {
-            setAgg({ avg: null, min: null, max: null, count: 0 });
-          }
-        })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+
+    widgetApi
+      .timeseriesTable(devId, config.key, {
+        hours,
+        limit: 100,
+      })
+      .then(res => {
+        const pts = res?.points || [];
+        setPoints(pts);
+
+        const vals = pts
+          .map(p => p.value)
+          .filter(v => v !== null && !isNaN(v));
+
+        if (vals.length) {
+          const sum = vals.reduce((a, b) => a + b, 0);
+
+          setAgg({
+            avg: Math.round((sum / vals.length) * 100) / 100,
+            min: Math.round(Math.min(...vals) * 100) / 100,
+            max: Math.round(Math.max(...vals) * 100) / 100,
+            count: pts.length,
+          });
+        } else {
+          setAgg({ avg: null, min: null, max: null, count: 0 });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [devId, config.key, window]);
 
   // Fall back to historyData prop during initial load
@@ -1386,12 +1434,12 @@ export const WIDGET_REGISTRY = [
 //
 export const WIDGET_COMPONENT_MAP = {
   // ── Data ──────────────────────────────────────────────────────────────────
-  value_card:        ValueCard,
-  line_chart:        LineChartWidget,
+  value_card:        MemoValueCard,
+  line_chart:        MemoLineChartWidget,
   multi_axis_chart:  MultiAxisChartWidget,
-  gauge:             GaugeWidget,
-  bar_chart:         BarChartWidget,
-  timeseries_table:  TimeseriesTable,
+  gauge:             MemoGaugeWidget,
+  bar_chart:         MemoBarChartWidget,
+  timeseries_table:  MemoTimeseriesTable,
   pie_chart:         PieChartWidget,
   entity_table:      EntityTable,
   // ── Status ─────────────────────────────────────────────────────────────────
@@ -2490,3 +2538,8 @@ export function RpcToggleWidget({ config, liveTelem, deviceId }) {
     </div>
   );
 }
+export const MemoValueCard = React.memo(ValueCard);
+export const MemoLineChartWidget = React.memo(LineChartWidget);
+export const MemoGaugeWidget = React.memo(GaugeWidget);
+export const MemoTimeseriesTable = React.memo(TimeseriesTable);
+export const MemoBarChartWidget = React.memo(BarChartWidget);
