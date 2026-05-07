@@ -40,7 +40,7 @@ const PING_INTERVAL_MS    = 25_000;   // send "ping" every 25s to keep connectio
 const RECONNECT_BASE_MS   = 1_000;   // first reconnect attempt after 1s
 const RECONNECT_MAX_MS    = 30_000;  // cap at 30s
 const RECONNECT_JITTER_MS = 500;     // ±500ms jitter to avoid thundering herd
-const FALLBACK_POLL_MS    = 5_000;   // REST polling interval when WS is unavailable
+const FALLBACK_POLL_MS    = 10_000;   // REST polling interval when WS is unavailable
 
 // ── Per-device connection state ───────────────────────────────────────────────
 
@@ -84,6 +84,8 @@ function _getState(deviceId) {
       connected:      false,
       useFallback:    false,
       deviceId,
+
+      lastDispatch: 0,
     });
   }
   return _connections.get(deviceId);
@@ -197,19 +199,34 @@ function _connect(deviceId) {
       _dispatchToSubscribers(state, values, ts);
     }).catch(() => {});
   };
-
+  
+   
+    const DISPATCH_INTERVAL_MS = 1000;
   ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data);
 
-      if (msg.type === "telemetry" && msg.values) {
-        _dispatchToSubscribers(state, msg.values, msg.ts);
-      }
-      // heartbeat / pong — no action needed
-    } catch (_) {
-      // Malformed message, ignore
+  const now = Date.now();
+
+  if (now - state.lastDispatch < DISPATCH_INTERVAL_MS){
+    return;
+  }
+  state.lastDispatch = now;
+  
+
+  try {
+
+    const msg = JSON.parse(event.data);
+
+    if (msg.type === "telemetry" && msg.values) {
+
+      _dispatchToSubscribers(
+        state,
+        msg.values,
+        msg.ts
+      );
     }
-  };
+
+  } catch (_) {}
+};
 
   ws.onclose = () => {
     state.connected = false;
