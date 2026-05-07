@@ -300,9 +300,10 @@ def dashboard_preload(
     from app.models.models import Device, UserDashboard, UserWidget
 
     # ── 1. Fetch dashboard + widgets ──────────────────────────────────────────
+    # UserDashboard.user_id is String(255) — must compare as str, not UUID
     dash = db.query(UserDashboard).filter(
         UserDashboard.id == dashboard_id,
-        UserDashboard.user_id == current_user.id,
+        UserDashboard.user_id == str(current_user.id),
     ).first()
 
     if not dash:

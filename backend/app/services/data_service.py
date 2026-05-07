@@ -483,6 +483,30 @@ def _fetch_health_summary(db: Session, device_id: str) -> dict:
 
 # ── Unified Intelligence — the key function ───────────────────────────────────
 
+def _cache_get_unified(device_id: str) -> Optional[dict]:
+    """Read-only Redis GET for the unified intelligence cache. Never writes."""
+    if not cache.enabled:
+        return None
+    try:
+        import asyncio, json as _json
+        loop = asyncio.get_event_loop()
+        if not loop.is_running():
+            return None
+        import concurrent.futures
+        fut = asyncio.run_coroutine_threadsafe(
+            cache._client.get(f"iot:unified:{device_id}"),
+            loop,
+        )
+        raw = fut.result(timeout=1)
+        if raw:
+            data = _json.loads(raw)
+            if isinstance(data, dict) and "status" in data:
+                return data
+    except Exception:
+        pass
+    return None
+
+
 def get_unified_intelligence(
     db: Session,
     device_id: str,
@@ -519,10 +543,14 @@ def get_unified_intelligence(
             "generated_at": "..."
         }
     """
-    # All 5 sub-functions are individually cached (TTL 10–300s).
-    # Trends are now also cached (TTL 60s) — previously uncached causing N DB queries.
-    # The assembled unified result is cached below after construction (TTL 30s).
-    # Coordinator invalidates iot:unified on every 250ms flush — always fresh enough.
+    # ── Cache READ — serve from Redis if fresh result exists ─────────────────
+    # Written at the bottom of this function after assembly (TTL 30s).
+    # Coordinator calls invalidate_device() on every 250ms flush → always fresh.
+    cached_result = _cache_get_unified(device_id)
+    if cached_result is not None:
+        return cached_result
+
+    # Cache miss — compute from sub-functions (each individually cached).
     telemetry = get_latest_telemetry(db, device_id)
     alarms    = get_active_alarms(db, device_id)
     baseline  = get_baseline_now(db, device_id)
