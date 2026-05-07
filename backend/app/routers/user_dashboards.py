@@ -332,23 +332,9 @@ def dashboard_preload(
         if w["config"].get("device_id")
     })
 
-    # ── 3. Collect keys needed per device (for history fetch) ─────────────────
-    device_keys: dict[str, set] = {}
-    for w in widgets_data:
-        did = str(w["config"].get("device_id", ""))
-        if not did:
-            continue
-        cfg = w["config"]
-        wtype = w["widget_type"]
-        # Single-key widgets
-        if cfg.get("key"):
-            device_keys.setdefault(did, set()).add(cfg["key"])
-        # Multi-key widgets
-        if cfg.get("keys"):
-            for k in cfg["keys"]:
-                device_keys.setdefault(did, set()).add(k)
-
-    # ── 4. Per-device data assembly ───────────────────────────────────────────
+    # ── 3. Per-device data assembly ───────────────────────────────────────────
+    # Fast path: telemetry + alarms + intelligence — all served from Redis cache.
+    # History excluded — saves N uncached DB queries per dashboard open.
     devices_payload: dict = {}
 
     for device_id in device_ids:
@@ -381,30 +367,14 @@ def dashboard_preload(
         if not intelligence:
             intelligence = get_unified_intelligence(db, device_id, device=device)
 
-        # History for chart widgets — bulk fetch keys needed by this device
-        history: dict = {}
-        keys_needed = list(device_keys.get(device_id, set()))
-        if keys_needed:
-            try:
-                from app.services.data_service import get_aggregated_telemetry
-                for key in keys_needed[:10]:  # cap at 10 keys per device for preload
-                    pts = get_aggregated_telemetry(
-                        db, device_id, key,
-                        hours=1, limit=60, resolution="raw",
-                    )
-                    if pts.get("points"):
-                        history[key] = [
-                            {"ts": p["ts"], "value": p.get("value") or p.get("avg")}
-                            for p in pts["points"]
-                        ]
-            except Exception:
-                pass
-
+        # History is NOT included in preload — it requires N uncached DB queries.
+        # Chart widgets fetch their own history lazily when rendered.
+        # WS updates build history incrementally in the runtime store.
         devices_payload[device_id] = {
             "telemetry":    telemetry,
             "intelligence": intelligence,
             "alarms":       alarms,
-            "history":      history,
+            "history":      {},
         }
 
     return {
