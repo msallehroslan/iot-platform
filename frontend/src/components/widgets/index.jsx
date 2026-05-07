@@ -141,10 +141,14 @@ export function LineChartSVG({ data = [], color = "#3b82f6" }) {
         const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
         return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
       })}
-      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map(p => {
-        const idx = data.indexOf(p);
-        return <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>;
-      })}
+      {data
+        .map((p, idx) => ({ p, idx }))
+        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .map(({ p, idx }) => (
+          <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+            {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </text>
+        ))}
       <path d={area} fill={`url(#${gid})`} />
       <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={px(vals.length - 1)} cy={py(vals[vals.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
@@ -161,23 +165,40 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
       <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
     </div>
   );
+
   const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
   const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
-  const avgs = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
-  const mins = data.map(p => typeof p.min  === "number" ? p.min  : avgs[data.indexOf(p)]);
-  const maxs = data.map(p => typeof p.max  === "number" ? p.max  : avgs[data.indexOf(p)]);
+
+  const avgs = data.map((p) =>
+    typeof p.value === "number" ? p.value : parseFloat(p.value) || 0
+  );
+
+  const mins = data.map((p, idx) =>
+    typeof p.min === "number" ? p.min : avgs[idx]
+  );
+
+  const maxs = data.map((p, idx) =>
+    typeof p.max === "number" ? p.max : avgs[idx]
+  );
+
   const allVals = [...avgs, ...mins, ...maxs];
   const mn = Math.min(...allVals), mx = Math.max(...allVals), rng = mx - mn || 1;
-  const px = i => pad.l + (i / (avgs.length - 1)) * w;
-  const py = v => pad.t + h - ((v - mn) / rng) * h;
-  const avgPath = avgs.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
-  // Band polygon: forward across maxs, backward across mins
+
+  const px = (i) => pad.l + (i / (avgs.length - 1)) * w;
+  const py = (v) => pad.t + h - ((v - mn) / rng) * h;
+
+  const avgPath = avgs
+    .map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`)
+    .join(" ");
+
   const bandPath = [
     ...maxs.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`),
     ...mins.slice().reverse().map((v, i) => `L${px(mins.length - 1 - i).toFixed(1)},${py(v).toFixed(1)}`),
     "Z",
   ].join(" ");
+
   const gid = `band${color.replace(/[^a-z0-9]/gi, "")}`;
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
       <defs>
@@ -186,18 +207,28 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      {[0, 0.25, 0.5, 0.75, 1].map(t => {
-        const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
-        return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
+
+      {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+        const y = pad.t + h * t;
+        const val = (mx - rng * t).toFixed(1);
+        return (
+          <g key={t}>
+            <line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" />
+            <text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text>
+          </g>
+        );
       })}
-      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map((p, i) => (
-        <text key={i} x={px(data.indexOf(p))} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
-          {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-        </text>
-      ))}
-      {/* Min/max band */}
+
+      {data
+        .map((p, idx) => ({ p, idx }))
+        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .map(({ p, idx }) => (
+          <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+            {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </text>
+        ))}
+
       <path d={bandPath} fill={color} fillOpacity="0.08" />
-      {/* Avg line */}
       <path d={avgPath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
       <circle cx={px(avgs.length - 1)} cy={py(avgs[avgs.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
     </svg>
@@ -257,10 +288,14 @@ export function BarChartSVG({ data = [], color = "#3b82f6" }) {
         const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
         return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
       })}
-      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 5)) === 0 || i === data.length - 1).map(p => {
-        const idx = data.indexOf(p);
-        return <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>;
-      })}
+      {data
+        .map((p, idx) => ({ p, idx }))
+        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .map(({ p, idx }) => (
+          <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
+            {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </text>
+        ))}
       {vals.map((v, i) => (
         <rect key={i}
           x={pad.l + (i / vals.length) * w}
@@ -1432,6 +1467,12 @@ export const WIDGET_REGISTRY = [
 //
 // Nothing else changes. No switch-case to update.
 //
+export const MemoValueCard = React.memo(ValueCard);
+export const MemoLineChartWidget = React.memo(LineChartWidget);
+export const MemoGaugeWidget = React.memo(GaugeWidget);
+export const MemoTimeseriesTable = React.memo(TimeseriesTable);
+export const MemoBarChartWidget = React.memo(BarChartWidget);
+
 export const WIDGET_COMPONENT_MAP = {
   // ── Data ──────────────────────────────────────────────────────────────────
   value_card:        MemoValueCard,
@@ -2538,8 +2579,3 @@ export function RpcToggleWidget({ config, liveTelem, deviceId }) {
     </div>
   );
 }
-export const MemoValueCard = React.memo(ValueCard);
-export const MemoLineChartWidget = React.memo(LineChartWidget);
-export const MemoGaugeWidget = React.memo(GaugeWidget);
-export const MemoTimeseriesTable = React.memo(TimeseriesTable);
-export const MemoBarChartWidget = React.memo(BarChartWidget);
