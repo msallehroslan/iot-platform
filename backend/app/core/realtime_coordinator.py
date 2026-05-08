@@ -394,3 +394,22 @@ def _write_memory_sync(tenant_id: str, content: str) -> None:
             db.close()
     except Exception as exc:
         logger.debug("coordinator: _write_memory_sync failed: %s", exc)
+
+
+    def stats(self) -> dict:
+        """Return current coordinator stats for /status endpoint."""
+        return {
+            "running":              self._running,
+            "buffered_devices":     len(self._buffer),
+            "dirty_devices":        len(self._dirty_devices),
+            "intelligence_dirty":   len(self._intelligence_dirty),
+            "welford_accumulators": len(self._stats),
+            "flush_interval_ms":    FLUSH_INTERVAL_MS,
+        }
+
+
+# ── Module-level singleton ────────────────────────────────────────────────────
+# Imported by main.py and telemetry_service.py:
+#   from app.core.realtime_coordinator import coordinator
+
+coordinator = RealtimeCoordinator()
