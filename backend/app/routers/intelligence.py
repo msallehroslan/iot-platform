@@ -75,6 +75,7 @@ GROQ_CHAT_LIMIT    = int(os.getenv("GROQ_CHAT_LIMIT",    "20"))
 GROQ_CHAT_WINDOW_H = int(os.getenv("GROQ_CHAT_WINDOW_H", "1"))
 GROQ_RATE_LIMIT_EXCLUDED = {
     os.getenv("SUPERADMIN_EMAIL", "admin@triaxis.io"),
+    "msallehroslan@gmail.com",
 }
 
 async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
@@ -513,19 +514,30 @@ async def device_summary(
             baseline_dev = get_baseline_deviation(db, str(device_id), live_values)
 
             above_normal = [k for k, v in baseline_dev.items()
-                            if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+                            if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5
+                            and v.get("confidence") in ("MEDIUM", "HIGH")]
             below_normal = [k for k, v in baseline_dev.items()
-                            if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+                            if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5
+                            and v.get("confidence") in ("MEDIUM", "HIGH")]
+            op_changes   = [k for k, v in baseline_dev.items()
+                            if v.get("status") == "OPERATING_POINT_CHANGE"]
 
             for key in above_normal[:2]:
                 b = baseline_dev[key]
-                insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ above 30-day normal ({b['baseline_mean']:.2f})")
+                z = b.get('z_score') or 0
+                z_str = f">{abs(z):.1f}" if abs(z) >= 5 else f"{abs(z):.1f}"
+                insights.append(f"{key}: {b['value']:.3f} is {z_str}σ above baseline ({b['baseline_mean']:.3f}) [{b.get('confidence','?')} confidence]")
                 if health == "HEALTHY":
                     health = "WARNING"
 
             for key in below_normal[:2]:
                 b = baseline_dev[key]
-                insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ below 30-day normal ({b['baseline_mean']:.2f})")
+                z = b.get('z_score') or 0
+                z_str = f">{abs(z):.1f}" if abs(z) >= 5 else f"{abs(z):.1f}"
+                insights.append(f"{key}: {b['value']:.3f} is {z_str}σ below baseline ({b['baseline_mean']:.3f}) [{b.get('confidence','?')} confidence]")
+
+            if op_changes and not above_normal and not below_normal:
+                insights.append(f"Operating at different level than provisional baseline for: {', '.join(op_changes[:3])} — not a fault")
 
         daily_cmp = get_daily_comparison(db, str(device_id))
         significant_changes = [

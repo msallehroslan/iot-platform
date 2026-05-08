@@ -345,13 +345,31 @@ def get_baseline_deviation(db: Session, device_id: str, current_values: dict) ->
         mean   = b.mean
         stddev = b.stddev or 0
 
+        # ── Baseline confidence level ─────────────────────────────────────────
+        # sample_count per hour bucket: ~3600 samples/hr at 1Hz
+        # < 1 day (~3600 samples):   PROVISIONAL — don't over-alarm
+        # 1-3 days (~10800):         LOW
+        # 3-7 days (~25200):         MEDIUM
+        # > 7 days:                  HIGH
+        sc = b.sample_count or 0
+        if sc < 3600:
+            confidence = "PROVISIONAL"
+        elif sc < 10800:
+            confidence = "LOW"
+        elif sc < 25200:
+            confidence = "MEDIUM"
+        else:
+            confidence = "HIGH"
+
         if stddev < 1e-6:
-            # Perfectly stable baseline — any deviation is notable
             delta = val - mean
             status = "ABOVE_NORMAL" if delta > 0.01 else "BELOW_NORMAL" if delta < -0.01 else "NORMAL"
             z = None
         else:
             z = (val - mean) / stddev
+            # Cap display at ±5σ — beyond that it's a clear operating point shift,
+            # not a graduated anomaly signal. Reporting '9σ' adds no extra information.
+            z_display = max(-5.0, min(5.0, z))
             if abs(z) <= 2.0:
                 status = "NORMAL"
             elif z > 2.0:
@@ -359,22 +377,38 @@ def get_baseline_deviation(db: Session, device_id: str, current_values: dict) ->
             else:
                 status = "BELOW_NORMAL"
 
+        # For PROVISIONAL baselines, very high σ likely means operating point
+        # changed since baseline was built — not equipment failure
+        operating_point_change = (
+            confidence in ("PROVISIONAL", "LOW") and
+            z is not None and abs(z) > 3.0
+        )
+        if operating_point_change:
+            status = "OPERATING_POINT_CHANGE"
+
+        z_out = round(z_display if z is not None else None, 2) if z is not None else None
         msg_parts = [f"{val:.2f}"]
         if z is not None:
-            msg_parts.append(f"is {abs(z):.1f}σ {'above' if z > 0 else 'below'}")
+            sign = "above" if z > 0 else "below"
+            z_str = f">{abs(z_display):.1f}" if abs(z) >= 5.0 else f"{abs(z_display):.1f}"
+            msg_parts.append(f"is {z_str}σ {sign}")
         else:
             msg_parts.append(f"{'above' if status == 'ABOVE_NORMAL' else 'below' if status == 'BELOW_NORMAL' else 'at'}")
-        msg_parts.append(f"30-day normal ({mean:.2f}±{stddev:.2f})")
-        msg_parts.append(f"[{b.sample_count} samples]")
+        msg_parts.append(f"baseline ({mean:.3f}±{stddev:.3f})")
+        msg_parts.append(f"[{sc} samples, {confidence} confidence]")
+        if operating_point_change:
+            msg_parts.append("— likely operating point change, not failure")
 
         result[key] = {
-            "value":            val,
-            "baseline_mean":    round(mean, 3),
-            "baseline_stddev":  round(stddev, 3),
-            "z_score":          round(z, 2) if z is not None else None,
-            "status":           status,
-            "sample_count":     b.sample_count,
-            "message":          " ".join(msg_parts),
+            "value":               val,
+            "baseline_mean":       round(mean, 4),
+            "baseline_stddev":     round(stddev, 4),
+            "z_score":             z_out,
+            "status":              status,
+            "confidence":          confidence,
+            "sample_count":        sc,
+            "operating_pt_change": operating_point_change,
+            "message":             " ".join(msg_parts),
         }
 
     return result

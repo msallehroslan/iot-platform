@@ -501,11 +501,19 @@ def build_system_prompt(
     trend_section    = ""  # populated below if trends available
     coverage_section = ""  # data coverage declaration for TAAT reasoning
     telem_section = ""
+    # Detect device type from telemetry keys → inject domain knowledge
+    domain_knowledge = ""
     if "telemetry" in ctx:
         vals = ctx["telemetry"].get("values", {})
         telem_section = f"\nCURRENT TELEMETRY:\n" + "\n".join(
             f"  {k}: {v}" for k, v in list(vals.items())[:10]
         )
+        # Auto-detect device type and inject relevant diagnostic knowledge
+        try:
+            from app.services.taat_domain_knowledge import get_domain_knowledge
+            domain_knowledge = get_domain_knowledge(list(vals.keys()))
+        except Exception:
+            domain_knowledge = ""  # fail silently — domain knowledge is enrichment only
 
     # Build trend section — available from day 1, crucial for new devices
     trend_section = ""
@@ -572,21 +580,37 @@ def build_system_prompt(
                     )
             intel_section += f"\nBASELINE (30-day normal, current hour):\n" + "\n".join(bl_lines)
 
-    # Baseline deviation: how far are current readings from 30-day normal?
+    # Baseline deviation: how far are current readings from baseline?
     if "baseline_deviation" in ctx:
         dev = ctx["baseline_deviation"]
         dev_lines = []
-        for dk, dv in list(dev.items())[:5]:
-            if dv.get("status") in ("ABOVE_NORMAL", "BELOW_NORMAL") and dv.get("z_score"):
+        op_change_keys = []
+        for dk, dv in list(dev.items())[:6]:
+            status = dv.get("status", "")
+            conf   = dv.get("confidence", "UNKNOWN")
+            z      = dv.get("z_score")
+            if status == "OPERATING_POINT_CHANGE":
+                op_change_keys.append(dk)
                 dev_lines.append(
-                    f"  {dk}: {dv['value']:.3f} is {abs(dv['z_score']):.1f}σ "
-                    f"{'ABOVE' if dv['z_score'] > 0 else 'BELOW'} 30-day normal ({dv['baseline_mean']:.3f})"
+                    f"  {dk}: {dv['value']:.3f} differs from baseline ({dv['baseline_mean']:.3f}) "
+                    f"— OPERATING POINT CHANGE [{conf} confidence baseline, {dv.get('sample_count',0)} samples]"
                 )
+            elif status in ("ABOVE_NORMAL", "BELOW_NORMAL") and z:
+                z_str = f">{abs(z):.1f}" if abs(z) >= 5.0 else f"{abs(z):.1f}"
+                dev_lines.append(
+                    f"  {dk}: {dv['value']:.3f} is {z_str}σ {'ABOVE' if z > 0 else 'BELOW'} "
+                    f"baseline ({dv['baseline_mean']:.3f}±{dv['baseline_stddev']:.3f}) [{conf} confidence]"
+                )
+        if op_change_keys:
+            dev_lines.insert(0,
+                f"  NOTE: {len(op_change_keys)} key(s) show operating point changes ({', '.join(op_change_keys)}). "
+                f"This means the device is running at a DIFFERENT OPERATING LEVEL than when the baseline "
+                f"was built. This is NOT necessarily a fault — but should be investigated if unexpected."
+            )
         if dev_lines:
             intel_section += f"\nBASELINE DEVIATIONS:\n" + "\n".join(dev_lines)
 
     # Daily comparison: today vs yesterday — show ALL keys with data, no threshold filter
-    # TAAT decides what's significant; filtering here means TAAT says "no data available"
     if "daily_comparison" in ctx:
         dc = ctx["daily_comparison"]
         dc_lines = []
@@ -600,10 +624,78 @@ def build_system_prompt(
                         f"[today:{cv['today_pts']}pts, yesterday:{cv.get('yesterday_pts',0)}pts]"
                     )
                 else:
-                    # No yesterday data for this key
                     dc_lines.append(
                         f"  {ck}: today avg={cv['today_mean']:.3f} [no yesterday data — first day]"
                     )
+
+        # ── Device-type specific pattern detection in daily comparison ────────
+        # Uses the same key-name detection as the domain knowledge module
+        try:
+            from app.services.taat_domain_knowledge import detect_device_type
+            device_type = detect_device_type(list(dc.keys()))
+        except Exception:
+            device_type = "generic"
+
+        if device_type in ("pump_motor", "motor"):
+            motor_de  = dc.get("motor_de_velocity",  {}).get("delta_pct")
+            motor_nde = dc.get("motor_nde_velocity", {}).get("delta_pct")
+            pump_de   = dc.get("pump_de_velocity",   {}).get("delta_pct")
+            pump_nde  = dc.get("pump_nde_velocity",  {}).get("delta_pct")
+
+            if motor_de is not None and motor_nde is not None:
+                asymmetry = abs(motor_de - motor_nde)
+                if asymmetry > 15:
+                    dc_lines.append(
+                        f"  ⚠ MOTOR DE/NDE ASYMMETRY: Motor-DE {motor_de:+.1f}% vs Motor-NDE {motor_nde:+.1f}% "
+                        f"({asymmetry:.1f}% divergence) — drive-end specific issue (bearing/coupling/misalignment)."
+                    )
+
+            if motor_de is not None and pump_de is not None:
+                if motor_de < -20 and pump_de > 10:
+                    dc_lines.append(
+                        f"  ⚠ COUPLING SLIP: Motor-DE down {abs(motor_de):.1f}% while Pump-DE up {pump_de:.1f}% — "
+                        f"energy not transferring efficiently from motor shaft to pump."
+                    )
+                elif motor_de < -20 and pump_de < -10:
+                    dc_lines.append(
+                        f"  ℹ LOAD REDUCTION: Motor-DE and Pump-DE both declining — consistent with reduced load, not a fault."
+                    )
+
+        elif device_type == "power_meter":
+            voltage  = dc.get("voltage",       {}).get("delta_pct")
+            current  = dc.get("current",       {}).get("delta_pct")
+            pf       = dc.get("power_factor",  {}).get("delta_pct")
+            if voltage is not None and current is not None:
+                if voltage < -5 and current > 10:
+                    dc_lines.append(
+                        f"  ⚠ VOLTAGE SAG + CURRENT RISE: Supply issue or increased resistive load — check supply impedance."
+                    )
+            if pf is not None and pf < -10:
+                dc_lines.append(
+                    f"  ⚠ POWER FACTOR DECLINING ({pf:+.1f}%): Increased reactive load — consider capacitor compensation."
+                )
+
+        elif device_type == "flow_sensor":
+            flow  = next((dc.get(k,{}).get("delta_pct") for k in dc if "flow" in k.lower()), None)
+            level = next((dc.get(k,{}).get("delta_pct") for k in dc if "level" in k.lower()), None)
+            if flow is not None and flow < -30:
+                dc_lines.append(
+                    f"  ⚠ FLOW RATE DOWN {abs(flow):.1f}%: Check for blockage, valve position, or pump degradation."
+                )
+            if level is not None and abs(level) > 20:
+                direction = "rising" if level > 0 else "falling"
+                dc_lines.append(
+                    f"  ⚠ TANK LEVEL {level:+.1f}% ({direction}): Check inlet/outlet balance and valve states."
+                )
+
+        elif device_type == "vibration":
+            overall = next((dc.get(k,{}).get("delta_pct") for k in dc
+                            if any(p in k.lower() for p in ["rms","overall","vibration"])), None)
+            if overall is not None and overall > 20:
+                dc_lines.append(
+                    f"  ⚠ VIBRATION INCREASING +{overall:.1f}%: Progressive mechanical wear — schedule inspection."
+                )
+
         if dc_lines:
             intel_section += f"\nDAILY COMPARISON (today vs yesterday):\n" + "\n".join(dc_lines)
         else:
@@ -722,6 +814,9 @@ RULES:
 4. If you cannot find a device or key, say so — do not guess.
 5. Keep responses short unless asked for detail.
 6. When baseline is learning, use TRENDS and session min/max/mean as the reference — never say you have no data.
+7. OPERATING POINT CHANGE is NOT the same as failure. It means the device is running at a different level than when the baseline was built. Always distinguish between operating point changes and genuine degradation trends.
+
+{domain_knowledge}
 6. If RECENT SCHEDULED ACTIONS EXECUTED section is present, proactively inform the user at the start of your reply.
 7. When showing scheduled commands, format them as readable text — never raw JSON. Example: "⏰ Turn off led2 on ESP32-e823 at 09:12 UTC".
 8. If AGENT MEMORY shows a recent outcome for the same device/action the user just requested, mention it: "Note: I already did this X minutes ago." Then proceed with the action.
