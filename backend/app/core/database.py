@@ -27,12 +27,12 @@ engine = create_engine(
 
     pool_pre_ping=True,
 
-    pool_size=5,
-    max_overflow=5,
-    pool_timeout=10,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
 
-    # Recycle every 10 minutes — Render drops idle PG connections around this mark
-    pool_recycle=600,
+    # Recycle every 30 minutes
+    pool_recycle=1800,
 
     connect_args={
         "connect_timeout": 10,
