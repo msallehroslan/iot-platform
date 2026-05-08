@@ -518,7 +518,19 @@ export default function DashboardPage({ device, onBack, user }) {
         // Single bulk request for all keys
         const bulk = await telemetryApi.bulkHistory(device.id, ks, 50);
         if (bulk?.data) {
-          setHistoryData(bulk.data);
+          // Sanitize bulk history - drop non-finite values before storing
+          const cleanBulk = {};
+          Object.entries(bulk.data).forEach(([k, pts]) => {
+            if (!Array.isArray(pts)) return;
+            const clean = pts.filter(p => p && p.ts && Number.isFinite(
+              typeof p.value === "number" ? p.value : parseFloat(p.value)
+            )).map(p => ({
+              ts: p.ts,
+              value: typeof p.value === "number" ? p.value : parseFloat(p.value),
+            }));
+            if (clean.length) cleanBulk[k] = clean;
+          });
+          setHistoryData(cleanBulk);
         }
       } catch (e) {
         // non-fatal
@@ -531,7 +543,13 @@ export default function DashboardPage({ device, onBack, user }) {
     const intelTimer = setInterval(async () => {
       try {
         const intel = await intelligenceApi.unified(device.id);
-        if (intel) setIntelligence(intel);
+        // Only update state if something actually changed — prevents unnecessary renders
+        if (intel) setIntelligence(prev => {
+          if (!prev) return intel;
+          const prevStr = JSON.stringify(prev.health_score) + JSON.stringify(prev.anomaly?.anomaly_count);
+          const nextStr = JSON.stringify(intel.health_score) + JSON.stringify(intel.anomaly?.anomaly_count);
+          return prevStr === nextStr ? prev : intel;
+        });
       } catch (_) {}
     }, 60_000);
     return () => clearInterval(intelTimer);
@@ -549,12 +567,7 @@ export default function DashboardPage({ device, onBack, user }) {
       null,
       (values, ts) => {
 
-        setWsConnected(
-          TelemetrySocket
-            .getStatus(device.id)
-            .connected
-        );
-
+        // wsConnected is polled by statusTimer below — not set per-message
         // ================= BUFFER TELEMETRY =================
 
         Object.assign(
@@ -565,6 +578,9 @@ export default function DashboardPage({ device, onBack, user }) {
         // ================= BUFFER HISTORY =================
 
         Object.entries(values).forEach(([k, v]) => {
+          // Guard: only push finite numeric values into history
+          const _n = typeof v === "number" ? v : parseFloat(v);
+          if (!Number.isFinite(_n)) return;
 
           if (!historyBuffer[k]) {
             historyBuffer[k] = [];
@@ -572,7 +588,7 @@ export default function DashboardPage({ device, onBack, user }) {
 
           historyBuffer[k].push({
             ts: ts || new Date().toISOString(),
-            value: v,
+            value: _n,
           });
 
           // Prevent oversized temporary buffers
@@ -624,8 +640,10 @@ export default function DashboardPage({ device, onBack, user }) {
       }
     );
 
+    // Poll wsConnected every 2s — avoids per-message setState overhead
     const statusTimer = setInterval(() => {
-      setWsConnected(TelemetrySocket.getStatus(device.id).connected);
+      const connected = TelemetrySocket.getStatus(device.id).connected;
+      setWsConnected(prev => prev === connected ? prev : connected);
     }, 2000);
     return () => { unsub(); clearInterval(statusTimer); };
   }, [device?.id]);
@@ -644,6 +662,23 @@ export default function DashboardPage({ device, onBack, user }) {
   //   4. On reload → getDashboard() returns updated positions → grid restores.
   //
   // dashboardsHttp.saveLayout is injected so widgetService stays transport-agnostic.
+  // Stable renderWidget — only changes when actual data changes
+  // Prevents GridLayout from re-calling renderWidget for ALL widgets on every flush
+  const renderWidget = useCallback((widget) => (
+    <WidgetRenderer
+      widget={widget}
+      liveTelem={liveTelem}
+      historyData={historyData}
+      alarms={alarms}
+      intelligence={intelligence}
+      deviceLastSeen={device?.last_seen_at}
+      userRole={user?.role}
+      deviceId={device?.id}
+      allDevices={allDevices||[]}
+      currentDevice={device}
+    />
+  ), [liveTelem, historyData, alarms, intelligence, device, user?.role, allDevices]);
+
   const handleLayoutChange = useCallback(async (newRglLayout) => {
     if (!activeDash?.id || !newRglLayout?.length) return;
 
@@ -978,20 +1013,7 @@ export default function DashboardPage({ device, onBack, user }) {
           onRemoveWidget={handleRemoveWidget}
           onAddWidget={() => { setEditingWidget(null); setShowModal(true); }}
           saving={layoutSaving}
-          renderWidget={widget => (
-            <WidgetRenderer
-              widget={widget}
-              liveTelem={liveTelem}
-              historyData={historyData}
-              alarms={alarms}
-              intelligence={intelligence}
-              deviceLastSeen={device?.last_seen_at}
-              userRole={user?.role}
-              deviceId={device?.id}
-              allDevices={allDevices||[]}
-              currentDevice={device}
-            />
-          )}
+          renderWidget={renderWidget}
         />
       )}
 

@@ -766,6 +766,21 @@ export default function UserDashboardPage({ onToast, user }) {
   };
 
   // ── Layout persistence ────────────────────────────────────────────────────
+  // Stable renderWidget — only re-creates when liveTelem/historyData actually change
+  // Without this, GridLayout calls renderWidget for ALL widgets on every 250ms flush
+  const renderWidget = useCallback((widget) => (
+    <WidgetRenderer
+      widget={widget}
+      liveTelem={liveTelem[widget.config?.device_id] || {}}
+      historyData={historyData[widget.config?.device_id] || {}}
+      alarms={alarmsData[widget.config?.device_id] || []}
+      intelligence={intellData[widget.config?.device_id] || null}
+      missingDevice={!widget.config?.device_id}
+      deviceId={widget.config?.device_id || null}
+      userRole={user?.role}
+    />
+  ), [liveTelem, historyData, alarmsData, intellData, user?.role]);
+
   const handleLayoutChange = useCallback(async (newRglLayout) => {
     if (!activeDash?.id || !newRglLayout?.length) return;
     setActiveDash(prev => {
@@ -892,18 +907,7 @@ export default function UserDashboardPage({ onToast, user }) {
               onRemoveWidget={handleRemoveWidget}
               onAddWidget={() => { setEditingWidget(null); setShowModal(true); }}
               saving={layoutSaving}
-              renderWidget={widget => (
-                <WidgetRenderer
-                  widget={widget}
-                  liveTelem={liveTelem[widget.config?.device_id] || {}}
-                  historyData={historyData[widget.config?.device_id] || {}}
-                  alarms={alarmsData[widget.config?.device_id] || []}
-                  intelligence={intellData[widget.config?.device_id] || null}
-                  missingDevice={!widget.config?.device_id}
-                  deviceId={widget.config?.device_id || null}
-                  userRole={user?.role}
-                />
-              )}
+              renderWidget={renderWidget}
             />
           )}
         </div>

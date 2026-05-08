@@ -36,7 +36,14 @@ function Sparkline({ data = [], color = "#3b82f6", height = 44 }) {
 }
 
 function LineChart({ data = [], color = "#3b82f6" }) {
-  if (data.length < 2) return (
+  // NaN-safe: drop non-finite values before any coordinate math
+  const pts = (data || []).filter(p => {
+    if (!p || !p.ts) return false;
+    const n = typeof p.value === "number" ? p.value : parseFloat(p.value);
+    return Number.isFinite(n);
+  }).map(p => ({ ts: p.ts, value: typeof p.value === "number" ? p.value : parseFloat(p.value) }));
+
+  if (pts.length < 2) return (
     <div className="flex flex-col items-center justify-center h-36 gap-2">
       <svg className="w-8 h-8 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       <p className="text-xs text-slate-400">No telemetry data yet</p>
@@ -44,20 +51,37 @@ function LineChart({ data = [], color = "#3b82f6" }) {
   );
   const W = 500, H = 150, pad = { t: 10, r: 10, b: 22, l: 32 };
   const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
-  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
-  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
-  const px = i => pad.l + (i / (vals.length - 1)) * w;
-  const py = v => pad.t + h - ((v - mn) / rng) * h;
-  const path = vals.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
-  const area = `${path} L${px(vals.length - 1)},${pad.t + h} L${pad.l},${pad.t + h} Z`;
+  const vals = pts.map(p => p.value);
+  // safeRange: guaranteed finite mn/mx/rng — no divide-by-zero
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const rng = (mx - mn) || 1;
+  // px: safe denominator — max(1, n-1) prevents divide-by-zero on single point
+  const px = i => pad.l + (i / Math.max(1, pts.length - 1)) * w;
+  const py = v => { const y = pad.t + h - ((v - mn) / rng) * h; return Number.isFinite(y) ? y : pad.t; };
+  // Build path skipping any non-finite coords (belt-and-suspenders)
+  let pathStr = "", first = true;
+  pts.forEach((_, i) => {
+    const x = px(i), y = py(pts[i].value);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    pathStr += `${first ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)} `;
+    first = false;
+  });
+  if (!pathStr) return <div className="h-36 bg-slate-50 rounded-xl"/>;
+  const lastX = px(pts.length - 1), lastY = py(pts[pts.length - 1].value);
+  const area = `${pathStr} L${lastX.toFixed(1)},${(pad.t+h).toFixed(1)} L${pad.l.toFixed(1)},${(pad.t+h).toFixed(1)} Z`;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: H }}>
       <defs><linearGradient id="lcA" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.12"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
       {[0,.25,.5,.75,1].map(t => { const y=pad.t+h*t,val=(mx-rng*t).toFixed(1); return <g key={t}><line x1={pad.l} y1={y} x2={pad.l+w} y2={y} stroke="#f1f5f9" strokeWidth="1"/><text x={pad.l-4} y={y+3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>; })}
-      {data.filter((_,i)=>i%Math.max(1,Math.floor(data.length/5))===0||i===data.length-1).map(p=>{const idx=data.indexOf(p);return <text key={idx} x={px(idx)} y={pad.t+h+15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</text>;})}
+      {pts.filter((_,i)=>i%Math.max(1,Math.floor(pts.length/5))===0||i===pts.length-1).map((p,i,arr)=>{
+        const origIdx = pts.indexOf(p);
+        return <text key={origIdx} x={px(origIdx)} y={pad.t+h+15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">{new Date(p.ts).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</text>;
+      })}
       <path d={area} fill="url(#lcA)"/>
-      <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
-      <circle cx={px(vals.length-1)} cy={py(vals[vals.length-1])} r="4" fill={color} stroke="white" strokeWidth="2"/>
+      <path d={pathStr.trim()} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+      {Number.isFinite(lastX) && Number.isFinite(lastY) && (
+        <circle cx={lastX.toFixed(1)} cy={lastY.toFixed(1)} r="4" fill={color} stroke="white" strokeWidth="2"/>
+      )}
     </svg>
   );
 }
@@ -168,16 +192,16 @@ function OverviewPage({ refreshKey, onToast }) {
   const [stats,setStats]=useState(null); const [devices,setDevices]=useState([]); const [alarms,setAlarms]=useState([]); const [loading,setLoading]=useState(true);
   const [chartDev,setChartDev]=useState(null); const [chartKey,setChartKey]=useState("temperature"); const [chartData,setChartData]=useState([]); const [chartKeys,setChartKeys]=useState([]);
   const [summaries,setSummaries]=useState({}); const [summaryLoading,setSummaryLoading]=useState(false);
-  const sparkRef=useRef(Array.from({length:20},(_,i)=>i));
 
   const fetchAll=useCallback(async()=>{
     try{
       const[s,d,a]=await Promise.all([statsApi.get(),deviceApi.list({limit:20}),alarmApi.list({limit:5})]);
       setStats(s);setDevices(d);setAlarms(a);
-      if(!chartDev&&d.length>0)setChartDev(d[0]);
+      // Use functional update to avoid stale chartDev closure
+      setChartDev(prev=>prev||(d.length>0?d[0]:null));
     }catch(e){onToast(e.message,"error");}
     finally{setLoading(false);}
-  }, [chartDev]);
+  }, [onToast]);
 
   useEffect(()=>{fetchAll();},[refreshKey]);
 
@@ -191,14 +215,19 @@ function OverviewPage({ refreshKey, onToast }) {
     const now = Date.now();
     if (now - lastSummaryRef.current < 60_000) return;  // throttle to 60s
     lastSummaryRef.current = now;
-    setSummaryLoading(true);
+    // FIX: Do NOT setSummaryLoading(true) here — it clears summaries mid-render
+    // causing the HEALTHY → UNKNOWN flicker every 30s.
+    // Instead: fetch silently and MERGE results into existing summaries.
+    // Cards keep showing old data until new data arrives per-device.
     Promise.allSettled(activeDevs.map(d=>intelligenceApi.summary(d.id).then(r=>({id:d.id,data:r}))))
       .then(results=>{
-        const map={};
-        results.forEach(r=>{ if(r.status==="fulfilled") map[r.value.id]=r.value.data; });
-        setSummaries(map);
-      })
-      .finally(()=>setSummaryLoading(false));
+        const updates={};
+        results.forEach(r=>{ if(r.status==="fulfilled" && r.value.data) updates[r.value.id]=r.value.data; });
+        if(Object.keys(updates).length>0){
+          // Merge: preserve existing entries, only update what arrived
+          setSummaries(prev=>({...prev,...updates}));
+        }
+      });
   },[devices.length, refreshKey]);
 
   useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{const ks=r?.keys||[];setChartKeys(ks);if(ks.length>0&&!ks.includes(chartKey))setChartKey(ks[0]);}).catch(()=>{});},[chartDev?.id]);
@@ -208,11 +237,23 @@ function OverviewPage({ refreshKey, onToast }) {
   },[chartDev?.id,chartKey]);
   useEffect(()=>{
     if(!chartDev?.id||!chartKey)return;
+    // Buffer WS points — flush to state every 500ms to avoid per-message renders
+    const pendingPts = [];
     const unsub = TelemetrySocket.subscribe(chartDev.id,[chartKey],(vals,ts)=>{
       if(!(chartKey in vals))return;
-      setChartData(prev=>{ const a=[...prev,{ts,value:vals[chartKey]}]; return a.length>50?a.slice(-50):a; });
+      const n = typeof vals[chartKey]==="number" ? vals[chartKey] : parseFloat(vals[chartKey]);
+      if(!Number.isFinite(n)) return;
+      pendingPts.push({ts, value:n});
     });
-    return ()=>unsub();
+    const flush = setInterval(()=>{
+      if(!pendingPts.length) return;
+      const toAdd = pendingPts.splice(0);
+      setChartData(prev=>{
+        const a=[...prev,...toAdd];
+        return a.length>50 ? a.slice(-50) : a;
+      });
+    }, 500);
+    return ()=>{ unsub(); clearInterval(flush); };
   },[chartDev?.id,chartKey]);
 
   const active=devices.filter(d=>d.status==="ACTIVE");
@@ -227,7 +268,10 @@ function OverviewPage({ refreshKey, onToast }) {
         {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
           <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
             <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
-            <Sparkline data={sparkRef.current.map(i=>(value||5)+Math.sin(i*.5+label.length)*2)} color={color} height={36}/>
+            {/* Trend line removed — was fake sine wave unrelated to real data */}
+            <div style={{height:36,borderRadius:8,background:`${color}08`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div style={{width:"85%",height:2,borderRadius:2,background:`${color}20`}}/>
+            </div>
           </div>
         ))}
       </div>

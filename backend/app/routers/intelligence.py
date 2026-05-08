@@ -469,7 +469,7 @@ async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temper
 #
 # FAST = used for every chat turn (intent + reply)
 # DEEP = used for RCA, alarm explanation, daily report
-GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
+GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.3-70b-versatile")
 GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
 
 # ── Groq rate limiter ─────────────────────────────────────────────────────────

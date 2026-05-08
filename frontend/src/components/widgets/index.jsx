@@ -443,7 +443,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const isN   = !isNaN(num);
   const alert = config.threshold_high && isN && num > config.threshold_high;
-  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value);
+  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value).filter(v => Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
   const [window, setWindow] = useState("1h");
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
@@ -1468,12 +1468,14 @@ export function HealthScoreWidget({ config, deviceId, intelligence }) {
   const cx = 60, cy = 65;
   const startAngle = -210, endAngle = 30;
   const range = endAngle - startAngle;
-  const scoreAngle = score !== null ? startAngle + (score / 100) * range : startAngle;
+  // Guard: score must be a finite number between 0-100, otherwise treat as null
+  const safeScore = (score !== null && Number.isFinite(Number(score))) ? Math.max(0, Math.min(100, Number(score))) : null;
+  const scoreAngle = safeScore !== null ? startAngle + (safeScore / 100) * range : startAngle;
   const toRad = a => (a * Math.PI) / 180;
-  const arcX = (angle) => cx + radius * Math.cos(toRad(angle));
-  const arcY = (angle) => cy + radius * Math.sin(toRad(angle));
+  const arcX = (angle) => { const v = cx + radius * Math.cos(toRad(angle)); return Number.isFinite(v) ? v : cx; };
+  const arcY = (angle) => { const v = cy + radius * Math.sin(toRad(angle)); return Number.isFinite(v) ? v : cy; };
   const bgPath = `M ${arcX(startAngle)} ${arcY(startAngle)} A ${radius} ${radius} 0 1 1 ${arcX(endAngle)} ${arcY(endAngle)}`;
-  const fillPath = score !== null ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${radius} ${radius} 0 ${Math.abs(scoreAngle - startAngle) > 180 ? 1 : 0} 1 ${arcX(scoreAngle)} ${arcY(scoreAngle)}` : null;
+  const fillPath = safeScore !== null ? `M ${arcX(startAngle)} ${arcY(startAngle)} A ${radius} ${radius} 0 ${Math.abs(scoreAngle - startAngle) > 180 ? 1 : 0} 1 ${arcX(scoreAngle)} ${arcY(scoreAngle)}` : null;
 
   const compLabels = { uptime: "Uptime", alarm: "Alarm", stability: "Stability", freshness: "Freshness" };
 
@@ -1489,7 +1491,7 @@ export function HealthScoreWidget({ config, deviceId, intelligence }) {
         <svg width="120" height="80" viewBox="0 0 120 80">
           <path d={bgPath} fill="none" stroke="#e2e8f0" strokeWidth="8" strokeLinecap="round"/>
           {fillPath && <path d={fillPath} fill="none" stroke={color} strokeWidth="8" strokeLinecap="round"/>}
-          <text x={cx} y={cy+2} textAnchor="middle" fontSize="20" fontWeight="700" fill={color}>{score !== null ? Math.round(score) : "?"}</text>
+          <text x={cx} y={cy+2} textAnchor="middle" fontSize="20" fontWeight="700" fill={color}>{safeScore !== null ? Math.round(safeScore) : "?"}</text>
           <text x={cx} y={cy+14} textAnchor="middle" fontSize="7" fill="#94a3b8">/100</text>
         </svg>
       </div>
