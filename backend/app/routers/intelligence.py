@@ -1420,6 +1420,17 @@ async def _execute_rule_from_chat(
     return None
 
 
+
+class _ChatMessage(BaseModel):
+    role:    str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages:        list[_ChatMessage]
+    device_id:       Optional[str] = None
+    pending_confirm: Optional[dict] = None
+
+
 @router.post("/chat")
 async def ai_chat(
     body: ChatRequest,
