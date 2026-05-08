@@ -32,7 +32,7 @@ import {
 // DashboardRuntime: centralized owner of all dashboard state
 // Widgets are passive — they receive slices, never fetch independently
 import { useDashboardRuntime } from "../hooks/useDashboardRuntime.js";
-import { deviceApi } from "../services/api.js";
+import { deviceApi, telemetryApi } from "../services/api.js";
 
 const ACTIVE_DASH_KEY = "active_user_dashboard_id";
 const ACCENT_COLORS   = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#84cc16"];

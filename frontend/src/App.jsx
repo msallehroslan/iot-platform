@@ -230,10 +230,22 @@ function OverviewPage({ refreshKey, onToast }) {
       });
   },[devices.length, refreshKey]);
 
-  useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{const ks=r?.keys||[];setChartKeys(ks);if(ks.length>0&&!ks.includes(chartKey))setChartKey(ks[0]);}).catch(()=>{});},[chartDev?.id]);
+  useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{
+    const NON_SENSOR = new Set(["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal"]);
+    const ks=(r?.keys||[]).filter(k=>!NON_SENSOR.has(k.toLowerCase()));
+    setChartKeys(ks);
+    if(ks.length>0&&!ks.includes(chartKey))setChartKey(ks[0]);
+  }).catch(()=>{});},[chartDev?.id]);
   useEffect(()=>{
     if(!chartDev||!chartKey)return;
-    telemetryApi.history(chartDev.id,chartKey,50).then(setChartData).catch(()=>setChartData([]));
+    telemetryApi.history(chartDev.id,chartKey,50).then(raw=>{
+      // Sanitize: drop non-finite values that cause cliff artifacts
+      const clean=(raw||[]).filter(p=>{
+        const n=typeof p.value==="number"?p.value:parseFloat(p.value);
+        return Number.isFinite(n);
+      }).map(p=>({ts:p.ts,value:typeof p.value==="number"?p.value:parseFloat(p.value)}));
+      setChartData(clean);
+    }).catch(()=>setChartData([]));
   },[chartDev?.id,chartKey]);
   useEffect(()=>{
     if(!chartDev?.id||!chartKey)return;
@@ -307,7 +319,7 @@ function OverviewPage({ refreshKey, onToast }) {
                   {/* Trend pills */}
                   {Object.keys(trends).length>0&&(
                     <div className="flex flex-wrap gap-1 mb-3">
-                      {Object.entries(trends).slice(0,4).map(([key,trend])=>(
+                      {Object.entries(trends).filter(([key])=>!["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal"].includes(key.toLowerCase())).slice(0,4).map(([key,trend])=>(
                         <span key={key} className="text-[9px] px-1.5 py-0.5 rounded-md font-medium" style={{background:"#F4F8FF",color:"#334866"}}>
                           {TREND_ICON[trend]||"?"} {key}
                         </span>
@@ -375,7 +387,13 @@ function TelCard({ device }) {
           <span className={SB[device.status]||SB.INACTIVE}><span className={SD[device.status]||SD.INACTIVE}/>{device.status==="ACTIVE"?"Live":device.status.charAt(0)+device.status.slice(1).toLowerCase()}</span>
         </div>
       </div>
-      {rows.length===0?<p className="text-[11px] text-slate-400 py-2">No telemetry</p>:<div className="divide-y divide-slate-50">{rows.slice(0,5).map(r=><div key={r.key} className="flex items-center justify-between py-1.5"><span className="text-[11px] text-slate-500">{r.key}</span><span className="text-[11px] font-semibold font-mono text-slate-800">{typeof r.value==="number"?r.value.toFixed(2):String(r.value??"—")}</span></div>)}</div>}
+      {(() => {
+        const NON_SENSOR = new Set(["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal"]);
+        const sensorRows = rows.filter(r => !NON_SENSOR.has(r.key.toLowerCase()));
+        return sensorRows.length===0
+          ? <p className="text-[11px] text-slate-400 py-2">No telemetry</p>
+          : <div className="divide-y divide-slate-50">{sensorRows.slice(0,5).map(r=><div key={r.key} className="flex items-center justify-between py-1.5"><span className="text-[11px] text-slate-500">{r.key}</span><span className="text-[11px] font-semibold font-mono text-slate-800">{typeof r.value==="number"?r.value.toFixed(2):String(r.value??"—")}</span></div>)}</div>;
+      })()}
       {ts&&<p className="text-[10px] text-slate-400 mt-3">{new Date(ts).toLocaleTimeString()}</p>}
     </div>
   );

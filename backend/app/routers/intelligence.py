@@ -332,8 +332,18 @@ async def device_summary(
         .all()
     )
 
-    # Trends
-    trends = get_all_key_trends(db, str(device_id), minutes=30)
+    # Trends — exclude GPS coordinates and other non-operational keys
+    # These are device metadata fields, not sensor readings
+    _NON_SENSOR_KEYS = {
+        "latitude", "longitude", "lat", "lng", "lon",
+        "gps_lat", "gps_lng", "gps_lon", "altitude",
+        "rssi", "snr", "battery", "signal",
+    }
+    trends_raw = get_all_key_trends(db, str(device_id), minutes=30)
+    trends = {
+        k: v for k, v in trends_raw.items()
+        if k.lower() not in _NON_SENSOR_KEYS
+    }
 
     # Build quick summary
     rising  = [k for k, v in trends.items() if v["trend"] == "RISING"]
