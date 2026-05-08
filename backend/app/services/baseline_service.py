@@ -26,8 +26,9 @@ from app.models.models import TelemetryData, DeviceBaseline, Device, TelemetryKe
 
 logger = logging.getLogger(__name__)
 
-BASELINE_DAYS     = 30   # days of history to use
-MIN_SAMPLES_HOUR  = 5    # min points per hour bucket to compute baseline
+BASELINE_DAYS     = 30   # days of history to use — full statistical baseline
+BASELINE_DAYS_MIN = 1    # minimum days before partial baseline is computed
+MIN_SAMPLES_HOUR  = 3    # min points per hour bucket (lowered from 5 — works after ~3 min)
 
 
 def _stats(values: list[float]) -> tuple[float, float, float, float]:
@@ -49,18 +50,35 @@ def update_baselines_for_device(db: Session, device_id: str) -> int:
     Rebuild all baselines for a device from last BASELINE_DAYS days.
     Returns number of baseline rows upserted.
     """
-    since = datetime.now(timezone.utc) - timedelta(days=BASELINE_DAYS)
+    # Use 30-day window if available, fall back to all available data
+    # This lets new devices get a partial baseline from day 1
+    since_full    = datetime.now(timezone.utc) - timedelta(days=BASELINE_DAYS)
+    since_partial = datetime.now(timezone.utc) - timedelta(days=BASELINE_DAYS_MIN)
 
-    # Load all numeric telemetry for this device grouped in memory
+    # Try full window first
     rows = (
         db.query(TelemetryData.key, TelemetryData.value_num, TelemetryData.ts)
         .filter(
             TelemetryData.device_id == device_id,
             TelemetryData.value_num.isnot(None),
-            TelemetryData.ts >= since,
+            TelemetryData.ts >= since_full,
         )
         .all()
     )
+
+    # If no 30-day data, use all available history (partial baseline)
+    if not rows:
+        rows = (
+            db.query(TelemetryData.key, TelemetryData.value_num, TelemetryData.ts)
+            .filter(
+                TelemetryData.device_id == device_id,
+                TelemetryData.value_num.isnot(None),
+                TelemetryData.ts >= since_partial,
+            )
+            .all()
+        )
+        if rows:
+            logger.info("baseline: using partial history for device %s", device_id)
 
     if not rows:
         logger.debug("baseline: no data for device %s", device_id)
@@ -201,3 +219,162 @@ def get_threshold_suggestions(db: Session, device_id: str) -> list[dict]:
         })
 
     return suggestions
+
+
+def get_daily_comparison(db: Session, device_id: str) -> dict:
+    """
+    Compare today's average readings against yesterday's averages.
+    Returns per-key delta so intelligence can say:
+    "temperature avg today: 52°C vs yesterday: 45°C (+15%)"
+    Works with any amount of data — no 30-day minimum.
+    """
+    from app.models.models import TelemetryData
+    now      = datetime.now(timezone.utc)
+    today_start     = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start = today_start - timedelta(days=1)
+    yesterday_end   = today_start
+
+    result = {}
+
+    # Get all numeric keys for this device
+    keys = (
+        db.query(TelemetryData.key)
+        .filter(
+            TelemetryData.device_id == device_id,
+            TelemetryData.value_num.isnot(None),
+            TelemetryData.ts >= yesterday_start,
+        )
+        .distinct()
+        .all()
+    )
+
+    for (key,) in keys:
+        # Today's values
+        today_rows = (
+            db.query(TelemetryData.value_num)
+            .filter(
+                TelemetryData.device_id == device_id,
+                TelemetryData.key == key,
+                TelemetryData.value_num.isnot(None),
+                TelemetryData.ts >= today_start,
+                TelemetryData.ts <= now,
+            )
+            .all()
+        )
+        # Yesterday's values
+        yesterday_rows = (
+            db.query(TelemetryData.value_num)
+            .filter(
+                TelemetryData.device_id == device_id,
+                TelemetryData.key == key,
+                TelemetryData.value_num.isnot(None),
+                TelemetryData.ts >= yesterday_start,
+                TelemetryData.ts < yesterday_end,
+            )
+            .all()
+        )
+
+        today_vals = [r.value_num for r in today_rows]
+        yest_vals  = [r.value_num for r in yesterday_rows]
+
+        if not today_vals:
+            continue
+
+        today_mean = sum(today_vals) / len(today_vals)
+        entry = {
+            "today_mean":   round(today_mean, 3),
+            "today_pts":    len(today_vals),
+        }
+
+        if yest_vals:
+            yest_mean = sum(yest_vals) / len(yest_vals)
+            delta_pct = ((today_mean - yest_mean) / abs(yest_mean) * 100) if yest_mean != 0 else 0
+            entry["yesterday_mean"] = round(yest_mean, 3)
+            entry["yesterday_pts"]  = len(yest_vals)
+            entry["delta_pct"]      = round(delta_pct, 1)
+            entry["direction"]      = "up" if delta_pct > 5 else "down" if delta_pct < -5 else "stable"
+
+        result[key] = entry
+
+    return result
+
+
+def get_baseline_deviation(db: Session, device_id: str, current_values: dict) -> dict:
+    """
+    Compare current live readings against 30-day baseline for the current hour.
+    Returns per-key deviation status:
+    {
+      "temperature": {
+        "value": 52.1,
+        "baseline_mean": 45.2,
+        "baseline_stddev": 1.3,
+        "z_score": 5.3,
+        "status": "ABOVE_NORMAL",  # NORMAL / ABOVE_NORMAL / BELOW_NORMAL / NO_BASELINE
+        "message": "52.1°C is 5.3σ above 30-day normal (45.2±1.3°C)"
+      }
+    }
+    Works even with partial baseline (< 30 days) if MIN_SAMPLES_HOUR is met.
+    """
+    current_hour = datetime.now(timezone.utc).hour
+
+    rows = (
+        db.query(DeviceBaseline)
+        .filter(
+            DeviceBaseline.device_id == device_id,
+            DeviceBaseline.hour_of_day == current_hour,
+        )
+        .all()
+    )
+
+    baseline_map = {r.key: r for r in rows}
+    result = {}
+
+    for key, value in current_values.items():
+        if value is None:
+            continue
+        try:
+            val = float(value)
+        except (TypeError, ValueError):
+            continue
+
+        if key not in baseline_map:
+            result[key] = {"value": val, "status": "NO_BASELINE"}
+            continue
+
+        b = baseline_map[key]
+        mean   = b.mean
+        stddev = b.stddev or 0
+
+        if stddev < 1e-6:
+            # Perfectly stable baseline — any deviation is notable
+            delta = val - mean
+            status = "ABOVE_NORMAL" if delta > 0.01 else "BELOW_NORMAL" if delta < -0.01 else "NORMAL"
+            z = None
+        else:
+            z = (val - mean) / stddev
+            if abs(z) <= 2.0:
+                status = "NORMAL"
+            elif z > 2.0:
+                status = "ABOVE_NORMAL"
+            else:
+                status = "BELOW_NORMAL"
+
+        msg_parts = [f"{val:.2f}"]
+        if z is not None:
+            msg_parts.append(f"is {abs(z):.1f}σ {'above' if z > 0 else 'below'}")
+        else:
+            msg_parts.append(f"{'above' if status == 'ABOVE_NORMAL' else 'below' if status == 'BELOW_NORMAL' else 'at'}")
+        msg_parts.append(f"30-day normal ({mean:.2f}±{stddev:.2f})")
+        msg_parts.append(f"[{b.sample_count} samples]")
+
+        result[key] = {
+            "value":            val,
+            "baseline_mean":    round(mean, 3),
+            "baseline_stddev":  round(stddev, 3),
+            "z_score":          round(z, 2) if z is not None else None,
+            "status":           status,
+            "sample_count":     b.sample_count,
+            "message":          " ".join(msg_parts),
+        }
+
+    return result

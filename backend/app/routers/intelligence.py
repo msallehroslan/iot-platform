@@ -333,44 +333,135 @@ async def device_summary(
     )
 
     # Trends — exclude GPS coordinates and other non-operational keys
-    # These are device metadata fields, not sensor readings
+    # ── Non-sensor key filter ────────────────────────────────────────────────
     _NON_SENSOR_KEYS = {
         "latitude", "longitude", "lat", "lng", "lon",
         "gps_lat", "gps_lng", "gps_lon", "altitude",
         "rssi", "snr", "battery", "signal",
     }
-    trends_raw = get_all_key_trends(db, str(device_id), minutes=30)
-    trends = {
-        k: v for k, v in trends_raw.items()
+
+    # ── MULTI-WINDOW INTELLIGENCE ─────────────────────────────────────────────
+    # Trend detection across 3 time windows so the summary covers the whole day:
+    #   short  = last 30 min  → current operational state
+    #   medium = last 3 hours → session-level patterns
+    #   long   = last 24 hours → daily operational baseline
+    #
+    # A key is flagged only if it shows the same anomaly in SHORT window.
+    # The LONG window provides context for TAAT reasoning.
+
+    trends_short  = {
+        k: v for k, v in get_all_key_trends(db, str(device_id), minutes=30).items()
+        if k.lower() not in _NON_SENSOR_KEYS
+    }
+    trends_long   = {
+        k: v for k, v in get_all_key_trends(db, str(device_id), minutes=1440).items()
         if k.lower() not in _NON_SENSOR_KEYS
     }
 
-    # Build quick summary
-    rising  = [k for k, v in trends.items() if v["trend"] == "RISING"]
-    falling = [k for k, v in trends.items() if v["trend"] == "FALLING"]
-    spikes  = [k for k, v in trends.items() if v["trend"] in ("SPIKE", "DROP")]
+    # ── Use STORED health score (computed hourly, covers 24h) ─────────────────
+    # Much more reliable than recomputing from 30-min window on every API call.
+    # Falls back to live computation if no stored score exists yet.
+    from app.services.health_service import get_latest_health, score_device
+    stored_health = get_latest_health(db, str(device_id))
 
-    health = "HEALTHY"
+    if stored_health and stored_health.get("health_score") is not None:
+        # Use stored score — covers uptime/alarms/stability over 24h
+        hs = stored_health["health_score"]
+        if hs >= 75:
+            health = "HEALTHY"
+        elif hs >= 45:
+            health = "WARNING"
+        else:
+            health = "CRITICAL"
+        health_score_val = hs
+    else:
+        # No stored score yet (device just registered) — compute live
+        health = "HEALTHY"
+        health_score_val = None
+
     insights = []
 
+    # Active alarms always override health status
     if active_alarms:
         critical = [a for a in active_alarms if str(a.severity).upper() in ("CRITICAL", "MAJOR")]
         health = "CRITICAL" if critical else "WARNING"
         insights.append(f"{len(active_alarms)} active alarm(s): {', '.join(set(a.alarm_type for a in active_alarms[:3]))}")
 
-    if spikes:
-        health = max(health, "WARNING", key=lambda x: ["HEALTHY","WARNING","CRITICAL"].index(x))
-        insights.append(f"Anomaly detected in: {', '.join(spikes)}")
+    # Current-window anomalies (short window only — prevents startup transient false alarms)
+    spikes  = [k for k, v in trends_short.items() if v["trend"] in ("SPIKE", "DROP")]
+    rising  = [k for k, v in trends_short.items() if v["trend"] == "RISING"]
+    falling = [k for k, v in trends_short.items() if v["trend"] == "FALLING"]
 
+    if spikes:
+        if health == "HEALTHY":
+            health = "WARNING"
+        insights.append(f"Anomaly detected in: {', '.join(spikes)}")
     if rising:
         insights.append(f"Rising trend: {', '.join(rising)}")
     if falling:
         insights.append(f"Falling trend: {', '.join(falling)}")
 
+    # Daily context: flag if something was anomalous earlier today but not now
+    day_spikes = [
+        k for k, v in trends_long.items()
+        if v["trend"] in ("SPIKE", "DROP") and k not in spikes
+    ]
+    if day_spikes and not insights:
+        insights.append(f"Earlier anomaly (resolved): {', '.join(day_spikes[:2])}")
+
     if not insights:
         insights.append("All parameters within normal range")
 
-    # Time since last seen
+    # Device offline check
+    if device.last_seen_at:
+        age = (datetime.now(timezone.utc) - device.last_seen_at).total_seconds()
+        if age > 300:
+            health = "WARNING"
+            insights.insert(0, f"Device offline for {int(age/60)} minutes")
+
+    # ── Baseline deviation: compare live values against 30-day historical normal
+    from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
+    from app.services.data_service import get_latest_telemetry as ds_get_latest
+
+    # Get latest live values for baseline comparison
+    latest_telem = ds_get_latest(db, str(device_id))
+    live_values  = {r["key"]: r["value"] for r in latest_telem.get("values", [])} if latest_telem else {}
+
+    # Baseline deviation — "is today abnormal vs last 30 days?"
+    baseline_dev = get_baseline_deviation(db, str(device_id), live_values)
+
+    # Add baseline insights for keys that are significantly above/below normal
+    above_normal = [k for k, v in baseline_dev.items() if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+    below_normal = [k for k, v in baseline_dev.items() if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+
+    for key in above_normal[:2]:
+        b = baseline_dev[key]
+        insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ above 30-day normal ({b['baseline_mean']:.2f})")
+        if health == "HEALTHY":
+            health = "WARNING"
+
+    for key in below_normal[:2]:
+        b = baseline_dev[key]
+        insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ below 30-day normal ({b['baseline_mean']:.2f})")
+
+    # Yesterday vs today comparison
+    daily_cmp = get_daily_comparison(db, str(device_id))
+    significant_changes = [
+        (k, v) for k, v in daily_cmp.items()
+        if "delta_pct" in v and abs(v["delta_pct"]) >= 15
+    ]
+    if significant_changes and not above_normal and not below_normal:
+        for key, v in significant_changes[:2]:
+            direction = "↑" if v["direction"] == "up" else "↓"
+            insights.append(
+                f"{key}: {direction}{abs(v['delta_pct']):.0f}% vs yesterday "
+                f"({v['today_mean']:.2f} vs {v['yesterday_mean']:.2f})"
+            )
+
+    if not insights:
+        insights.append("All parameters within normal range")
+
+    # Device offline check
     if device.last_seen_at:
         age = (datetime.now(timezone.utc) - device.last_seen_at).total_seconds()
         if age > 300:
@@ -378,13 +469,17 @@ async def device_summary(
             insights.insert(0, f"Device offline for {int(age/60)} minutes")
 
     return {
-        "device_id":    str(device_id),
-        "device_name":  device.name,
-        "health":       health,
-        "insights":     insights,
-        "active_alarms": len(active_alarms),
-        "trends":       {k: v["trend"] for k, v in trends.items()},
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "device_id":        str(device_id),
+        "device_name":      device.name,
+        "health":           health,
+        "health_score":     health_score_val,
+        "insights":         insights,
+        "active_alarms":    len(active_alarms),
+        "trends":           {k: v["trend"] for k, v in trends_short.items()},
+        "trends_24h":       {k: v["trend"] for k, v in trends_long.items()},
+        "baseline_status":  {k: v.get("status") for k, v in baseline_dev.items()},
+        "daily_comparison": {k: v for k, v in daily_cmp.items() if "delta_pct" in v},
+        "generated_at":     datetime.now(timezone.utc).isoformat(),
     }
 
 

@@ -129,29 +129,53 @@ async def lifespan(app: FastAPI):
 
     # Phase 7: Nightly baseline update
     async def _nightly_baseline():
+        # Run immediately on startup — new devices get a baseline from day 1
+        # using whatever data exists (partial baseline is better than none)
+        db = SessionLocal()
+        try:
+            from app.services.baseline_service import update_all_baselines
+            update_all_baselines(db)
+            logger.info("Baseline: initial run complete")
+        except Exception as exc:
+            logger.error("Baseline initial run failed: %s", exc)
+        finally:
+            db.close()
+        # Then every 6 hours (was 24h) — keeps baseline current across the day
         while True:
-            await _asyncio.sleep(86400)  # every 24h
+            await _asyncio.sleep(21600)  # every 6h
             db = SessionLocal()
             try:
                 from app.services.baseline_service import update_all_baselines
                 result = update_all_baselines(db)
-                logger.info("Nightly baseline update: %s", result)
+                logger.info("Baseline updated: %s", result)
             except Exception as exc:
-                logger.error("Nightly baseline failed: %s", exc)
+                logger.error("Baseline update failed: %s", exc)
             finally:
                 db.close()
 
     # Phase 7: Hourly health scoring
     async def _hourly_health():
+        # Run immediately on startup so stored health score is available
+        # from first page load — no waiting for first interval
+        db = SessionLocal()
+        try:
+            from app.services.health_service import score_all_devices
+            score_all_devices(db)
+            logger.info("Health score: initial run complete")
+        except Exception as exc:
+            logger.error("Health score initial run failed: %s", exc)
+        finally:
+            db.close()
+        # Then every 15 min (was 1h) — covers whole-day monitoring
         while True:
-            await _asyncio.sleep(3600)  # every 1h
+            await _asyncio.sleep(900)
             db = SessionLocal()
             try:
                 from app.services.health_service import score_all_devices
                 result = score_all_devices(db)
-                logger.info("Hourly health score: %s", result)
+                logger.info("Health score updated: %s", result)
             except Exception as exc:
-                logger.error("Hourly health score failed: %s", exc)
+                logger.error("Health score failed: %s", exc)
             finally:
                 db.close()
 
