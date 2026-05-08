@@ -419,54 +419,55 @@ async def device_summary(
             health = "WARNING"
             insights.insert(0, f"Device offline for {int(age/60)} minutes")
 
-    # ── Baseline deviation: compare live values against 30-day historical normal
-    from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
-    from app.services.data_service import get_latest_telemetry as ds_get_latest
+    # ── Baseline deviation + daily comparison ────────────────────────────────
+    # Wrapped in try/except — these are enrichment only, never block the response
+    baseline_dev = {}
+    daily_cmp    = {}
+    try:
+        from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
+        from app.services.data_service import get_latest_telemetry as ds_get_latest
 
-    # Get latest live values for baseline comparison
-    latest_telem = ds_get_latest(db, str(device_id))
-    live_values  = {r["key"]: r["value"] for r in latest_telem.get("values", [])} if latest_telem else {}
+        latest_telem = ds_get_latest(db, str(device_id))
+        # values is a dict {key: value}, not a list — fix the extraction
+        raw_values   = latest_telem.get("values", {}) if latest_telem else {}
+        live_values  = raw_values if isinstance(raw_values, dict) else {}
 
-    # Baseline deviation — "is today abnormal vs last 30 days?"
-    baseline_dev = get_baseline_deviation(db, str(device_id), live_values)
+        if live_values:
+            baseline_dev = get_baseline_deviation(db, str(device_id), live_values)
 
-    # Add baseline insights for keys that are significantly above/below normal
-    above_normal = [k for k, v in baseline_dev.items() if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
-    below_normal = [k for k, v in baseline_dev.items() if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+            above_normal = [k for k, v in baseline_dev.items()
+                            if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
+            below_normal = [k for k, v in baseline_dev.items()
+                            if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5]
 
-    for key in above_normal[:2]:
-        b = baseline_dev[key]
-        insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ above 30-day normal ({b['baseline_mean']:.2f})")
-        if health == "HEALTHY":
-            health = "WARNING"
+            for key in above_normal[:2]:
+                b = baseline_dev[key]
+                insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ above 30-day normal ({b['baseline_mean']:.2f})")
+                if health == "HEALTHY":
+                    health = "WARNING"
 
-    for key in below_normal[:2]:
-        b = baseline_dev[key]
-        insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ below 30-day normal ({b['baseline_mean']:.2f})")
+            for key in below_normal[:2]:
+                b = baseline_dev[key]
+                insights.append(f"{key}: {b['value']:.2f} is {abs(b['z_score']):.1f}σ below 30-day normal ({b['baseline_mean']:.2f})")
 
-    # Yesterday vs today comparison
-    daily_cmp = get_daily_comparison(db, str(device_id))
-    significant_changes = [
-        (k, v) for k, v in daily_cmp.items()
-        if "delta_pct" in v and abs(v["delta_pct"]) >= 15
-    ]
-    if significant_changes and not above_normal and not below_normal:
-        for key, v in significant_changes[:2]:
-            direction = "↑" if v["direction"] == "up" else "↓"
-            insights.append(
-                f"{key}: {direction}{abs(v['delta_pct']):.0f}% vs yesterday "
-                f"({v['today_mean']:.2f} vs {v['yesterday_mean']:.2f})"
-            )
+        daily_cmp = get_daily_comparison(db, str(device_id))
+        significant_changes = [
+            (k, v) for k, v in daily_cmp.items()
+            if "delta_pct" in v and abs(v["delta_pct"]) >= 15
+        ]
+        if significant_changes and not baseline_dev:
+            for key, v in significant_changes[:2]:
+                direction = "↑" if v["direction"] == "up" else "↓"
+                insights.append(
+                    f"{key}: {direction}{abs(v['delta_pct']):.0f}% vs yesterday "
+                    f"({v['today_mean']:.2f} vs {v['yesterday_mean']:.2f})"
+                )
+    except Exception as _be:
+        import logging as _log
+        _log.getLogger(__name__).debug("summary: baseline enrichment failed: %s", _be)
 
     if not insights:
         insights.append("All parameters within normal range")
-
-    # Device offline check
-    if device.last_seen_at:
-        age = (datetime.now(timezone.utc) - device.last_seen_at).total_seconds()
-        if age > 300:
-            health = "WARNING"
-            insights.insert(0, f"Device offline for {int(age/60)} minutes")
 
     return {
         "device_id":        str(device_id),

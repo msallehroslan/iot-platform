@@ -103,7 +103,7 @@ def compress_context(ctx: dict, intent: str = "") -> dict:
         out["audit_trail"] = _compress_audit(ctx["audit_trail"])
 
     # Pass through unchanged
-    for k in ("existing_rules", "users", "decision_summary"):
+    for k in ("existing_rules", "users", "decision_summary", "baseline_deviation", "daily_comparison", "slow_intel"):
         if k in ctx:
             out[k] = ctx[k]
 

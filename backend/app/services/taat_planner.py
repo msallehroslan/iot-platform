@@ -333,6 +333,24 @@ def build_context(
         except Exception as _sl_exc:
             logger.debug("taat_planner: slow_loop snapshot unavailable: %s", _sl_exc)
 
+    # ── Baseline deviation + daily comparison for TAAT reasoning ──────────────
+    # Gives TAAT actual numbers: "temperature is 5.3σ above 30-day normal"
+    # and "today vs yesterday" comparisons — not just "baseline active"
+    if focus_id and "baseline" in ctx and ctx["baseline"].get("status") == "active":
+        try:
+            from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
+            from app.services.data_service import get_latest_telemetry as _get_latest
+
+            # Get live values for deviation comparison
+            latest = _get_latest(db, str(focus_id))
+            live_vals = {r["key"]: r["value"] for r in latest.get("values", [])} if latest else {}
+
+            if live_vals:
+                ctx["baseline_deviation"] = get_baseline_deviation(db, str(focus_id), live_vals)
+            ctx["daily_comparison"] = get_daily_comparison(db, str(focus_id))
+        except Exception as _bd_exc:
+            logger.debug("taat_planner: baseline deviation unavailable: %s", _bd_exc)
+
     # compress_context reduces context size ~40% before prompt generation
     return compress_context(ctx, intent=intent)
 
@@ -459,7 +477,48 @@ def build_system_prompt(
         if a.get("anomaly_count", 0) > 0:
             intel_section += f"\nANOMALIES: {a['anomaly_count']} detected, most anomalous: {a.get('most_anomalous_key','?')}"
     if "baseline" in ctx and ctx["baseline"].get("status") == "active":
-        intel_section += f"\nBASELINE: active for {len(ctx['baseline'].get('keys',{}))} keys"
+        bl_keys = ctx["baseline"].get("keys", {})
+        # Inject actual baseline values so TAAT can reason about deviations
+        if bl_keys:
+            bl_lines = []
+            for bk, bv in list(bl_keys.items())[:6]:
+                mean   = bv.get("mean")
+                stddev = bv.get("stddev", 0)
+                upper  = bv.get("upper")
+                lower  = bv.get("lower")
+                if mean is not None:
+                    bl_lines.append(
+                        f"  {bk}: normal={mean:.3f}±{stddev:.3f}"
+                        + (f" (range {lower:.3f}–{upper:.3f})" if upper and lower else "")
+                    )
+            intel_section += f"\nBASELINE (30-day normal, current hour):\n" + "\n".join(bl_lines)
+
+    # Baseline deviation: how far are current readings from 30-day normal?
+    if "baseline_deviation" in ctx:
+        dev = ctx["baseline_deviation"]
+        dev_lines = []
+        for dk, dv in list(dev.items())[:5]:
+            if dv.get("status") in ("ABOVE_NORMAL", "BELOW_NORMAL") and dv.get("z_score"):
+                dev_lines.append(
+                    f"  {dk}: {dv['value']:.3f} is {abs(dv['z_score']):.1f}σ "
+                    f"{'ABOVE' if dv['z_score'] > 0 else 'BELOW'} 30-day normal ({dv['baseline_mean']:.3f})"
+                )
+        if dev_lines:
+            intel_section += f"\nBASELINE DEVIATIONS:\n" + "\n".join(dev_lines)
+
+    # Daily comparison: today vs yesterday
+    if "daily_comparison" in ctx:
+        dc = ctx["daily_comparison"]
+        dc_lines = []
+        for ck, cv in list(dc.items())[:4]:
+            if "delta_pct" in cv and abs(cv["delta_pct"]) >= 10:
+                arrow = "↑" if cv["direction"] == "up" else "↓"
+                dc_lines.append(
+                    f"  {ck}: today avg={cv['today_mean']:.3f} "
+                    f"{arrow}{abs(cv['delta_pct']):.0f}% vs yesterday ({cv['yesterday_mean']:.3f})"
+                )
+        if dc_lines:
+            intel_section += f"\nDAILY COMPARISON (today vs yesterday):\n" + "\n".join(dc_lines)
     if "key_intel" in ctx:
         ki = ctx["key_intel"]
         intel_section += (

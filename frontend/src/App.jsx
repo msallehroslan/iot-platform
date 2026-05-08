@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi, API_BASE } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -205,30 +205,43 @@ function OverviewPage({ refreshKey, onToast }) {
 
   useEffect(()=>{fetchAll();},[refreshKey]);
 
-  // Fetch AI summaries for active devices — throttled to run at most once/60s
-  // Previously ran every 30s refreshKey tick. Intelligence summaries don't change
-  // that fast — 60s cadence cuts API calls to the intelligence endpoint in half.
+  // Fetch AI summaries — two separate effects:
+  // 1. Fires immediately when devices first arrive (no throttle on first load)
+  // 2. Refreshes every 60s via refreshKey, but skips if fetched recently
   const lastSummaryRef = useRef(0);
-  useEffect(()=>{
-    const activeDevs = devices.filter(d=>d.status==="ACTIVE").slice(0,6);
-    if(!activeDevs.length) return;
-    const now = Date.now();
-    if (now - lastSummaryRef.current < 60_000) return;  // throttle to 60s
-    lastSummaryRef.current = now;
-    // FIX: Do NOT setSummaryLoading(true) here — it clears summaries mid-render
-    // causing the HEALTHY → UNKNOWN flicker every 30s.
-    // Instead: fetch silently and MERGE results into existing summaries.
-    // Cards keep showing old data until new data arrives per-device.
+  const hasFetchedRef  = useRef(false);
+
+  const fetchSummaries = (activeDevs) => {
+    if (!activeDevs.length) return;
+    lastSummaryRef.current = Date.now();
     Promise.allSettled(activeDevs.map(d=>intelligenceApi.summary(d.id).then(r=>({id:d.id,data:r}))))
       .then(results=>{
         const updates={};
-        results.forEach(r=>{ if(r.status==="fulfilled" && r.value.data) updates[r.value.id]=r.value.data; });
+        results.forEach(r=>{ if(r.status==="fulfilled" && r.value?.data) updates[r.value.id]=r.value.data; });
         if(Object.keys(updates).length>0){
-          // Merge: preserve existing entries, only update what arrived
           setSummaries(prev=>({...prev,...updates}));
         }
       });
-  },[devices.length, refreshKey]);
+  };
+
+  // Effect 1: run immediately when devices first load (hasFetched guard prevents re-runs)
+  useEffect(()=>{
+    const activeDevs = devices.filter(d=>d.status==="ACTIVE").slice(0,6);
+    if(!activeDevs.length) return;
+    if(hasFetchedRef.current) return; // already fetched once this session
+    hasFetchedRef.current = true;
+    fetchSummaries(activeDevs);
+  },[devices.length]);
+
+  // Effect 2: periodic refresh via refreshKey — throttled to 60s minimum gap
+  useEffect(()=>{
+    if(!hasFetchedRef.current) return; // wait for initial fetch first
+    const activeDevs = devices.filter(d=>d.status==="ACTIVE").slice(0,6);
+    if(!activeDevs.length) return;
+    const now = Date.now();
+    if(now - lastSummaryRef.current < 60_000) return; // throttle
+    fetchSummaries(activeDevs);
+  },[refreshKey]);
 
   useEffect(()=>{if(!chartDev)return;telemetryApi.keys(chartDev.id).then(r=>{
     const NON_SENSOR = new Set(["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal"]);
@@ -2264,6 +2277,46 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
   }, [open]);
 
   const [showHelp, setShowHelp] = useState(false);
+  const [helpData, setHelpData] = useState(null); // dynamic device/key/rule data for help panel
+
+  // Fetch real device+key+rule data when help panel opens
+  const loadHelpData = async () => {
+    if (helpData) return; // already loaded
+    try {
+      const [devRes, rulesRes] = await Promise.allSettled([
+        deviceApi.list({ limit: 20 }),
+        fetch(API_BASE + "/threshold-rules/", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` }
+        }).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+
+      const devices = devRes.status === "fulfilled"
+        ? (Array.isArray(devRes.value) ? devRes.value : devRes.value?.items || [])
+        : [];
+
+      const rules = rulesRes.status === "fulfilled" ? (rulesRes.value || []) : [];
+
+      // Fetch telemetry keys for each active device
+      const activeDevs = devices.filter(d => d.status === "ACTIVE").slice(0, 4);
+      const keyResults = await Promise.allSettled(
+        activeDevs.map(d =>
+          telemetryApi.keys(d.id)
+            .then(r => ({ deviceId: d.id, deviceName: d.name, keys: (r?.keys || []).filter(k =>
+              !["latitude","longitude","lat","lng","lon","altitude","rssi","snr"].includes(k.toLowerCase())
+            )}))
+            .catch(() => ({ deviceId: d.id, deviceName: d.name, keys: [] }))
+        )
+      );
+
+      const deviceKeys = keyResults
+        .filter(r => r.status === "fulfilled")
+        .map(r => r.value);
+
+      setHelpData({ devices, deviceKeys, rules });
+    } catch {
+      setHelpData({ devices: [], deviceKeys: [], rules: [] });
+    }
+  };
 
   const clearHistory = () => {
     const fresh = [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
@@ -2477,7 +2530,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
               <button onClick={clearHistory} title="Clear history" style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.5}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
               </button>
-              <button onClick={()=>setShowHelp(h=>!h)} title="Command help" style={{background: showHelp ? "rgba(47,140,255,0.3)" : "none",border:"none",cursor:"pointer",padding:"2px 4px",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <button onClick={()=>{setShowHelp(h=>!h);loadHelpData();}} title="Command help" style={{background: showHelp ? "rgba(47,140,255,0.3)" : "none",border:"none",cursor:"pointer",padding:"2px 4px",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
               </button>
               <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -2557,86 +2610,103 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
             </div>
           )}
 
-          {/* Help Panel */}
-          {showHelp && (
-            <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
-              <p style={{fontSize:11,fontWeight:700,color:"#334866",margin:0}}>💡 What you can ask TAAT</p>
+          {/* Help Panel — Dynamic based on real tenant devices/keys/rules */}
+          {showHelp && (() => {
+            const hd = helpData;
+            const devKeys = hd?.deviceKeys || [];
+            const rules   = hd?.rules || [];
+            const devices = hd?.devices || [];
+            const loading = !hd;
 
-              {[
-                {
-                  cat: "⚡ Device Control",
-                  color: "#2F8CFF",
-                  cmds: [
-                    "Turn on led1",
-                    "Turn off led2",
-                    "Start the pump",
-                    "Stop the motor",
-                    "Set motor speed to 80",
-                    "Toggle relay1",
-                  ]
-                },
-                {
-                  cat: "🔔 Alarm Rules",
-                  color: "#f59e0b",
-                  cmds: [
-                    "Set temperature alarm above 80 critical",
-                    "Create warning alarm when humidity exceeds 90",
-                    "Set distance alarm on Temperature above 410 warning",
-                    "Change the humidity rule to 75",
-                    "Delete the temperature rule",
-                    "Delete all rules chain",
-                  ]
-                },
-                {
-                  cat: "🚨 Alarm Actions",
-                  color: "#ef4444",
-                  cmds: [
-                    "Acknowledge all alarms",
-                    "Acknowledge all critical alarms",
-                    "Clear all warnings",
-                    "Resolve all alarms",
-                  ]
-                },
-                {
-                  cat: "📊 Insights",
-                  color: "#10b981",
-                  cmds: [
-                    "Which device is most critical?",
-                    "What are the current trends?",
-                    "Give me a fleet overview",
-                    "Why did the temperature alarm fire?",
-                    "Is ESP32-e823 behaving differently this week?",
-                  ]
-                },
-                {
-                  cat: "👥 User Management",
-                  color: "#8b5cf6",
-                  cmds: [
-                    "List all users",
-                    "Invite john@example.com as admin",
-                    "Invite user@example.com as tenant user",
-                    "Delete user john@example.com",
-                    "Make john@example.com admin",
-                  ]
-                },
+            // Build dynamic sections from real data
+            const sections = [];
 
-              ].map(section=>(
-                <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
-                  <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
-                  {section.cmds.map(cmd=>(
-                    <button key={cmd} onClick={()=>{setShowHelp(false);setTab("chat");setTimeout(()=>send(cmd),100);}}
-                      style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",
-                        padding:"3px 0",fontSize:10,color:"#334866",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
-                      → {cmd}
-                    </button>
-                  ))}
+            // ── Device Control — real device names + their actual telemetry keys ──
+            const ctrlCmds = [];
+            devKeys.forEach(({ deviceName, keys }) => {
+              if (keys.length > 0) {
+                ctrlCmds.push(`What can I control on ${deviceName}?`);
+                ctrlCmds.push(`Show status of ${deviceName}`);
+                keys.slice(0, 2).forEach(k => {
+                  ctrlCmds.push(`Set ${deviceName} ${k} to safe level`);
+                });
+              }
+            });
+            if (devices.length > 0) {
+              const first = devices.find(d => d.status === "ACTIVE") || devices[0];
+              ctrlCmds.push(`Restart ${first.name}`);
+              ctrlCmds.push(`What is ${first.name} doing right now?`);
+            }
+            if (ctrlCmds.length === 0) {
+              ctrlCmds.push("What devices are connected?", "Show all active devices", "Which device is most critical?");
+            }
+            sections.push({ cat: "⚡ Device Control", color: "#2F8CFF", cmds: ctrlCmds.slice(0, 6) });
+
+            // ── Alarm Rules — built from real telemetry keys ──
+            const alarmCmds = [];
+            const allKeys = [...new Set(devKeys.flatMap(d => d.keys))].slice(0, 4);
+            allKeys.forEach(k => {
+              alarmCmds.push(`Create critical alarm when ${k} is too high`);
+            });
+            // Existing rules
+            rules.slice(0, 2).forEach(r => {
+              alarmCmds.push(`Change the ${r.key} rule threshold`);
+              alarmCmds.push(`Delete the ${r.key} rule`);
+            });
+            if (alarmCmds.length === 0) {
+              alarmCmds.push("Show all alarm rules", "Create a new alarm rule", "Delete all rules chain");
+            }
+            sections.push({ cat: "🔔 Alarm Rules", color: "#f59e0b", cmds: alarmCmds.slice(0, 5) });
+
+            // ── Alarm Actions ──
+            sections.push({
+              cat: "🚨 Alarm Actions", color: "#ef4444",
+              cmds: ["Acknowledge all alarms", "Acknowledge all critical alarms", "Clear all warnings", "Resolve all alarms"],
+            });
+
+            // ── Insights — real device names ──
+            const insightCmds = ["Give me a fleet overview", "Which device is most critical?", "What are the current trends?"];
+            devKeys.forEach(({ deviceName, keys }) => {
+              if (keys.includes("temperature") || keys.some(k => k.includes("temp"))) {
+                insightCmds.push(`Is ${deviceName} temperature normal?`);
+              }
+              insightCmds.push(`How has ${deviceName} been behaving today vs yesterday?`);
+            });
+            insightCmds.push("Daily health report");
+            sections.push({ cat: "📊 Insights & Analysis", color: "#10b981", cmds: insightCmds.slice(0, 6) });
+
+            // ── User Management ──
+            sections.push({
+              cat: "👥 User Management", color: "#8b5cf6",
+              cmds: ["List all users", "Invite a new admin", "Invite a new tenant user", "Show user roles"],
+            });
+
+            return (
+              <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <p style={{fontSize:11,fontWeight:700,color:"#334866",margin:0}}>💡 What you can ask TAAT</p>
+                  {loading && <span style={{fontSize:9,color:"#94a3b8"}}>Loading your devices…</span>}
                 </div>
-              ))}
-              <button onClick={()=>setShowHelp(false)} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
-                ← Back to chat
-              </button>
-            </div>
-          )}
+
+                {sections.map(section=>(
+                  <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
+                    <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
+                    {section.cmds.map(cmd=>(
+                      <button key={cmd} onClick={()=>{setShowHelp(false);setTab("chat");setTimeout(()=>send(cmd),100);}}
+                        style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",
+                          padding:"3px 0",fontSize:10,color:"#334866",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
+                        → {cmd}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+
+                <button onClick={()=>setShowHelp(false)} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
+                  ← Back to chat
+                </button>
+              </div>
+            );
+          })()}
 
           {/* Tab: Chat */}
           {tab === "chat" && !showHelp && <>
