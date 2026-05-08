@@ -65,6 +65,30 @@ def _scoped_devices(current_user, db: Session):
     return q
 
 
+# ── Model configuration ──────────────────────────────────────────────────────
+# Both default to 70B — can be overridden via Render env vars
+GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.3-70b-versatile")
+GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
+
+# ── Groq rate limiter ─────────────────────────────────────────────────────────
+GROQ_CHAT_LIMIT    = int(os.getenv("GROQ_CHAT_LIMIT",    "20"))
+GROQ_CHAT_WINDOW_H = int(os.getenv("GROQ_CHAT_WINDOW_H", "1"))
+GROQ_RATE_LIMIT_EXCLUDED = {
+    os.getenv("SUPERADMIN_EMAIL", "admin@triaxis.io"),
+}
+
+async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
+    use_model = model or GROQ_MODEL_FAST
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": use_model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
 # ── Production safety helpers ─────────────────────────────────────────────────
 
 _OFFLINE_THRESHOLD_MINS = 5
