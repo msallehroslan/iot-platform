@@ -268,6 +268,34 @@ def build_context(
         ctx["anomalies"] = _safe(tool_get_anomalies,        db, focus_id, hours=24)
         ctx["baseline"]  = _safe(tool_get_baseline,         db, focus_id)
 
+        # Session stats — available from day 1, no baseline prerequisite
+        # Gives TAAT per-key min/max/mean/stddev since device started collecting
+        try:
+            from app.services.trend_service import get_all_key_trends
+            from app.models.models import TelemetryData
+            from datetime import datetime, timezone, timedelta
+            import statistics as _stats
+
+            # Trends over last 3 hours (recent operational state)
+            trends_3h  = get_all_key_trends(db, str(focus_id), minutes=180)
+            # Trends over last 24 hours (full day view)
+            trends_24h = get_all_key_trends(db, str(focus_id), minutes=1440)
+
+            ctx["trends_3h"]  = {
+                k: {"trend": v["trend"], "mean": v["mean"], "std": v["std"],
+                    "min": v["min"], "max": v["max"], "change_pct": v["change_pct"]}
+                for k, v in trends_3h.items()
+                if k.lower() not in {"latitude","longitude","lat","lng","lon","altitude","rssi","snr"}
+            }
+            ctx["trends_24h"] = {
+                k: {"trend": v["trend"], "mean": v["mean"], "std": v["std"],
+                    "min": v["min"], "max": v["max"], "change_pct": v["change_pct"]}
+                for k, v in trends_24h.items()
+                if k.lower() not in {"latitude","longitude","lat","lng","lon","altitude","rssi","snr"}
+            }
+        except Exception as _tr_exc:
+            logger.debug("taat_planner: trend context unavailable: %s", _tr_exc)
+
     if focus_id and intent in ("DEVICE_CONTROL", "RCA", "SCHEDULE"):
         ctx["rpc_history"] = _safe(tool_get_rpc_history, db, focus_id, limit=5)
 
@@ -336,20 +364,30 @@ def build_context(
     # ── Baseline deviation + daily comparison for TAAT reasoning ──────────────
     # Gives TAAT actual numbers: "temperature is 5.3σ above 30-day normal"
     # and "today vs yesterday" comparisons — not just "baseline active"
+    # Daily comparison — runs for ANY device query, no baseline prerequisite
+    # daily_comparison just needs yesterday's telemetry in DB — no 30-day requirement
+    if focus_id:
+        try:
+            from app.services.baseline_service import get_daily_comparison
+            ctx["daily_comparison"] = get_daily_comparison(db, str(focus_id))
+        except Exception as _dc_exc:
+            logger.debug("taat_planner: daily_comparison unavailable: %s", _dc_exc)
+
+    # Baseline deviation — only if 30-day baseline exists AND we have live values
     if focus_id and "baseline" in ctx and ctx["baseline"].get("status") == "active":
         try:
-            from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
+            from app.services.baseline_service import get_baseline_deviation
             from app.services.data_service import get_latest_telemetry as _get_latest
 
-            # Get live values for deviation comparison
-            latest = _get_latest(db, str(focus_id))
-            live_vals = {r["key"]: r["value"] for r in latest.get("values", [])} if latest else {}
+            latest    = _get_latest(db, str(focus_id))
+            # values is a dict {key: value} — not a list
+            raw_vals  = latest.get("values", {}) if latest else {}
+            live_vals = raw_vals if isinstance(raw_vals, dict) else {}
 
             if live_vals:
                 ctx["baseline_deviation"] = get_baseline_deviation(db, str(focus_id), live_vals)
-            ctx["daily_comparison"] = get_daily_comparison(db, str(focus_id))
         except Exception as _bd_exc:
-            logger.debug("taat_planner: baseline deviation unavailable: %s", _bd_exc)
+            logger.debug("taat_planner: baseline_deviation unavailable: %s", _bd_exc)
 
     # compress_context reduces context size ~40% before prompt generation
     return compress_context(ctx, intent=intent)
@@ -460,12 +498,53 @@ def build_system_prompt(
     ) or "  None"
 
     # Build telemetry section
+    trend_section    = ""  # populated below if trends available
+    coverage_section = ""  # data coverage declaration for TAAT reasoning
     telem_section = ""
     if "telemetry" in ctx:
         vals = ctx["telemetry"].get("values", {})
         telem_section = f"\nCURRENT TELEMETRY:\n" + "\n".join(
             f"  {k}: {v}" for k, v in list(vals.items())[:10]
         )
+
+    # Build trend section — available from day 1, crucial for new devices
+    trend_section = ""
+    if "trends_3h" in ctx and ctx["trends_3h"]:
+        t3 = ctx["trends_3h"]
+        lines = [f"  {k}: {v['trend']} (mean={v['mean']:.3f}, range={v['min']:.3f}–{v['max']:.3f}, change={v['change_pct']:+.1f}%)"
+                 for k, v in list(t3.items())[:6]]
+        trend_section += f"\nTRENDS (last 3 hours):\n" + "\n".join(lines)
+
+    if "trends_24h" in ctx and ctx["trends_24h"]:
+        t24 = ctx["trends_24h"]
+        lines = [f"  {k}: {v['trend']} (mean={v['mean']:.3f}, range={v['min']:.3f}–{v['max']:.3f}, change={v['change_pct']:+.1f}%)"
+                 for k, v in list(t24.items())[:6]]
+        trend_section += f"\nTRENDS (last 24 hours):\n" + "\n".join(lines)
+
+    # Data coverage declaration — tells TAAT exactly what it knows and doesn't know
+    baseline_status = ctx.get("baseline", {}).get("status", "unknown")
+    has_yesterday   = any("yesterday_mean" in v for v in ctx.get("daily_comparison", {}).values())
+    has_trends      = bool(ctx.get("trends_24h"))
+    has_baseline    = baseline_status == "active"
+
+    coverage_lines = []
+    if has_baseline:
+        coverage_lines.append("30-day statistical baseline: ACTIVE")
+    else:
+        coverage_lines.append("30-day baseline: LEARNING (not enough history yet — use trend/session data instead)")
+    if has_yesterday:
+        coverage_lines.append("Yesterday comparison: AVAILABLE")
+    else:
+        coverage_lines.append("Yesterday comparison: NOT AVAILABLE (device started recently)")
+    if has_trends:
+        coverage_lines.append("24h trend analysis: AVAILABLE")
+
+    coverage_section = f"\nDATA COVERAGE:\n" + "\n".join(f"  {l}" for l in coverage_lines)
+    coverage_section += (
+        "\n  IMPORTANT: If baseline is learning and no yesterday data, use the 3h/24h trends "
+        "and session min/max/mean to reason about normal vs abnormal. "
+        "Never claim you have no data — trend and session data are always available from day 1."
+    )
 
     # Build intelligence section
     intel_section = ""
@@ -506,19 +585,29 @@ def build_system_prompt(
         if dev_lines:
             intel_section += f"\nBASELINE DEVIATIONS:\n" + "\n".join(dev_lines)
 
-    # Daily comparison: today vs yesterday
+    # Daily comparison: today vs yesterday — show ALL keys with data, no threshold filter
+    # TAAT decides what's significant; filtering here means TAAT says "no data available"
     if "daily_comparison" in ctx:
         dc = ctx["daily_comparison"]
         dc_lines = []
-        for ck, cv in list(dc.items())[:4]:
-            if "delta_pct" in cv and abs(cv["delta_pct"]) >= 10:
-                arrow = "↑" if cv["direction"] == "up" else "↓"
-                dc_lines.append(
-                    f"  {ck}: today avg={cv['today_mean']:.3f} "
-                    f"{arrow}{abs(cv['delta_pct']):.0f}% vs yesterday ({cv['yesterday_mean']:.3f})"
-                )
+        for ck, cv in list(dc.items())[:6]:
+            if cv.get("today_pts", 0) > 0:
+                if "delta_pct" in cv:
+                    arrow = "↑" if cv["direction"] == "up" else ("↓" if cv["direction"] == "down" else "→")
+                    dc_lines.append(
+                        f"  {ck}: today avg={cv['today_mean']:.3f} "
+                        f"{arrow}{abs(cv['delta_pct']):.1f}% vs yesterday ({cv['yesterday_mean']:.3f}) "
+                        f"[today:{cv['today_pts']}pts, yesterday:{cv.get('yesterday_pts',0)}pts]"
+                    )
+                else:
+                    # No yesterday data for this key
+                    dc_lines.append(
+                        f"  {ck}: today avg={cv['today_mean']:.3f} [no yesterday data — first day]"
+                    )
         if dc_lines:
             intel_section += f"\nDAILY COMPARISON (today vs yesterday):\n" + "\n".join(dc_lines)
+        else:
+            intel_section += f"\nDAILY COMPARISON: No telemetry recorded today yet"
     if "key_intel" in ctx:
         ki = ctx["key_intel"]
         intel_section += (
@@ -612,12 +701,13 @@ def build_system_prompt(
 You reason from real sensor data, never guess. Be concise and direct.
 Today: {now}
 
-DEVICES ({len(ctx.get('device_list',[]))}):
-{device_lines}
+DEVICES ({len(ctx.get('device_list',[]))}):{device_lines}
 
 ACTIVE ALARMS:
 {alarm_lines}
 {telem_section}
+{trend_section}
+{coverage_section}
 {intel_section}
 
 AGENT MEMORY:
@@ -631,6 +721,7 @@ RULES:
 3. For HIGH-risk actions, say: "⚠️ This will [description]. Reply 'proceed' to confirm."
 4. If you cannot find a device or key, say so — do not guess.
 5. Keep responses short unless asked for detail.
+6. When baseline is learning, use TRENDS and session min/max/mean as the reference — never say you have no data.
 6. If RECENT SCHEDULED ACTIONS EXECUTED section is present, proactively inform the user at the start of your reply.
 7. When showing scheduled commands, format them as readable text — never raw JSON. Example: "⏰ Turn off led2 on ESP32-e823 at 09:12 UTC".
 8. If AGENT MEMORY shows a recent outcome for the same device/action the user just requested, mention it: "Note: I already did this X minutes ago." Then proceed with the action.
