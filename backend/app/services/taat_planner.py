@@ -31,6 +31,8 @@ Intent categories:
     RECOMMEND       → autonomous recommendation + proposed actions
 """
 from __future__ import annotations
+# Context compression + slow-loop intelligence (added)
+from app.services.taat_context_compressor import compress_context
 
 import json
 import logging
@@ -313,7 +315,26 @@ def build_context(
     if intent in ("RCA", "RECOMMEND"):
         ctx["audit_trail"] = _safe(tool_get_audit_log, db, current_user, limit=10)
 
-    return ctx
+    # ── Slow-loop intelligence snapshot (zero DB, zero I/O) ───────────────────
+    if focus_id:
+        try:
+            from app.services.slow_loop_intelligence import slow_loop
+            snap = slow_loop.get_snapshot(str(focus_id))
+            if snap:
+                ctx["slow_intel"] = {
+                    "health_velocity":     snap.get("health_velocity"),
+                    "degradation_class":   snap.get("degradation_class"),
+                    "failure_probability": snap.get("failure_probability"),
+                    "anomaly_persistence": snap.get("anomaly_persistence", {}),
+                    "recommendations":     snap.get("recommendations", []),
+                    "rul_hours":           snap.get("rul_hours"),
+                    "temporal_chain":      snap.get("temporal_chain", [])[-5:],
+                }
+        except Exception as _sl_exc:
+            logger.debug("taat_planner: slow_loop snapshot unavailable: %s", _sl_exc)
+
+    # compress_context reduces context size ~40% before prompt generation
+    return compress_context(ctx, intent=intent)
 
 
 # ── Step 3: Safety Guard ──────────────────────────────────────────────────────
@@ -457,6 +478,61 @@ def build_system_prompt(
         intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
     intel_section += dispatch_section
     intel_section += semantic_section
+
+    # ── Slow-loop predictive intelligence section ─────────────────────────────
+    if "slow_intel" in ctx:
+        si = ctx["slow_intel"]
+        parts = []
+        deg_class = si.get("degradation_class", "stable")
+        velocity  = si.get("health_velocity")
+        fp        = si.get("failure_probability")
+        rul       = si.get("rul_hours")
+        recs      = si.get("recommendations", [])
+        chain     = si.get("temporal_chain", [])
+
+        if velocity is not None:
+            direction = "degrading" if velocity < 0 else "recovering"
+            parts.append(f"Degradation: {deg_class} ({direction} at {abs(velocity):.1f} pts/h)")
+        if fp is not None:
+            parts.append(f"Failure probability: {fp:.0%}")
+        if rul is not None:
+            parts.append(f"Estimated RUL: {rul:.0f} hours")
+
+        persist = si.get("anomaly_persistence", {})
+        if persist:
+            top_p = sorted(persist.items(), key=lambda x: -x[1])[:3]
+            parts.append("Persistent anomalies: " + ", ".join(f"{k}({v} cycles)" for k, v in top_p))
+
+        if chain:
+            chain_str = " → ".join(e[1] for e in chain[-4:])
+            parts.append(f"Event chain: {chain_str}")
+
+        if parts:
+            intel_section += "\nPREDICTIVE INTELLIGENCE:\n" + "\n".join(f"  {p}" for p in parts)
+
+        if recs:
+            rec_lines = []
+            for i, r in enumerate(recs[:3], 1):
+                conf = int(r.get("confidence", 0) * 100)
+                urg  = r.get("urgency", "")
+                act  = r.get("action", "")
+                rec_lines.append(f"  {i}. {act} [{conf}% conf, {urg}]")
+            intel_section += "\nRANKED RECOMMENDATIONS:\n" + "\n".join(rec_lines)
+
+        # Conditional planning branch
+        hs_val = ctx.get("health", {}).get("health_score", 100) if "health" in ctx else 100
+        try:
+            hs_float = float(hs_val) if hs_val is not None else 100
+        except (ValueError, TypeError):
+            hs_float = 100
+        if hs_float < 30:
+            intel_section += "\nPLANNING BRANCH: health critical → prioritize maintenance scheduling."
+        elif fp is not None and fp > 0.7:
+            intel_section += "\nPLANNING BRANCH: high failure probability → lead with predictive maintenance."
+        elif deg_class == "rapid_decline":
+            intel_section += "\nPLANNING BRANCH: rapid degradation → recommend load reduction before inspection."
+        elif ctx.get("anomalies", {}).get("anomaly_count", 0) > 0:
+            intel_section += "\nPLANNING BRANCH: anomaly active → perform RCA before recommendations."
 
     # Role capabilities
     if role == "CUSTOMER_USER":

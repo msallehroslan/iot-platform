@@ -1,56 +1,88 @@
 /**
- * hooks/useTelemetry.js
+ * hooks/useTelemetry.js — NaN-SAFE PATCHED VERSION
  *
- * OPT 2 — Buffered frontend telemetry flushing.
+ * Changes from original:
+ *   1. sanitizeTelem()   — strips non-finite values at WS callback entry
+ *   2. sanitizePoint()   — drops invalid points before ring buffer push
+ *   3. sanitizeHistMap() — sanitizes bulkHistory REST response before setState
+ *   4. useTelemSlice     — sanitizes seed and WS points
  *
- * Previous: every WS callback fired setLiveValues() + setHistoryData()
- * directly, causing a React render storm: N keys × M widgets per message.
- *
- * New: WS callback writes ONLY to refs (pendingValuesRef, pendingHistoryRef,
- * pendingTsRef). A setInterval flushes to React state every FLUSH_INTERVAL_MS.
- * This decouples message arrival rate from React render rate entirely.
- *
- * Render budget:
- *   - 1Hz ESP32 telemetry × 3 devices = 3 msgs/s → 3 renders/s (old)
- *   - After fix: 4 renders/s regardless of message rate (FLUSH_INTERVAL_MS=250)
- *   - Dashboard with 8 widgets: 8× fewer renders per second
- *
- * Preserved:
- *   - realtime behavior (250ms max lag — imperceptible)
- *   - connection indicators (polled separately)
- *   - fallback polling (still uses REST)
- *   - reconnect logic (unchanged in websocket.js)
- *   - MAX_HISTORY ring buffer (unchanged)
- *   - bulk history seeding on mount (unchanged)
+ * All other behavior (flush cadence, reconnect, fallback polling, MAX_HISTORY) is UNCHANGED.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { TelemetrySocket } from "../services/websocket.js";
 import { telemetryApi } from "../services/api.js";
 
-const MAX_HISTORY      = 50;
-const FLUSH_INTERVAL_MS = 250;   // matches RealtimeCoordinator + websocket.js
+const MAX_HISTORY       = 50;
+const FLUSH_INTERVAL_MS = 250;
+
+// ── Sanitization helpers ──────────────────────────────────────────────────────
+
+function sanitizeTelem(values) {
+  if (!values || typeof values !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(values)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "number") {
+      if (Number.isFinite(v)) out[k] = v;
+      // else drop: NaN, Infinity
+    } else if (typeof v === "string" && v !== "") {
+      const n = parseFloat(v);
+      // If it's a numeric string, coerce to number; otherwise keep as string
+      if (Number.isFinite(n)) out[k] = n;
+      else out[k] = v;
+    } else if (typeof v === "boolean") {
+      out[k] = v;
+    }
+  }
+  return out;
+}
 
 /**
- * @param {string|null}   deviceId - device UUID; pass null to disable
- * @param {string[]|null} keys     - keys to watch (null = all keys for this device)
+ * Validate a single history point.
+ * Returns the point if valid, null if invalid.
  */
+function sanitizePoint(ts, value) {
+  if (!ts) return null;
+  if (typeof value === "number" && !Number.isFinite(value)) return null;
+  if (value === null || value === undefined) return null;
+  return { ts, value };
+}
+
+/**
+ * Sanitize a bulkHistory response { key: [{ts, value}] }.
+ */
+function sanitizeHistMap(histMap) {
+  if (!histMap || typeof histMap !== "object") return {};
+  const out = {};
+  for (const [k, pts] of Object.entries(histMap)) {
+    if (!Array.isArray(pts)) continue;
+    const clean = pts
+      .filter(p => p && p.ts)
+      .map(p => sanitizePoint(p.ts, typeof p.value === "number" ? p.value : parseFloat(p.value)))
+      .filter(Boolean);
+    if (clean.length > 0) out[k] = clean;
+  }
+  return out;
+}
+
+// ── useTelemetry ──────────────────────────────────────────────────────────────
+
 export function useTelemetry(deviceId, keys = null) {
   const [liveValues,  setLiveValues]  = useState({});
   const [historyData, setHistoryData] = useState({});
   const [connected,   setConnected]   = useState(false);
   const [fallback,    setFallback]    = useState(false);
 
-  // Stable refs — written by WS callback, read by flush interval
-  const historyRef       = useRef({});
-  const pendingValuesRef = useRef(null);   // null = no pending update
-  const pendingHistoryRef = useRef(null);  // null = no pending update
-  const pendingTsRef     = useRef("");
+  const historyRef        = useRef({});
+  const pendingValuesRef  = useRef(null);
+  const pendingHistoryRef = useRef(null);
+  const pendingTsRef      = useRef("");
 
-  // ── Initial REST seed ──────────────────────────────────────────────────────
+  // ── Initial REST seed ────────────────────────────────────────────────────
   useEffect(() => {
     if (!deviceId) return;
-
     let cancelled = false;
 
     async function seed() {
@@ -59,8 +91,14 @@ export function useTelemetry(deviceId, keys = null) {
         if (cancelled) return;
         if (latestRows?.length) {
           const values = {};
-          latestRows.forEach(r => { values[r.key] = r.value; });
-          setLiveValues(values);
+          latestRows.forEach(r => {
+            const n = typeof r.value === "number" ? r.value : parseFloat(r.value);
+            // Accept finite numbers + non-numeric strings (status fields)
+            if (Number.isFinite(n)) values[r.key] = n;
+            else if (typeof r.value === "string" && r.value !== "") values[r.key] = r.value;
+            else if (typeof r.value === "boolean") values[r.key] = r.value;
+          });
+          if (Object.keys(values).length) setLiveValues(values);
         }
 
         let keysToLoad = keys && keys.length > 0 ? keys : null;
@@ -69,15 +107,16 @@ export function useTelemetry(deviceId, keys = null) {
           if (cancelled) return;
           keysToLoad = res?.keys || [];
         }
-
         if (!keysToLoad.length) return;
 
         const bulkResult = await telemetryApi.bulkHistory(deviceId, keysToLoad, MAX_HISTORY);
         if (cancelled) return;
 
-        const histMap = bulkResult?.data || {};
+        // SANITIZE bulk history before storing
+        const histMap = sanitizeHistMap(bulkResult?.data || {});
         historyRef.current = histMap;
         setHistoryData(histMap);
+
       } catch (_) {}
     }
 
@@ -85,53 +124,51 @@ export function useTelemetry(deviceId, keys = null) {
     return () => { cancelled = true; };
   }, [deviceId]);
 
-  // ── WebSocket subscription + buffered flush ────────────────────────────────
+  // ── WebSocket subscription + buffered flush ──────────────────────────────
   useEffect(() => {
     if (!deviceId) return;
 
-    // WS callback: accumulate into refs only — zero React state writes here
     const unsub = TelemetrySocket.subscribe(deviceId, keys, (values, ts) => {
-      // Merge incoming values into pending buffer (last-write-wins per key)
+      // SANITIZE at WS ingress
+      const cleanValues = sanitizeTelem(values);
+      if (Object.keys(cleanValues).length === 0) return;
+
       if (pendingValuesRef.current === null) {
-        pendingValuesRef.current = { ...values };
+        pendingValuesRef.current = { ...cleanValues };
       } else {
-        Object.assign(pendingValuesRef.current, values);
+        Object.assign(pendingValuesRef.current, cleanValues);
       }
 
-      // Build pending history updates — append to ring buffer per key
       if (pendingHistoryRef.current === null) {
         pendingHistoryRef.current = {};
       }
       const pending = pendingHistoryRef.current;
-      Object.entries(values).forEach(([k, v]) => {
-        if (!pending[k]) pending[k] = [];
-        pending[k].push({ ts, value: v });
+      Object.entries(cleanValues).forEach(([k, v]) => {
+        // Only numeric values go into history
+        if (typeof v === "number" && Number.isFinite(v)) {
+          if (!pending[k]) pending[k] = [];
+          pending[k].push({ ts, value: v });
+        }
       });
 
-      if (!pendingTsRef.current || ts > pendingTsRef.current) {
+      if (!pendingTsRef.current || (ts && ts > pendingTsRef.current)) {
         pendingTsRef.current = ts;
       }
     });
 
-    // Flush timer: drain pending refs into React state every FLUSH_INTERVAL_MS
-    // This is the ONLY place setLiveValues / setHistoryData are called from the
-    // WS path — batching all accumulated updates into a single React render.
     const flushTimer = setInterval(() => {
       const pendingValues  = pendingValuesRef.current;
       const pendingHistory = pendingHistoryRef.current;
 
       if (!pendingValues && !pendingHistory) return;
 
-      // Swap refs atomically before doing any React work
       pendingValuesRef.current  = null;
       pendingHistoryRef.current = null;
 
-      // Flush live values
       if (pendingValues) {
         setLiveValues(prev => ({ ...prev, ...pendingValues }));
       }
 
-      // Flush history — apply ring buffer logic
       if (pendingHistory) {
         const current = historyRef.current;
         const updated = { ...current };
@@ -140,7 +177,10 @@ export function useTelemetry(deviceId, keys = null) {
         Object.entries(pendingHistory).forEach(([k, newPoints]) => {
           const arr = [...(updated[k] || [])];
           for (const pt of newPoints) {
-            arr.push(pt);
+            // Validate each point before push (belt-and-suspenders)
+            const clean = sanitizePoint(pt.ts, pt.value);
+            if (!clean) continue;
+            arr.push(clean);
             if (arr.length > MAX_HISTORY) arr.shift();
           }
           updated[k] = arr;
@@ -154,7 +194,6 @@ export function useTelemetry(deviceId, keys = null) {
       }
     }, FLUSH_INTERVAL_MS);
 
-    // Connection status polling — independent of data flush
     const statusInterval = setInterval(() => {
       const s = TelemetrySocket.getStatus(deviceId);
       setConnected(s.connected);
@@ -165,27 +204,17 @@ export function useTelemetry(deviceId, keys = null) {
       unsub();
       clearInterval(flushTimer);
       clearInterval(statusInterval);
-      // Clear pending buffers on cleanup to prevent stale data on remount
       pendingValuesRef.current  = null;
       pendingHistoryRef.current = null;
       pendingTsRef.current      = "";
     };
   }, [deviceId, JSON.stringify(keys)]);
 
-  return {
-    liveValues,
-    historyData,
-    connected,
-    usingFallback: fallback,
-  };
+  return { liveValues, historyData, connected, usingFallback: fallback };
 }
 
+// ── useDeviceTelemetry (lightweight, no history) ──────────────────────────────
 
-/**
- * Lightweight hook for Overview / device cards.
- * Single device, no history needed.
- * Also uses buffered flush to avoid per-message renders.
- */
 export function useDeviceTelemetry(deviceId) {
   const [values,    setValues]    = useState({});
   const [ts,        setTs]        = useState(null);
@@ -202,7 +231,9 @@ export function useDeviceTelemetry(deviceId) {
       const v = {};
       let latestTs = null;
       rows.forEach(r => {
-        v[r.key] = r.value;
+        const n = typeof r.value === "number" ? r.value : parseFloat(r.value);
+        if (Number.isFinite(n)) v[r.key] = n;
+        else if (typeof r.value === "string" && r.value !== "") v[r.key] = r.value;
         if (!latestTs || r.ts > latestTs) latestTs = r.ts;
       });
       setValues(v);
@@ -210,10 +241,13 @@ export function useDeviceTelemetry(deviceId) {
     }).catch(() => {});
 
     const unsub = TelemetrySocket.subscribe(deviceId, null, (newValues, newTs) => {
+      const clean = sanitizeTelem(newValues);
+      if (Object.keys(clean).length === 0) return;
+
       if (pendingValuesRef.current === null) {
-        pendingValuesRef.current = { ...newValues };
+        pendingValuesRef.current = { ...clean };
       } else {
-        Object.assign(pendingValuesRef.current, newValues);
+        Object.assign(pendingValuesRef.current, clean);
       }
       if (!pendingTsRef.current || (newTs && newTs > pendingTsRef.current)) {
         pendingTsRef.current = newTs;
@@ -246,37 +280,37 @@ export function useDeviceTelemetry(deviceId) {
   return { values, ts, connected };
 }
 
-
-// ── Priority 3: Per-widget telemetry slice hook ───────────────────────────────
-// Subscribes to ONLY the keys a widget needs.
-// Prevents global liveTelem reference changes from triggering unrelated renders.
-//
-// Usage in a widget:
-//   const { value, history } = useTelemSlice(deviceId, "temperature");
-//
-// The widget receives a stable primitive (value) not a whole object slice.
-// React.memo comparators can then do simple === checks.
+// ── useTelemSlice (per-widget, single key) ────────────────────────────────────
 
 export function useTelemSlice(deviceId, key) {
   const [value,   setValue]   = useState(null);
   const [history, setHistory] = useState([]);
   const [ts,      setTs]      = useState(null);
 
-  const pendingRef    = useRef(null);
-  const historyRef    = useRef([]);
+  const pendingRef  = useRef(null);
+  const historyRef  = useRef([]);
 
   useEffect(() => {
     if (!deviceId || !key) return;
 
-    // Seed from REST
     import("../services/api.js").then(({ telemetryApi }) => {
       telemetryApi.latest(deviceId).then(rows => {
         const row = rows?.find(r => r.key === key);
-        if (row) { setValue(row.value); setTs(row.ts); }
+        if (row) {
+          const n = typeof row.value === "number" ? row.value : parseFloat(row.value);
+          if (Number.isFinite(n)) { setValue(n); setTs(row.ts); }
+        }
       }).catch(() => {});
 
       telemetryApi.bulkHistory(deviceId, [key], MAX_HISTORY).then(res => {
-        const pts = res?.data?.[key] || [];
+        const raw = res?.data?.[key] || [];
+        const pts = raw
+          .filter(p => p && p.ts)
+          .map(p => {
+            const n = typeof p.value === "number" ? p.value : parseFloat(p.value);
+            return Number.isFinite(n) ? { ts: p.ts, value: n } : null;
+          })
+          .filter(Boolean);
         historyRef.current = pts;
         setHistory(pts);
       }).catch(() => {});
@@ -284,7 +318,11 @@ export function useTelemSlice(deviceId, key) {
 
     const unsub = TelemetrySocket.subscribe(deviceId, [key], (values, newTs) => {
       if (key in values) {
-        pendingRef.current = { value: values[key], ts: newTs };
+        const raw = values[key];
+        const n   = typeof raw === "number" ? raw : parseFloat(raw);
+        if (Number.isFinite(n)) {
+          pendingRef.current = { value: n, ts: newTs };
+        }
       }
     });
 
@@ -310,17 +348,8 @@ export function useTelemSlice(deviceId, key) {
   return { value, history, ts };
 }
 
-
-// ── Priority 4: Dashboard preload hook ───────────────────────────────────────
-// Fetches all dashboard data in a single preload request.
-// Returns preloaded slices that widgets can consume without individual fetches.
-//
-// Usage in UserDashboardPage:
-//   const { preload, loading } = useDashboardPreload(dashboardId);
-//   // preload.devices[deviceId].telemetry
-//   // preload.devices[deviceId].intelligence
-//   // preload.devices[deviceId].alarms
-//   // preload.devices[deviceId].history[key]
+// ── useDashboardPreload ───────────────────────────────────────────────────────
+// Unchanged — preload data is sanitized in useDashboardRuntime before use.
 
 export function useDashboardPreload(dashboardId) {
   const [preload, setPreload] = useState(null);
@@ -341,16 +370,10 @@ export function useDashboardPreload(dashboardId) {
       })
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(data => {
-          if (!cancelled) {
-            setPreload(data);
-            setLoading(false);
-          }
+          if (!cancelled) { setPreload(data); setLoading(false); }
         })
         .catch(err => {
-          if (!cancelled) {
-            setError(err);
-            setLoading(false);
-          }
+          if (!cancelled) { setError(err); setLoading(false); }
         });
     });
 

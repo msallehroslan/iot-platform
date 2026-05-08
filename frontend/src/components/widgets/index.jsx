@@ -7,6 +7,12 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../services/api.js";
 // useTelemSlice: subscribes to exactly ONE key — prevents unrelated renders
 import { useTelemSlice } from "../../hooks/useTelemetry.js";
+// NaN-safe chart math — prevents "M0.0,NaN" SVG crashes
+import {
+  safeNum, safeRange, sanitizePoints, sanitizeFlat,
+  makePy, makePxIndex, makePxTime,
+  buildPath, buildAreaPath, buildArcPath, clamp,
+} from "./chartSafeMath.js";
 
 // ── Intent context hook (Phase 10) ────────────────────────────────────────────
 // ── Module-level intel cache ──────────────────────────────────────────────────
@@ -136,13 +142,20 @@ const TREND_META = {
 // ── Shared chart primitives ───────────────────────────────────────────────────
 
 export function Sparkline({ data = [], color = "#3b82f6", height = 36 }) {
-  if (data.length < 2) return <div style={{ height, background: "#f8fafc", borderRadius: 6 }} />;
+  // Sanitize: drop non-finite values — prevents Math.min(...[NaN]) → NaN SVG crash
+  const safe = sanitizeFlat(data);
+  if (safe.length < 2) return <div style={{ height, background: "#f8fafc", borderRadius: 6 }} />;
   const W = 300, H = height;
-  const mn = Math.min(...data), mx = Math.max(...data), rng = mx - mn || 1;
-  const px = i => (i / (data.length - 1)) * W;
-  const py = v => H - 2 - ((v - mn) / rng) * (H - 6);
-  const d  = data.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
-  const area = `${d} L${px(data.length - 1)},${H} L0,${H} Z`;
+  const pad = { l: 0, t: 2 };
+  const h = H - 4;
+  const { mn, rng } = safeRange(safe);
+  const px = makePxIndex(safe.length, pad, W);
+  const py = makePy({ mn, rng }, pad, h);
+  const points = safe.map((v, i) => ({ x: px(i), y: py(v) }));
+  const d = buildPath(points);
+  if (!d) return <div style={{ height, background: "#f8fafc", borderRadius: 6 }} />;
+  const lastPt = points[points.length - 1];
+  const area = buildAreaPath(d, px(0), px(safe.length - 1), H);
   const gid = `sk${color.replace(/[^a-z0-9]/gi, "")}`;
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height, display: "block" }}>
@@ -152,29 +165,37 @@ export function Sparkline({ data = [], color = "#3b82f6", height = 36 }) {
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={area} fill={`url(#${gid})`} />
+      {area && <path d={area} fill={`url(#${gid})`} />}
       <path d={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={px(data.length - 1)} cy={py(data[data.length - 1])} r="3" fill={color} />
+      {Number.isFinite(lastPt.x) && Number.isFinite(lastPt.y) && (
+        <circle cx={lastPt.x.toFixed(1)} cy={lastPt.y.toFixed(1)} r="3" fill={color} />
+      )}
     </svg>
   );
 }
 
 export function LineChartSVG({ data = [], color = "#3b82f6" }) {
-  if (data.length < 2) return (
+  const EMPTY = (
     <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
       <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
     </div>
   );
+  // sanitizePoints drops non-finite values and missing ts — prevents NaN SVG coords
+  const pts = sanitizePoints(data);
+  if (pts.length < 2) return EMPTY;
   const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
   const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
-  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
-  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
-  const px = i => pad.l + (i / (vals.length - 1)) * w;
-  const py = v => pad.t + h - ((v - mn) / rng) * h;
-  const path = vals.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`).join(" ");
-  const area = `${path} L${px(vals.length - 1)},${pad.t + h} L${pad.l},${pad.t + h} Z`;
+  const vals = pts.map(p => p.value);
+  const { mn, mx, rng } = safeRange(vals);
+  const px = makePxIndex(pts.length, pad, w);
+  const py = makePy({ mn, rng }, pad, h);
+  const points = pts.map((_, i) => ({ x: px(i), y: py(pts[i].value) }));
+  const linePath = buildPath(points);
+  if (!linePath) return EMPTY;
+  const area = buildAreaPath(linePath, px(0), px(pts.length - 1), pad.t + h);
   const gid = `lc${color.replace(/[^a-z0-9]/gi, "")}`;
+  const lastPt = points[points.length - 1];
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
       <defs>
@@ -195,9 +216,11 @@ export function LineChartSVG({ data = [], color = "#3b82f6" }) {
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </text>
         ))}
-      <path d={area} fill={`url(#${gid})`} />
-      <path d={path} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={px(vals.length - 1)} cy={py(vals[vals.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
+      {area && <path d={area} fill={`url(#${gid})`} />}
+      <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      {Number.isFinite(lastPt.x) && Number.isFinite(lastPt.y) && (
+        <circle cx={lastPt.x.toFixed(1)} cy={lastPt.y.toFixed(1)} r="4" fill={color} stroke="white" strokeWidth="2" />
+      )}
     </svg>
   );
 }
@@ -205,46 +228,54 @@ export function LineChartSVG({ data = [], color = "#3b82f6" }) {
 export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
   // Renders bucketed data with a min/max band behind the avg line.
   // data shape: [{ ts, value (avg), min, max }, ...]
-  if (data.length < 2) return (
+  const EMPTY = (
     <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
       <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
     </div>
   );
-
+  if (!data || data.length < 2) return EMPTY;
   const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
   const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
-
-  const avgs = data.map((p) =>
-    typeof p.value === "number" ? p.value : parseFloat(p.value) || 0
-  );
-
-  const mins = data.map((p, idx) =>
-    typeof p.min === "number" ? p.min : avgs[idx]
-  );
-
-  const maxs = data.map((p, idx) =>
-    typeof p.max === "number" ? p.max : avgs[idx]
-  );
-
-  const allVals = [...avgs, ...mins, ...maxs];
-  const mn = Math.min(...allVals), mx = Math.max(...allVals), rng = mx - mn || 1;
-
-  const px = (i) => pad.l + (i / (avgs.length - 1)) * w;
-  const py = (v) => pad.t + h - ((v - mn) / rng) * h;
-
-  const avgPath = avgs
-    .map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`)
-    .join(" ");
-
-  const bandPath = [
-    ...maxs.map((v, i) => `${i === 0 ? "M" : "L"}${px(i).toFixed(1)},${py(v).toFixed(1)}`),
-    ...mins.slice().reverse().map((v, i) => `L${px(mins.length - 1 - i).toFixed(1)},${py(v).toFixed(1)}`),
-    "Z",
-  ].join(" ");
-
+  // safeNum drops NaN/undefined instead of silently coercing to 0
+  const avgs = data.map(p => safeNum(p?.value, null));
+  const mins  = data.map((p, i) => safeNum(p?.min,   avgs[i] ?? 0));
+  const maxs  = data.map((p, i) => safeNum(p?.max,   avgs[i] ?? 0));
+  const validMask = avgs.map(v => v !== null && Number.isFinite(v));
+  if (validMask.filter(Boolean).length < 2) return EMPTY;
+  const allVals = [...avgs, ...mins, ...maxs].filter(v => v !== null && Number.isFinite(v));
+  const { mn, mx, rng } = safeRange(allVals);
+  const px = makePxIndex(avgs.length, pad, w);
+  const py = makePy({ mn, rng }, pad, h);
+  let avgPathStr = "", firstAvg = true;
+  for (let i = 0; i < avgs.length; i++) {
+    if (!validMask[i]) continue;
+    const x = px(i), y = py(avgs[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    avgPathStr += `${firstAvg ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)} `;
+    firstAvg = false;
+  }
+  if (!avgPathStr) return EMPTY;
+  let bandStr = "", firstBand = true;
+  for (let i = 0; i < maxs.length; i++) {
+    if (!validMask[i]) continue;
+    const x = px(i), y = py(maxs[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    bandStr += `${firstBand ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)} `;
+    firstBand = false;
+  }
+  for (let i = mins.length - 1; i >= 0; i--) {
+    if (!validMask[i]) continue;
+    const x = px(i), y = py(mins[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    bandStr += `L${x.toFixed(1)},${y.toFixed(1)} `;
+  }
+  if (bandStr) bandStr += "Z";
+  let lastIdx = -1;
+  for (let i = avgs.length - 1; i >= 0; i--) { if (validMask[i]) { lastIdx = i; break; } }
+  const dotX = lastIdx >= 0 ? px(lastIdx) : null;
+  const dotY = lastIdx >= 0 ? py(avgs[lastIdx]) : null;
   const gid = `band${color.replace(/[^a-z0-9]/gi, "")}`;
-
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
       <defs>
@@ -253,7 +284,6 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-
       {[0, 0.25, 0.5, 0.75, 1].map((t) => {
         const y = pad.t + h * t;
         const val = (mx - rng * t).toFixed(1);
@@ -264,7 +294,6 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
           </g>
         );
       })}
-
       {data
         .map((p, idx) => ({ p, idx }))
         .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
@@ -273,34 +302,39 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </text>
         ))}
-
-      <path d={bandPath} fill={color} fillOpacity="0.08" />
-      <path d={avgPath} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-      <circle cx={px(avgs.length - 1)} cy={py(avgs[avgs.length - 1])} r="4" fill={color} stroke="white" strokeWidth="2" />
+      {bandStr && <path d={bandStr} fill={color} fillOpacity="0.08" />}
+      <path d={avgPathStr.trim()} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+      {dotX !== null && Number.isFinite(dotX) && Number.isFinite(dotY) && (
+        <circle cx={dotX.toFixed(1)} cy={dotY.toFixed(1)} r="4" fill={color} stroke="white" strokeWidth="2" />
+      )}
     </svg>
   );
 }
 
 export function GaugeSVG({ value, min = 0, max = 100, color = "#3b82f6" }) {
-  const pct = Math.max(0, Math.min(1, ((value ?? min) - min) / ((max - min) || 1)));
-  const r2d = d => d * Math.PI / 180;
+  // safeNum+clamp: guards against value=undefined/NaN → NaN needle coords
+  const safeMin_ = safeNum(min, 0);
+  const safeMax_ = safeNum(max, safeMin_ + 100);
+  const numVal   = safeNum(value, null);
+  const pct      = numVal !== null ? clamp((numVal - safeMin_) / (safeMax_ - safeMin_ || 1), 0, 1) : 0;
   const cx = 60, cy = 65, R = 50, start = -210, total = 240;
-  const arcPt = a => ({ x: cx + R * Math.cos(r2d(a)), y: cy + R * Math.sin(r2d(a)) });
-  const arc = (a1, a2) => {
-    const s = arcPt(a1), e = arcPt(a2), lg = Math.abs(a2 - a1) > 180 ? 1 : 0;
-    return `M${s.x.toFixed(1)},${s.y.toFixed(1)} A${R},${R} 0 ${lg} 1 ${e.x.toFixed(1)},${e.y.toFixed(1)}`;
-  };
   const needleAngle = start + pct * total;
+  const trackPath = buildArcPath(cx, cy, R, start, start + total);
+  const valuePath = pct > 0 ? buildArcPath(cx, cy, R, start, needleAngle) : null;
+  const r2d = d => d * Math.PI / 180;
   const nx = cx + (R - 14) * Math.cos(r2d(needleAngle));
   const ny = cy + (R - 14) * Math.sin(r2d(needleAngle));
+  const displayVal = numVal !== null && Number.isFinite(numVal) ? numVal.toFixed(1) : "—";
   return (
     <svg viewBox="0 0 120 90" style={{ width: "100%", maxWidth: 180, display: "block", margin: "0 auto" }}>
-      <path d={arc(start, start + total)} fill="none" stroke="#e2e8f0" strokeWidth="9" strokeLinecap="round" />
-      {pct > 0 && <path d={arc(start, needleAngle)} fill="none" stroke={color} strokeWidth="9" strokeLinecap="round" />}
-      <line x1={cx} y1={cy} x2={nx.toFixed(1)} y2={ny.toFixed(1)} stroke={color} strokeWidth="3" strokeLinecap="round" />
+      {trackPath && <path d={trackPath} fill="none" stroke="#e2e8f0" strokeWidth="9" strokeLinecap="round" />}
+      {valuePath  && <path d={valuePath}  fill="none" stroke={color}   strokeWidth="9" strokeLinecap="round" />}
+      {Number.isFinite(nx) && Number.isFinite(ny) && (
+        <line x1={cx} y1={cy} x2={nx.toFixed(1)} y2={ny.toFixed(1)} stroke={color} strokeWidth="3" strokeLinecap="round" />
+      )}
       <circle cx={cx} cy={cy} r="5" fill={color} />
       <text x={cx} y={cy + 18} textAnchor="middle" fontSize="12" fontWeight="700" fill="#1e293b" fontFamily="monospace">
-        {typeof value === "number" ? value.toFixed(1) : "—"}
+        {displayVal}
       </text>
     </svg>
   );
@@ -308,20 +342,25 @@ export function GaugeSVG({ value, min = 0, max = 100, color = "#3b82f6" }) {
 
 export function BarChartSVG({ data = [], color = "#3b82f6" }) {
   // data = [{ts, value}, ...] — time-series array, same shape as LineChartSVG
-  if (!data.length) return (
+  const EMPTY = (
     <div style={{ height: 140, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
       <svg style={{ width: 28, height: 28, color: "#e2e8f0" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 20V10M6 20V4M18 20v-4"/></svg>
       <p style={{ fontSize: 11, color: "#94a3b8" }}>No data yet</p>
     </div>
   );
+  // sanitizePoints drops non-finite values — prevents Math.min(...[NaN]) crash
+  const pts = sanitizePoints(data);
+  if (!pts.length) return EMPTY;
   const W = 460, H = 140, pad = { t: 8, r: 8, b: 20, l: 30 };
   const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
-  const vals = data.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value) || 0);
-  const mn = Math.min(...vals), mx = Math.max(...vals), rng = mx - mn || 1;
+  const vals = pts.map(p => p.value);
+  const { mn, mx, rng } = safeRange(vals);
   const bw = Math.max(1, w / vals.length - 1);
   const px = i => pad.l + (i / vals.length) * w + bw / 2;
-  const bh = v => Math.max(1, ((v - mn) / rng) * h);
+  const bh = v => { const hv = ((safeNum(v, mn) - mn) / rng) * h; return Math.max(1, Number.isFinite(hv) ? hv : 1); };
   const gid = `bc${color.replace(/[^a-z0-9]/gi, "")}`;
+  const lastPxX = px(vals.length - 1);
+  const lastPxY = pad.t + h - bh(vals[vals.length - 1]);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }}>
       <defs>
@@ -342,50 +381,57 @@ export function BarChartSVG({ data = [], color = "#3b82f6" }) {
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </text>
         ))}
-      {vals.map((v, i) => (
-        <rect key={i}
-          x={pad.l + (i / vals.length) * w}
-          y={pad.t + h - bh(v)}
-          width={bw}
-          height={bh(v)}
-          fill={`url(#${gid})`}
-          rx="2"
-        />
-      ))}
-      {/* Latest value dot */}
-      <circle cx={px(vals.length - 1)} cy={pad.t + h - bh(vals[vals.length - 1])} r="3" fill={color} stroke="white" strokeWidth="2" />
+      {vals.map((v, i) => {
+        const bHeight = bh(v);
+        const x = pad.l + (i / vals.length) * w;
+        const y = pad.t + h - bHeight;
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(bHeight)) return null;
+        return <rect key={i} x={x} y={y} width={bw} height={bHeight} fill={`url(#${gid})`} rx="2" />;
+      })}
+      {Number.isFinite(lastPxX) && Number.isFinite(lastPxY) && (
+        <circle cx={lastPxX.toFixed(1)} cy={lastPxY.toFixed(1)} r="3" fill={color} stroke="white" strokeWidth="2" />
+      )}
     </svg>
   );
 }
-
 const PIE_COLORS = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#84cc16"];
 
 export function PieChartSVG({ data = [] }) {
-  const total = data.reduce((s, d) => s + Math.abs(d.value || 0), 0);
-  if (!total) return null;
+  // Guard: drop entries with non-finite/zero value — prevents NaN arc coords
+  const safe = (data || []).filter(d => {
+    const v = safeNum(d?.value, null);
+    return v !== null && Number.isFinite(v) && v !== 0;
+  });
+  const total = safe.reduce((s, d) => s + Math.abs(safeNum(d.value, 0)), 0);
+  if (!total || !safe.length) return null;
   const cx = 60, cy = 60, R = 52, inner = 28;
   let angle = -Math.PI / 2;
-  const slices = data.map((d, i) => {
-    const sweep = (Math.abs(d.value) / total) * 2 * Math.PI;
-    const x1 = cx + R * Math.cos(angle),       y1 = cy + R * Math.sin(angle);
-    const x2 = cx + R * Math.cos(angle + sweep), y2 = cy + R * Math.sin(angle + sweep);
-    const ix1 = cx + inner * Math.cos(angle),    iy1 = cy + inner * Math.sin(angle);
-    const ix2 = cx + inner * Math.cos(angle + sweep), iy2 = cy + inner * Math.sin(angle + sweep);
+  const slices = safe.map((d, i) => {
+    const absVal = Math.abs(safeNum(d.value, 0));
+    const sweep  = (absVal / total) * 2 * Math.PI;
+    if (!Number.isFinite(sweep) || sweep <= 0) { angle += sweep; return null; }
+    const cos1 = Math.cos(angle), sin1 = Math.sin(angle);
+    const cos2 = Math.cos(angle + sweep), sin2 = Math.sin(angle + sweep);
+    const x1 = cx + R * cos1, y1 = cy + R * sin1;
+    const x2 = cx + R * cos2, y2 = cy + R * sin2;
+    const ix1 = cx + inner * cos1, iy1 = cy + inner * sin1;
+    const ix2 = cx + inner * cos2, iy2 = cy + inner * sin2;
+    if ([x1,y1,x2,y2,ix1,iy1,ix2,iy2].some(v => !Number.isFinite(v))) { angle += sweep; return null; }
     const lg = sweep > Math.PI ? 1 : 0;
     const path = `M${ix1.toFixed(1)},${iy1.toFixed(1)} L${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg} 1 ${x2.toFixed(1)},${y2.toFixed(1)} L${ix2.toFixed(1)},${iy2.toFixed(1)} A${inner},${inner} 0 ${lg} 0 ${ix1.toFixed(1)},${iy1.toFixed(1)} Z`;
     angle += sweep;
     return { path, color: PIE_COLORS[i % PIE_COLORS.length] };
-  });
+  }).filter(Boolean);
+  if (!slices.length) return null;
   return (
     <svg viewBox="0 0 120 120" style={{ width: "100%", maxWidth: 140, display: "block", margin: "0 auto" }}>
       {slices.map((s, i) => <path key={i} d={s.path} fill={s.color} />)}
       <text x={cx} y={cy + 4} textAnchor="middle" fontSize="10" fontWeight="700" fill="#334155" fontFamily="monospace">
-        {data.length}
+        {safe.length}
       </text>
     </svg>
   );
 }
-
 // ── Widget type components ────────────────────────────────────────────────────
 
 function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
@@ -578,7 +624,7 @@ export function LineChartWidget({ config, historyData, deviceId }) {
         setChartData(pts);
 
         if (pts.length) {
-          const vals = pts.map(p => p.value).filter(v => v !== null);
+          const vals = pts.map(p => p.value).filter(v => v !== null && Number.isFinite(v));
           const sum = vals.reduce((a, b) => a + b, 0);
 
           setStats({
@@ -723,7 +769,7 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
       .then(res => {
         const vals = (res?.points || [])
           .map(p => p.value)
-          .filter(v => v !== null && !isNaN(v));
+          .filter(v => v !== null && Number.isFinite(v));
 
         if (vals.length) {
           const sum = vals.reduce((a, b) => a + b, 0);
@@ -758,7 +804,7 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
       {/* Gauge dial — colour driven by intent */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <GaugeSVG
-          value={isNaN(num) ? config.min : num}
+          value={isNaN(num) ? (config.min ?? 0) : num}
           min={config.min ?? 0}
           max={config.max ?? 100}
           color={gaugeColor}
@@ -912,7 +958,7 @@ export function BarChartWidget({ config, historyData, deviceId }) {
         setChartData(pts);
 
         if (pts.length) {
-          const vals = pts.map(p => p.value).filter(v => v !== null);
+          const vals = pts.map(p => p.value).filter(v => v !== null && Number.isFinite(v));
           const sum = vals.reduce((a, b) => a + b, 0);
 
           setStats({
@@ -1975,12 +2021,12 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
   }
 
   // Build series with individual min/max for true multi-axis
+  // sanitizePoints drops non-finite values — prevents Math.min(...[]) → Infinity
   const series = keys.map((k,i)=>{
-    const pts = (mergedHistory[k]||[]).map(p=>({ts:p.ts, value:typeof p.value==="number"?p.value:parseFloat(p.value)||0}));
+    const pts = sanitizePoints(mergedHistory[k]||[]);
     const vals = pts.map(p=>p.value);
-    const mn = vals.length ? Math.min(...vals) : 0;
-    const mx = vals.length ? Math.max(...vals) : 1;
-    return { key:k, pts, color: config.colors?.[i]||MULTI_COLORS[i%MULTI_COLORS.length], mn, mx, rng: mx-mn||1 };
+    const { mn, mx, rng } = safeRange(vals);
+    return { key:k, pts, color: config.colors?.[i]||MULTI_COLORS[i%MULTI_COLORS.length], mn, mx, rng };
   }).filter(s=>s.pts.length>1);
 
   if (!series.length) return (
@@ -1989,10 +2035,12 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
     </div>
   );
 
-  // Shared X domain
-  const allTs = series.flatMap(s=>s.pts.map(p=>new Date(p.ts).getTime()));
-  const minTs = Math.min(...allTs), maxTs = Math.max(...allTs);
-  const px = ts => pad.l + ((new Date(ts).getTime()-minTs)/(maxTs-minTs||1))*w;
+  // Shared X domain — safeMin/safeMax guard against empty allTs array
+  const allTs = series.flatMap(s=>s.pts.map(p=>new Date(p.ts).getTime())).filter(t=>Number.isFinite(t));
+  const minTs = allTs.length ? Math.min(...allTs) : 0;
+  const maxTs = allTs.length ? Math.max(...allTs) : 1;
+  const _pxTime = makePxTime(minTs, maxTs, pad, w);
+  const px = ts => _pxTime(ts);
 
   return (
     <div style={{height:"100%",display:"flex",flexDirection:"column",gap:4}}>
@@ -2016,14 +2064,15 @@ export function MultiAxisChartWidget({ config, historyData, deviceId }) {
         ))}
         {/* Each series line */}
         {series.map(s=>{
-          const py = v => pad.t+h-((v-s.mn)/s.rng)*h;
-          const d = s.pts.map((p,i)=>`${i===0?"M":"L"}${px(p.ts).toFixed(1)},${py(p.value).toFixed(1)}`).join(" ");
-          // Fill area under line
+          const pyS = makePy({ mn: s.mn, rng: s.rng }, { t: pad.t }, h);
+          const sPoints = s.pts.map(p => ({ x: px(p.ts), y: pyS(p.value) }));
+          const d = buildPath(sPoints);
+          if (!d) return null;
           const first = s.pts[0], last = s.pts[s.pts.length-1];
-          const area = `M${px(first.ts).toFixed(1)},${pad.t+h} ${d.slice(1)} L${px(last.ts).toFixed(1)},${pad.t+h} Z`;
+          const area = buildAreaPath(d, px(first.ts), px(last.ts), pad.t+h);
           return (
             <g key={s.key}>
-              <path d={area} fill={s.color} fillOpacity="0.06"/>
+              {area && <path d={area} fill={s.color} fillOpacity="0.06"/>}
               <path d={d} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
             </g>
           );

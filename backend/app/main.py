@@ -61,6 +61,12 @@ async def lifespan(app: FastAPI):
     await _rt_coordinator.start()
     logger.info("RealtimeCoordinator started")
 
+    # SlowLoopEngine — deferred heavy intelligence (degradation velocity, RUL, ranked recommendations)
+    # Runs every 5s in background — TAAT reads snapshots with zero DB/I/O latency
+    from app.services.slow_loop_intelligence import slow_loop as _slow_loop
+    await _slow_loop.start()
+    logger.info("SlowLoopEngine started")
+
     # IntelligenceCoordinator — async intelligence snapshot engine
     from app.core.intelligence_coordinator import intelligence_coordinator as _intel_coord
     await _intel_coord.start()
@@ -188,6 +194,11 @@ async def lifespan(app: FastAPI):
     # OPT 1: Stop coordinator — flushes remaining buffer before shutdown
     await _rt_coordinator.stop()
     logger.info("RealtimeCoordinator stopped")
+
+    # Stop SlowLoopEngine
+    from app.services.slow_loop_intelligence import slow_loop as _slow_loop
+    await _slow_loop.stop()
+    logger.info("SlowLoopEngine stopped")
 
     await _intel_coord.stop()
     logger.info("IntelligenceCoordinator stopped")
