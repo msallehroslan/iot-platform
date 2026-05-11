@@ -18,7 +18,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
-import json
 
 from app.core.database import get_db
 from app.core.security import decode_token
@@ -32,66 +31,6 @@ ROLE_CUSTOMER_USER = "CUSTOMER_USER"
 
 # Roles that belong to a tenant (not customer-scoped)
 TENANT_ROLES = {ROLE_TENANT_ADMIN, ROLE_TENANT_USER}
-
-
-# ── User cache — keyed by user_id, TTL 60s ───────────────────────────────────
-# Eliminates DB query on every authenticated request.
-# JWT signature already validates the token cryptographically.
-# Cache evicts when user is deactivated/role-changed (60s max lag is acceptable).
-_USER_CACHE_TTL = 60  # seconds
-
-def _cache_key(user_id: str) -> str:
-    return f"auth:user:{user_id}"
-
-def _get_cached_user(user_id: str) -> Optional[dict]:
-    try:
-        from app.services.cache_service import cache as _cache
-        if not _cache.enabled or not _cache._client:
-            return None
-        import asyncio, concurrent.futures
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            fut = asyncio.run_coroutine_threadsafe(
-                _cache._client.get(_cache_key(user_id)), loop
-            )
-            raw = fut.result(timeout=1)
-            if raw:
-                return json.loads(raw)
-    except Exception:
-        pass
-    return None
-
-def _set_cached_user(user_id: str, user_data: dict) -> None:
-    try:
-        from app.services.cache_service import cache as _cache
-        if not _cache.enabled or not _cache._client:
-            return
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                _cache._client.setex(
-                    _cache_key(user_id),
-                    _USER_CACHE_TTL,
-                    json.dumps(user_data),
-                ),
-                loop,
-            )
-    except Exception:
-        pass
-
-
-class _CachedUser:
-    """Lightweight user object built from cache — same interface as SQLAlchemy User model."""
-    def __init__(self, data: dict):
-        self.id            = UUID(data["id"])
-        self.email         = data["email"]
-        self.role          = data["role"]
-        self.tenant_id     = UUID(data["tenant_id"]) if data.get("tenant_id") else None
-        self.customer_id   = UUID(data["customer_id"]) if data.get("customer_id") else None
-        self.is_active     = data.get("is_active", True)
-        self.first_name    = data.get("first_name", "")
-        self.last_name     = data.get("last_name", "")
 
 
 def _resolve_user(credentials: HTTPAuthorizationCredentials, db: Session) -> User:
@@ -112,26 +51,9 @@ def _resolve_user(credentials: HTTPAuthorizationCredentials, db: Session) -> Use
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token missing subject")
 
-    # ── Try cache first — avoids DB query on every request ───────────────────
-    cached = _get_cached_user(user_id)
-    if cached:
-        return _CachedUser(cached)
-
-    # ── Cache miss — query DB once, then cache ────────────────────────────────
     user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
-
-    _set_cached_user(user_id, {
-        "id":          str(user.id),
-        "email":       user.email,
-        "role":        user.role,
-        "tenant_id":   str(user.tenant_id) if user.tenant_id else None,
-        "customer_id": str(user.customer_id) if user.customer_id else None,
-        "is_active":   user.is_active,
-        "first_name":  user.first_name or "",
-        "last_name":   user.last_name or "",
-    })
     return user
 
 

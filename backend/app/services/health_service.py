@@ -87,19 +87,14 @@ def _alarm_score(device_id: str, db: Session) -> float:
 
 
 def _stability_score(device_id: str, db: Session) -> float:
-    """Score penalised for volatile/spike/drop trends.
-    Tries 60min window first; falls back to 24h for new devices with little history.
-    """
+    """Score penalised for volatile/spike/drop trends."""
     try:
         trends = get_all_key_trends(db, device_id, minutes=60)
-        if not trends:
-            # New device or recent start — try 24h window
-            trends = get_all_key_trends(db, device_id, minutes=1440)
     except Exception:
         return 80.0  # default if trend service fails
 
     if not trends:
-        return 75.0  # new device: slight uncertainty penalty vs arbitrary 80
+        return 80.0  # no data yet
 
     score = 100.0
     for key, t in trends.items():

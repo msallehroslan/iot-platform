@@ -11,7 +11,7 @@ Features:
 - Timing — each step is timed for observability
 """
 from __future__ import annotations
-import asyncio
+
 import logging
 import time
 import uuid
@@ -25,26 +25,6 @@ from app.services.taat_agent_planner import Plan, Step
 from app.services.taat_tool_registry import ToolResult, call as registry_call
 
 logger = logging.getLogger(__name__)
-
-# ── Read-safe tools — parallelisable with asyncio.gather() ───────────────────
-# Write tools (send_rpc, ack_alarm, clear_alarm, create_rule, delete_rule,
-# save_memory, schedule_rpc) are intentionally excluded — mutations must be
-# sequential to preserve audit trail and avoid race conditions.
-READ_TOOLS = frozenset({
-    "get_devices",
-    "get_latest_telemetry",
-    "get_active_alarms",
-    "get_device_health",
-    "get_anomalies",
-    "get_baseline",
-    "get_rpc_history",
-    "get_audit_log",
-    "generate_report",
-    "get_memory",
-    "get_key_intelligence",
-    "get_trends",
-    "get_health_summary",
-})
 
 
 # ── Execution trace ───────────────────────────────────────────────────────────
@@ -117,109 +97,57 @@ async def execute(
     kwargs_base = extra_kwargs or {}
     t_total = time.monotonic()
 
-    # ── Partition steps into read batches and write singles ──────────────────
-    # Read tools have no side effects and can be parallelised safely.
-    # Write tools must remain sequential for audit correctness.
-    #
-    # Algorithm: scan the step list in order. Accumulate consecutive READ steps
-    # into a batch. When a WRITE step or the end is reached, flush the batch
-    # via asyncio.gather(), then execute the WRITE step sequentially.
-    # This preserves the original step order in the trace.
-
-    step_groups: list = []  # list of (is_parallel: bool, steps: list[Step])
-    current_reads: list = []
-
     for step in plan.steps:
-        if step.tool in READ_TOOLS:
-            current_reads.append(step)
-        else:
-            if current_reads:
-                step_groups.append((True, current_reads))
-                current_reads = []
-            step_groups.append((False, [step]))
+        t0 = time.monotonic()
 
-    if current_reads:
-        step_groups.append((True, current_reads))
+        # Merge base kwargs + step args + accumulated results
+        merged = {**kwargs_base, **step.args}
 
-    for is_parallel, steps in step_groups:
-        if is_parallel and len(steps) > 1:
-            # ── Parallel READ batch ───────────────────────────────────────────
-            logger.debug(
-                "executor.parallel trace_id=%s tools=%s",
-                trace.trace_id, [s.tool for s in steps],
+        # Forward previously computed output_key results as kwargs
+        # e.g. step that needs device_id from a previous get_devices result
+        _inject_forward_results(merged, trace.results, step)
+
+        logger.debug("executor.step trace_id=%s tool=%s args=%s", trace.trace_id, step.tool, _safe_repr(merged))
+
+        try:
+            result: ToolResult = await registry_call(
+                step.tool, db=db, current_user=current_user, **merged
             )
-            t_batch = time.monotonic()
-
-            async def _run_step(step: Step) -> tuple:
-                merged = {**kwargs_base, **step.args}
-                _inject_forward_results(merged, trace.results, step)
-                t0 = time.monotonic()
-                try:
-                    res = await registry_call(
-                        step.tool, db=db, current_user=current_user, **merged
-                    )
-                except Exception as exc:
-                    logger.error("executor.parallel.step failed tool=%s: %s", step.tool, exc)
-                    res = ToolResult(tool_name=step.tool, success=False, error=str(exc))
-                duration = (time.monotonic() - t0) * 1000
-                return step, res, duration
-
-            results_list = await asyncio.gather(*[_run_step(s) for s in steps])
-
-            for step, result, duration in results_list:
-                step_trace = StepTrace(
-                    tool=step.tool, label=step.label or step.tool,
-                    success=result.success, data=result.data,
-                    error=result.error, duration_ms=round(duration, 1),
-                )
-                trace.steps.append(step_trace)
-                if not result.success:
-                    trace.all_success = False
-                    trace.errors.append(f"{step.tool}: {result.error}")
-                if step.output_key and result.data:
-                    trace.results[step.output_key] = result.data
-
-            logger.debug(
-                "executor.parallel done trace_id=%s tools=%d batch_ms=%.1f",
-                trace.trace_id, len(steps),
-                (time.monotonic() - t_batch) * 1000,
+        except Exception as exc:
+            logger.error("executor.step failed tool=%s: %s", step.tool, exc)
+            result = ToolResult(
+                tool_name=step.tool, success=False, error=str(exc)
             )
 
-        else:
-            # ── Sequential (single READ or any WRITE) ─────────────────────────
-            for step in steps:
-                t0 = time.monotonic()
-                merged = {**kwargs_base, **step.args}
-                _inject_forward_results(merged, trace.results, step)
-                logger.debug(
-                    "executor.step trace_id=%s tool=%s args=%s",
-                    trace.trace_id, step.tool, _safe_repr(merged),
-                )
-                try:
-                    result: ToolResult = await registry_call(
-                        step.tool, db=db, current_user=current_user, **merged
-                    )
-                except Exception as exc:
-                    logger.error("executor.step failed tool=%s: %s", step.tool, exc)
-                    result = ToolResult(tool_name=step.tool, success=False, error=str(exc))
+        duration = (time.monotonic() - t0) * 1000
 
-                duration = (time.monotonic() - t0) * 1000
-                step_trace = StepTrace(
-                    tool=step.tool, label=step.label or step.tool,
-                    success=result.success, data=result.data,
-                    error=result.error, duration_ms=round(duration, 1),
-                )
-                trace.steps.append(step_trace)
-                if not result.success:
-                    trace.all_success = False
-                    trace.errors.append(f"{step.tool}: {result.error}")
-                    logger.warning("executor.step failed tool=%s error=%s", step.tool, result.error)
-                if step.output_key and result.data:
-                    trace.results[step.output_key] = result.data
-                logger.debug(
-                    "executor.step done tool=%s success=%s duration=%.1fms",
-                    step.tool, result.success, duration,
-                )
+        step_trace = StepTrace(
+            tool        = step.tool,
+            label       = step.label or step.tool,
+            success     = result.success,
+            data        = result.data,
+            error       = result.error,
+            duration_ms = round(duration, 1),
+        )
+        trace.steps.append(step_trace)
+
+        if not result.success:
+            trace.all_success = False
+            trace.errors.append(f"{step.tool}: {result.error}")
+            logger.warning(
+                "executor.step failed tool=%s error=%s",
+                step.tool, result.error,
+            )
+            # Continue — don't abort on single step failure
+
+        # Store named output for downstream steps
+        if step.output_key and result.data:
+            trace.results[step.output_key] = result.data
+
+        logger.debug(
+            "executor.step done tool=%s success=%s duration=%.1fms",
+            step.tool, result.success, duration,
+        )
 
     trace.total_ms    = round((time.monotonic() - t_total) * 1000, 1)
     trace.completed_at = datetime.now(timezone.utc).isoformat()

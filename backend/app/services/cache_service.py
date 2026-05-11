@@ -50,7 +50,6 @@ TTL_UNIFIED    = 30    # unified_intelligence — combines many sources
 TTL_ANOMALY    = 60    # anomaly_summary — z-scores don't change per-second
 TTL_HEALTH     = 120   # health_score — recomputed hourly
 TTL_BASELINE   = 300   # baseline — updated nightly, very stable
-TTL_TREND      = 60    # trend analysis — 30-min window, safe to cache 60s
 
 
 class CacheService:

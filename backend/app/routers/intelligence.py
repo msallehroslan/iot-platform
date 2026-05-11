@@ -65,31 +65,6 @@ def _scoped_devices(current_user, db: Session):
     return q
 
 
-# ── Model configuration ──────────────────────────────────────────────────────
-# Both default to 70B — can be overridden via Render env vars
-GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.3-70b-versatile")
-GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
-
-# ── Groq rate limiter ─────────────────────────────────────────────────────────
-GROQ_CHAT_LIMIT    = int(os.getenv("GROQ_CHAT_LIMIT",    "20"))
-GROQ_CHAT_WINDOW_H = int(os.getenv("GROQ_CHAT_WINDOW_H", "1"))
-GROQ_RATE_LIMIT_EXCLUDED = {
-    os.getenv("SUPERADMIN_EMAIL", "admin@triaxis.io"),
-    "msallehroslan@gmail.com",
-}
-
-async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
-    use_model = model or GROQ_MODEL_FAST
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": use_model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-
 # ── Production safety helpers ─────────────────────────────────────────────────
 
 _OFFLINE_THRESHOLD_MINS = 5
@@ -173,9 +148,8 @@ async def root_cause_analysis(
         .all()
     )
 
-    # 2. Trends — 60min (current) AND 24h (session view, works from day 1)
-    trends     = get_all_key_trends(db, str(device_id), minutes=60)
-    trends_24h = get_all_key_trends(db, str(device_id), minutes=1440)
+    # 2. Current trends for all keys
+    trends = get_all_key_trends(db, str(device_id), minutes=60)
 
     # 3. Active threshold rules
     rules = (
@@ -246,46 +220,6 @@ async def root_cause_analysis(
         for r in rules
     ]
 
-    # 5. Baseline + daily comparison — enrich context even if learning
-    from app.services.data_service import get_baseline_now as ds_get_baseline
-    from app.services.baseline_service import get_daily_comparison
-    baseline_ctx  = ds_get_baseline(db, str(device_id))
-    daily_cmp_ctx = get_daily_comparison(db, str(device_id))
-
-    # Data coverage — tells LLM exactly what reference data is available
-    has_baseline  = baseline_ctx.get("status") == "active"
-    has_yesterday = any("yesterday_mean" in v for v in daily_cmp_ctx.values())
-    coverage = {
-        "baseline_30day":   "ACTIVE"   if has_baseline  else "LEARNING — use trends and session ranges instead",
-        "yesterday_data":   "AVAILABLE" if has_yesterday else "NOT AVAILABLE — device started recently",
-        "session_trends":   "AVAILABLE (24h)" if trends_24h else "LIMITED",
-        "note": "When baseline is learning, reason from session min/max/mean and trend direction only."
-    }
-
-    # Trend summary for 24h
-    trend_24h_summary = {
-        k: {
-            "trend": v["trend"],
-            "change_pct": v.get("change_pct", 0),
-            "mean": v.get("mean"), "min": v.get("min"), "max": v.get("max"),
-            "std": v.get("std"),
-        }
-        for k, v in trends_24h.items()
-        if k.lower() not in {"latitude","longitude","lat","lng","lon","altitude","rssi","snr"}
-    }
-
-    # Daily comparison formatted for LLM
-    daily_cmp_summary = {
-        k: {
-            "today_mean": v.get("today_mean"),
-            "yesterday_mean": v.get("yesterday_mean"),
-            "delta_pct": v.get("delta_pct"),
-            "direction": v.get("direction", "first_day"),
-        }
-        for k, v in daily_cmp_ctx.items()
-        if k.lower() not in {"latitude","longitude","lat","lng","lon"}
-    }
-
     context = {
         "device": {
             "name": device.name,
@@ -293,12 +227,9 @@ async def root_cause_analysis(
             "status": device.status.value if hasattr(device.status, 'value') else str(device.status),
             "last_seen": device.last_seen_at.isoformat() if device.last_seen_at else None,
         },
-        "data_coverage":    coverage,
-        "alarms_last_24h":  alarm_summary,
-        "trends_60min":     trend_summary,
-        "trends_24h":       trend_24h_summary,
-        "daily_comparison": daily_cmp_summary,
-        "active_rules":     rules_summary,
+        "alarms_last_24h": alarm_summary,
+        "current_trends": trend_summary,
+        "active_rules": rules_summary,
         "recent_telemetry": telemetry_snapshot,
     }
 
@@ -307,29 +238,20 @@ async def root_cause_analysis(
 Device context:
 {json.dumps(context, indent=2)}
 
-CRITICAL INSTRUCTIONS:
-- Check data_coverage first. If baseline_30day is LEARNING, do NOT say you lack data.
-  Instead, use trends_24h and session min/max/mean as your reference for normal vs abnormal.
-- If yesterday_data is NOT AVAILABLE, compare against the 24h session average instead.
-- Always reason from whatever data IS present — never say there is nothing to analyze.
-- A FALLING trend in a velocity sensor is always significant even without a baseline.
-
 Analyze this data and provide:
 
-1. **Health Status** — HEALTHY / WARNING / CRITICAL with one sentence explanation.
-   Base on: active alarms, trend direction, anomaly detection, deviation from session norms.
+1. **Health Status** — Overall device health: HEALTHY / WARNING / CRITICAL with one sentence explanation.
 
-2. **Key Observations** — What is each sensor doing right now vs its session average?
-   Use the min/max/mean from trends_24h as the reference range.
+2. **Root Cause Analysis** — What is causing any alarms or anomalies? Be specific about which telemetry keys are involved and why.
 
-3. **Trend Analysis** — Direction and magnitude of change over last 3h and 24h.
-   Flag any key that has changed more than 10% from its session mean.
+3. **Trend Insights** — What patterns do you see in the data? Any correlations between keys?
 
-4. **Risk Assessment** — What could happen in the next 1-4 hours if trends continue?
+4. **Risk Assessment** — What could happen in the next 1-4 hours if current trends continue?
 
-5. **Recommended Actions** — Max 3, ranked by priority, specific to this device's data.
+5. **Recommended Actions** — Specific actionable steps ranked by priority (max 3).
 
-Be concise, technical, and actionable. Base everything on the actual data provided."""
+Be concise, technical, and actionable. Avoid generic advice. Base everything on the actual data provided.
+Format your response with clear sections using the numbered headers above."""
 
     # ── Call Claude API ───────────────────────────────────────────────────────
     api_key = os.getenv("GROQ_API_KEY")
@@ -410,269 +332,158 @@ async def device_summary(
         .all()
     )
 
-    # Trends — exclude GPS coordinates and other non-operational keys
-    # ── Non-sensor key filter ────────────────────────────────────────────────
-    _NON_SENSOR_KEYS = {
-        "latitude", "longitude", "lat", "lng", "lon",
-        "gps_lat", "gps_lng", "gps_lon", "altitude",
-        "rssi", "snr", "battery", "signal",
-    }
+    # Trends
+    trends = get_all_key_trends(db, str(device_id), minutes=30)
 
-    # ── MULTI-WINDOW INTELLIGENCE ─────────────────────────────────────────────
-    # Trend detection across 3 time windows so the summary covers the whole day:
-    #   short  = last 30 min  → current operational state
-    #   medium = last 3 hours → session-level patterns
-    #   long   = last 24 hours → daily operational baseline
-    #
-    # A key is flagged only if it shows the same anomaly in SHORT window.
-    # The LONG window provides context for TAAT reasoning.
+    # Build quick summary
+    rising  = [k for k, v in trends.items() if v["trend"] == "RISING"]
+    falling = [k for k, v in trends.items() if v["trend"] == "FALLING"]
+    spikes  = [k for k, v in trends.items() if v["trend"] in ("SPIKE", "DROP")]
 
-    trends_short  = {
-        k: v for k, v in get_all_key_trends(db, str(device_id), minutes=30).items()
-        if k.lower() not in _NON_SENSOR_KEYS
-    }
-    trends_long   = {
-        k: v for k, v in get_all_key_trends(db, str(device_id), minutes=1440).items()
-        if k.lower() not in _NON_SENSOR_KEYS
-    }
-
-    # ── Use STORED health score (computed hourly, covers 24h) ─────────────────
-    # Much more reliable than recomputing from 30-min window on every API call.
-    # Falls back to live computation if no stored score exists yet.
-    from app.services.health_service import get_latest_health, score_device
-    stored_health = get_latest_health(db, str(device_id))
-
-    if stored_health and stored_health.get("health_score") is not None:
-        # Use stored score — covers uptime/alarms/stability over 24h
-        hs = stored_health["health_score"]
-        if hs >= 75:
-            health = "HEALTHY"
-        elif hs >= 45:
-            health = "WARNING"
-        else:
-            health = "CRITICAL"
-        health_score_val = hs
-    else:
-        # No stored score yet (device just registered) — compute live
-        health = "HEALTHY"
-        health_score_val = None
-
+    health = "HEALTHY"
     insights = []
 
-    # Active alarms always override health status
     if active_alarms:
         critical = [a for a in active_alarms if str(a.severity).upper() in ("CRITICAL", "MAJOR")]
         health = "CRITICAL" if critical else "WARNING"
         insights.append(f"{len(active_alarms)} active alarm(s): {', '.join(set(a.alarm_type for a in active_alarms[:3]))}")
 
-    # Current-window anomalies (short window only — prevents startup transient false alarms)
-    spikes  = [k for k, v in trends_short.items() if v["trend"] in ("SPIKE", "DROP")]
-    rising  = [k for k, v in trends_short.items() if v["trend"] == "RISING"]
-    falling = [k for k, v in trends_short.items() if v["trend"] == "FALLING"]
-
     if spikes:
-        if health == "HEALTHY":
-            health = "WARNING"
+        health = max(health, "WARNING", key=lambda x: ["HEALTHY","WARNING","CRITICAL"].index(x))
         insights.append(f"Anomaly detected in: {', '.join(spikes)}")
+
     if rising:
         insights.append(f"Rising trend: {', '.join(rising)}")
     if falling:
         insights.append(f"Falling trend: {', '.join(falling)}")
 
-    # Daily context: flag if something was anomalous earlier today but not now
-    day_spikes = [
-        k for k, v in trends_long.items()
-        if v["trend"] in ("SPIKE", "DROP") and k not in spikes
-    ]
-    if day_spikes and not insights:
-        insights.append(f"Earlier anomaly (resolved): {', '.join(day_spikes[:2])}")
-
     if not insights:
         insights.append("All parameters within normal range")
 
-    # Device offline check
+    # Time since last seen
     if device.last_seen_at:
         age = (datetime.now(timezone.utc) - device.last_seen_at).total_seconds()
         if age > 300:
             health = "WARNING"
             insights.insert(0, f"Device offline for {int(age/60)} minutes")
 
-    # ── Baseline deviation + daily comparison ────────────────────────────────
-    # Wrapped in try/except — these are enrichment only, never block the response
-    baseline_dev = {}
-    daily_cmp    = {}
-    try:
-        from app.services.baseline_service import get_baseline_deviation, get_daily_comparison
-        from app.services.data_service import get_latest_telemetry as ds_get_latest
-
-        latest_telem = ds_get_latest(db, str(device_id))
-        # values is a dict {key: value}, not a list — fix the extraction
-        raw_values   = latest_telem.get("values", {}) if latest_telem else {}
-        live_values  = raw_values if isinstance(raw_values, dict) else {}
-
-        if live_values:
-            baseline_dev = get_baseline_deviation(db, str(device_id), live_values)
-
-            above_normal = [k for k, v in baseline_dev.items()
-                            if v.get("status") == "ABOVE_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5
-                            and v.get("confidence") in ("MEDIUM", "HIGH")]
-            below_normal = [k for k, v in baseline_dev.items()
-                            if v.get("status") == "BELOW_NORMAL" and v.get("z_score") and abs(v["z_score"]) >= 2.5
-                            and v.get("confidence") in ("MEDIUM", "HIGH")]
-            op_changes   = [k for k, v in baseline_dev.items()
-                            if v.get("status") == "OPERATING_POINT_CHANGE"]
-
-            for key in above_normal[:2]:
-                b = baseline_dev[key]
-                z = b.get('z_score') or 0
-                z_str = f">{abs(z):.1f}" if abs(z) >= 5 else f"{abs(z):.1f}"
-                insights.append(f"{key}: {b['value']:.3f} is {z_str}σ above baseline ({b['baseline_mean']:.3f}) [{b.get('confidence','?')} confidence]")
-                if health == "HEALTHY":
-                    health = "WARNING"
-
-            for key in below_normal[:2]:
-                b = baseline_dev[key]
-                z = b.get('z_score') or 0
-                z_str = f">{abs(z):.1f}" if abs(z) >= 5 else f"{abs(z):.1f}"
-                insights.append(f"{key}: {b['value']:.3f} is {z_str}σ below baseline ({b['baseline_mean']:.3f}) [{b.get('confidence','?')} confidence]")
-
-            if op_changes and not above_normal and not below_normal:
-                insights.append(f"Operating at different level than provisional baseline for: {', '.join(op_changes[:3])} — not a fault")
-
-        daily_cmp = get_daily_comparison(db, str(device_id))
-        significant_changes = [
-            (k, v) for k, v in daily_cmp.items()
-            if "delta_pct" in v and abs(v["delta_pct"]) >= 15
-        ]
-        if significant_changes and not baseline_dev:
-            for key, v in significant_changes[:2]:
-                direction = "↑" if v["direction"] == "up" else "↓"
-                insights.append(
-                    f"{key}: {direction}{abs(v['delta_pct']):.0f}% vs yesterday "
-                    f"({v['today_mean']:.2f} vs {v['yesterday_mean']:.2f})"
-                )
-    except Exception as _be:
-        import logging as _log
-        _log.getLogger(__name__).debug("summary: baseline enrichment failed: %s", _be)
-
-    if not insights:
-        insights.append("All parameters within normal range")
-
     return {
-        "device_id":        str(device_id),
-        "device_name":      device.name,
-        "health":           health,
-        "health_score":     health_score_val,
-        "insights":         insights,
-        "active_alarms":    len(active_alarms),
-        "trends":           {k: v["trend"] for k, v in trends_short.items()},
-        "trends_24h":       {k: v["trend"] for k, v in trends_long.items()},
-        "baseline_status":  {k: v.get("status") for k, v in baseline_dev.items()},
-        "daily_comparison": {k: v for k, v in daily_cmp.items() if "delta_pct" in v},
-        "generated_at":     datetime.now(timezone.utc).isoformat(),
+        "device_id":    str(device_id),
+        "device_name":  device.name,
+        "health":       health,
+        "insights":     insights,
+        "active_alarms": len(active_alarms),
+        "trends":       {k: v["trend"] for k, v in trends.items()},
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
 # ── Rule-based fallback (no LLM) ─────────────────────────────────────────────
 
 def _rule_based_analysis(context: dict) -> str:
-    """Rule-based analysis — works from day 1 using trends + session ranges.
-    No baseline or yesterday data required."""
+    """Simple rule-based analysis when LLM is not available."""
     lines = []
-    alarms   = context.get("alarms_last_24h", [])
-    trends   = context.get("current_trends", {})
-    trends24 = context.get("trends_24h", {})
-    device   = context.get("device", {})
-    coverage = context.get("data_coverage", {})
-    daily    = context.get("daily_comparison", {})
-
-    # Use 24h trends as primary reference when 60min window is empty
-    effective_trends = trends if trends else trends24
+    alarms = context.get("alarms_last_24h", [])
+    trends = context.get("current_trends", {})
+    device = context.get("device", {})
 
     # Health status
     active = [a for a in alarms if "ACTIVE" in a.get("status", "")]
-    critical = [a for a in active if a.get("severity") in ("CRITICAL", "MAJOR")]
-
-    if critical:
-        lines.append(f"## Health Status: CRITICAL\n{len(critical)} critical/major alarm(s) active.")
-    elif active:
-        lines.append(f"## Health Status: WARNING\n{len(active)} active alarm(s).")
+    if active:
+        lines.append(f"**1. Health Status** — WARNING: {len(active)} active alarm(s)")
     else:
-        # Check trends for degradation even without alarms
-        falling = [k for k, v in effective_trends.items() if v.get("trend") == "FALLING"]
-        spikes  = [k for k, v in effective_trends.items() if v.get("trend") in ("SPIKE", "DROP")]
-        if spikes:
-            lines.append(f"## Health Status: WARNING\nAnomalous readings detected: {', '.join(spikes)}")
-        elif falling:
-            lines.append(f"## Health Status: WARNING\nDeclining trend in: {', '.join(falling)}")
-        else:
-            lines.append("## Health Status: HEALTHY\nNo alarms. Trends stable within session range.")
+        lines.append("**1. Health Status** — HEALTHY: No active alarms")
 
-    # Key observations using session ranges (works from day 1)
-    lines.append("\n## Key Observations")
-    for key, t in list(effective_trends.items())[:5]:
-        if key.lower() in {"latitude","longitude","lat","lng","lon","altitude"}:
-            continue
-        mean = t.get("mean"); mn = t.get("min"); mx = t.get("max")
-        chg  = t.get("change_pct", 0); trend = t.get("trend", "UNKNOWN")
-        if mean is not None:
-            lines.append(
-                f"- **{key}**: {trend} | session avg={mean:.3f}, "
-                f"range={mn:.3f}–{mx:.3f}, change={chg:+.1f}%"
-            )
-
-    # Trend analysis
-    lines.append("\n## Trend Analysis")
-    rising   = [k for k, v in effective_trends.items() if v.get("trend") == "RISING"]
-    falling  = [k for k, v in effective_trends.items() if v.get("trend") == "FALLING"]
-    volatile = [k for k, v in effective_trends.items() if v.get("trend") == "VOLATILE"]
-    if rising:   lines.append(f"- Rising: {', '.join(rising)}")
-    if falling:  lines.append(f"- Falling: {', '.join(falling)}")
-    if volatile: lines.append(f"- Volatile: {', '.join(volatile)}")
-    if not (rising or falling or volatile):
-        lines.append("- All monitored keys are stable within session range.")
-
-    # Daily comparison if available
-    if daily:
-        sig = [(k, v) for k, v in daily.items() if "delta_pct" in v and abs(v["delta_pct"]) >= 10]
-        if sig:
-            lines.append("\n## Today vs Yesterday")
-            for k, v in sig[:3]:
-                arrow = "↑" if v["direction"] == "up" else "↓"
-                lines.append(f"- {k}: {arrow}{abs(v['delta_pct']):.0f}% ({v['today_mean']:.3f} vs {v['yesterday_mean']:.3f})")
-
-    # Risk assessment
-    lines.append("\n## Risk Assessment")
-    if critical:
-        lines.append("Immediate intervention required — critical alarms active.")
-    elif falling:
-        lines.append(f"Sustained decline in {', '.join(falling)} may indicate wear or degradation. Monitor closely.")
-    elif volatile:
-        lines.append(f"Unstable readings in {', '.join(volatile)}. Check sensor connections or process stability.")
+    # Root cause
+    lines.append("\n**2. Root Cause Analysis**")
+    if alarms:
+        for a in alarms[:3]:
+            details = a.get("details", {})
+            lines.append(f"- {a['type']}: {details.get('message', 'threshold breached')}")
     else:
-        lines.append("No immediate risk based on current trends.")
+        lines.append("- No alarms in last 24 hours")
 
-    # Data coverage note
-    bl_status = coverage.get("baseline_30day", "")
-    if "LEARNING" in bl_status:
-        lines.append(f"\n*Note: 30-day baseline still learning. Analysis based on {coverage.get('session_trends','session')} data.*")
+    # Trends
+    lines.append("\n**3. Trend Insights**")
+    for key, t in trends.items():
+        trend = t.get("trend", "UNKNOWN")
+        change = t.get("change_pct", 0)
+        lines.append(f"- {key}: {trend} ({change:+.1f}% over window)")
 
-    # Recommended actions
-    lines.append("\n## Recommended Actions")
-    if critical:
-        lines.append("1. Acknowledge and investigate critical alarms immediately.")
-        lines.append("2. Check physical device condition.")
-        lines.append("3. Review recent maintenance logs.")
-    elif falling and len(falling) >= 2:
-        lines.append(f"1. Investigate cause of declining {falling[0]} and {falling[1]}.")
-        lines.append("2. Schedule preventive inspection within 24 hours.")
-        lines.append("3. Enable alarm rules for these keys if not already set.")
+    # Risk
+    lines.append("\n**4. Risk Assessment**")
+    rising_critical = [k for k, v in trends.items()
+                      if v.get("trend") == "RISING" and abs(v.get("change_pct", 0)) > 20]
+    if rising_critical:
+        lines.append(f"- {', '.join(rising_critical)} rising rapidly — monitor closely")
     else:
-        lines.append("1. Continue monitoring — no action required.")
-        lines.append("2. Set threshold alarm rules for key parameters.")
-        lines.append("3. Review trends again in 24 hours.")
+        lines.append("- No immediate risk detected from current trends")
+
+    # Actions
+    lines.append("\n**5. Recommended Actions**")
+    if active:
+        lines.append("1. Acknowledge and investigate active alarms")
+    if rising_critical:
+        lines.append(f"2. Check {rising_critical[0]} source — rapid increase detected")
+    lines.append("- Add ANTHROPIC_API_KEY env var for AI-powered analysis")
 
     return "\n".join(lines)
+
+
+# ── AI Chatbot ────────────────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str     # "user" | "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+    device_id: Optional[UUID] = None        # optional device context
+    pending_confirm: Optional[dict] = None  # pending RPC awaiting confirmation
+
+
+async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
+    """Helper: call Groq and return text reply. Defaults to FAST model."""
+    use_model = model or GROQ_MODEL_FAST
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": use_model, "max_tokens": max_tokens,
+                  "messages": messages, "temperature": temperature},
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
+
+# ── Groq model strategy ──────────────────────────────────────────────────────
+# 8b: high quota (14,400/day) — chat, RPC parsing, summaries, comparisons
+# 70b: low quota (1,000/day)  — RCA, alarm explanation, daily report
+# ── Model selection ───────────────────────────────────────────────────────────
+# Override via Render env vars to switch models without redeploying.
+#
+# Groq-hosted options (all free tier, just set env var):
+#   Llama:  llama-3.1-8b-instant   llama-3.3-70b-versatile
+#   Gemma:  gemma2-9b-it            gemma-7b-it
+#   Mixtral: mixtral-8x7b-32768
+#
+# FAST = used for every chat turn (intent + reply)
+# DEEP = used for RCA, alarm explanation, daily report
+GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
+GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
+
+# ── Groq rate limiter ─────────────────────────────────────────────────────────
+# 20 chat requests per user per hour — prevents one user burning the shared quota.
+# Uses the existing rate_limits table (token = "groq:<user_id>", window = 1 hour).
+
+GROQ_CHAT_LIMIT    = int(os.getenv("GROQ_CHAT_LIMIT", "20"))     # requests per window
+GROQ_CHAT_WINDOW_H = int(os.getenv("GROQ_CHAT_WINDOW_H", "1"))   # window size in hours
+
+
+# Users excluded from Groq rate limiting (superadmins / platform owners)
+GROQ_RATE_LIMIT_EXCLUDED = {
+    "msallehroslan@gmail.com",
+}
 
 
 def _check_groq_rate_limit(db: Session, user_id: str, user_email: str = "") -> dict:
@@ -1432,17 +1243,6 @@ async def _execute_rule_from_chat(
     return None
 
 
-
-class _ChatMessage(BaseModel):
-    role:    str
-    content: str
-
-class ChatRequest(BaseModel):
-    messages:        list[_ChatMessage]
-    device_id:       Optional[str] = None
-    pending_confirm: Optional[dict] = None
-
-
 @router.post("/chat")
 async def ai_chat(
     body: ChatRequest,
@@ -1885,14 +1685,6 @@ async def ai_chat(
                 f"Tell the user: Command was sent to {dev_name}: {params}, but {ver_msg}. "
                 f"The device may be offline or firmware did not respond. Be direct."
             )
-        elif action_result.get("no_action"):
-
-            update_instruction = (
-                f"Tell the user EXACTLY: "
-                f"ℹ️ State already correct on {dev_name}. "
-                f"No action needed."
-            )
-            
         else:
             update_instruction = (
                 f"Tell the user: Command sent to {dev_name}: {params}. "
@@ -2506,7 +2298,7 @@ async def daily_report(
         ).count()
 
         health = get_latest_health(db, str(device.id))
-        trends = get_all_key_trends(db, str(device.id), minutes=1440)  # full 24h for daily report
+        trends = get_all_key_trends(db, str(device.id), minutes=60)
 
         report_data.append({
             "device":        device.name,

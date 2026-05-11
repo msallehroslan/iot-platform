@@ -3,7 +3,6 @@ app/main.py — FastAPI application entry point.
 FIX 7:  MQTT broker configured via env vars (no public broker default warning)
 FIX 11: APScheduler runs telemetry retention purge daily
 FIX 13: /health does a real DB ping, returns 503 if Postgres is down
-OPT 1:  RealtimeCoordinator started at lifespan — batched WS + deferred cache
 """
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,22 +54,6 @@ async def lifespan(app: FastAPI):
     if hasattr(_ws_manager, "startup"):
         await _ws_manager.startup()
         logger.info("RedisManager started")
-
-    # OPT 1: RealtimeCoordinator — batched WS broadcast + deferred cache invalidation
-    from app.core.realtime_coordinator import coordinator as _rt_coordinator
-    await _rt_coordinator.start()
-    logger.info("RealtimeCoordinator started")
-
-    # SlowLoopEngine — deferred heavy intelligence (degradation velocity, RUL, ranked recommendations)
-    # Runs every 5s in background — TAAT reads snapshots with zero DB/I/O latency
-    from app.services.slow_loop_intelligence import slow_loop as _slow_loop
-    await _slow_loop.start()
-    logger.info("SlowLoopEngine started")
-
-    # IntelligenceCoordinator — async intelligence snapshot engine
-    from app.core.intelligence_coordinator import intelligence_coordinator as _intel_coord
-    await _intel_coord.start()
-    logger.info("IntelligenceCoordinator started")
 
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
@@ -129,68 +112,40 @@ async def lifespan(app: FastAPI):
 
     # Phase 7: Nightly baseline update
     async def _nightly_baseline():
-        # Run immediately on startup — new devices get a baseline from day 1
-        # using whatever data exists (partial baseline is better than none)
-        db = SessionLocal()
-        try:
-            from app.services.baseline_service import update_all_baselines
-            update_all_baselines(db)
-            logger.info("Baseline: initial run complete")
-        except Exception as exc:
-            logger.error("Baseline initial run failed: %s", exc)
-        finally:
-            db.close()
-        # Then every 6 hours (was 24h) — keeps baseline current across the day
         while True:
-            await _asyncio.sleep(21600)  # every 6h
+            await _asyncio.sleep(86400)  # every 24h
             db = SessionLocal()
             try:
                 from app.services.baseline_service import update_all_baselines
                 result = update_all_baselines(db)
-                logger.info("Baseline updated: %s", result)
+                logger.info("Nightly baseline update: %s", result)
             except Exception as exc:
-                logger.error("Baseline update failed: %s", exc)
+                logger.error("Nightly baseline failed: %s", exc)
             finally:
                 db.close()
 
     # Phase 7: Hourly health scoring
     async def _hourly_health():
-        # Run immediately on startup so stored health score is available
-        # from first page load — no waiting for first interval
-        db = SessionLocal()
-        try:
-            from app.services.health_service import score_all_devices
-            score_all_devices(db)
-            logger.info("Health score: initial run complete")
-        except Exception as exc:
-            logger.error("Health score initial run failed: %s", exc)
-        finally:
-            db.close()
-        # Then every 15 min (was 1h) — covers whole-day monitoring
         while True:
-            await _asyncio.sleep(900)
+            await _asyncio.sleep(3600)  # every 1h
             db = SessionLocal()
             try:
                 from app.services.health_service import score_all_devices
                 result = score_all_devices(db)
-                logger.info("Health score updated: %s", result)
+                logger.info("Hourly health score: %s", result)
             except Exception as exc:
-                logger.error("Health score failed: %s", exc)
+                logger.error("Hourly health score failed: %s", exc)
             finally:
                 db.close()
 
     # Phase 11: Scheduled RPC dispatcher — checks due commands every 5s.
     # It runs immediately on startup, then sleeps, so due commands do not wait 30s.
     async def _scheduled_rpc_dispatcher():
-        # Check for due commands every 15s instead of 5s.
-        # 15s granularity is acceptable for scheduled commands.
-        # Reduces background DB sessions by 3x.
-        DISPATCH_INTERVAL = 15
         while True:
-            await _asyncio.sleep(DISPATCH_INTERVAL)
             db = SessionLocal()
             try:
                 from app.services.scheduled_rpc_service import dispatch_due_commands
+                logger.info("Scheduled RPC dispatcher tick")
                 n = await dispatch_due_commands(db)
                 if n:
                     logger.info("Scheduled RPC dispatcher fired %d command(s)", n)
@@ -200,6 +155,7 @@ async def lifespan(app: FastAPI):
                 except: pass
             finally:
                 db.close()
+            await _asyncio.sleep(5)
 
     purge_task      = _asyncio.create_task(_daily_purge())
     offline_task    = _asyncio.create_task(_offline_check())
@@ -214,18 +170,6 @@ async def lifespan(app: FastAPI):
     baseline_task.cancel()
     health_task.cancel()
     sched_rpc_task.cancel()
-
-    # OPT 1: Stop coordinator — flushes remaining buffer before shutdown
-    await _rt_coordinator.stop()
-    logger.info("RealtimeCoordinator stopped")
-
-    # Stop SlowLoopEngine
-    from app.services.slow_loop_intelligence import slow_loop as _slow_loop
-    await _slow_loop.stop()
-    logger.info("SlowLoopEngine stopped")
-
-    await _intel_coord.stop()
-    logger.info("IntelligenceCoordinator stopped")
 
     # Phase 4: Redis manager shutdown
     if hasattr(_ws_manager, "shutdown"):
@@ -315,7 +259,6 @@ def health():
 def status(user_id: str = Depends(get_current_user_id)):
     from app.services.mqtt_client import mqtt_client
     from app.core.websocket_manager import manager as ws_manager
-    from app.core.realtime_coordinator import coordinator as rt_coordinator
     return {
         "status": "ok",
         "mqtt": mqtt_client.status(),
@@ -323,8 +266,6 @@ def status(user_id: str = Depends(get_current_user_id)):
             "total_clients": ws_manager.total_clients(),
             "active_devices": ws_manager.active_devices(),
         },
-        "realtime_coordinator": rt_coordinator.stats(),
-        "intelligence_coordinator": __import__("app.core.intelligence_coordinator", fromlist=["intelligence_coordinator"]).intelligence_coordinator.stats(),
     }
 
 

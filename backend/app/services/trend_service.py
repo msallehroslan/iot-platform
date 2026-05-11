@@ -73,33 +73,22 @@ def detect_trend(
     change_pct = ((last - first) / abs(first)) * 100 if first != 0 else 0.0
 
     # ── Spike/Drop detection ─────────────────────────────────────────────────
-    # Require at least 2 consecutive interior z-score breaches before declaring
-    # SPIKE/DROP. This prevents single startup transients or noise spikes from
-    # causing HEALTHY → WARNING flicker in Fleet Intelligence.
+    # Look for a value that deviates > spike_z standard deviations from mean
+    # that is NOT at the end (i.e. value returned to baseline)
     if std > 0:
         z_scores = [(v - mean) / std for v in values]
         interior = z_scores[1:-1]  # exclude first and last
 
-        # Find max consecutive breach of spike_z in the interior
-        max_consec_breach = 0
-        consec = 0
-        breach_direction = 0
-        for zval in interior:
-            if abs(zval) > spike_z:
-                consec += 1
-                if consec > max_consec_breach:
-                    max_consec_breach = consec
-                    breach_direction = 1 if zval > 0 else -1
-            else:
-                consec = 0
+        max_z = max(interior, key=abs) if interior else 0
+        max_z_idx = z_scores.index(max_z) if interior else -1
 
-        # Only flag SPIKE/DROP if 2+ consecutive interior points breach threshold
-        if max_consec_breach >= 2:
-            if breach_direction > 0:
-                return _result(TREND_SPIKE, +1, min(max_consec_breach / 5, 1.0),
+        if abs(max_z) > spike_z:
+            # The extreme value is in the middle — it's a spike or drop
+            if max_z > 0:
+                return _result(TREND_SPIKE, +1, min(abs(max_z) / 5, 1.0),
                                change_pct, mean, std, mn, mx, len(values))
             else:
-                return _result(TREND_DROP, -1, min(max_consec_breach / 5, 1.0),
+                return _result(TREND_DROP, -1, min(abs(max_z) / 5, 1.0),
                                change_pct, mean, std, mn, mx, len(values))
 
     # ── Stable detection ─────────────────────────────────────────────────────
@@ -181,9 +170,6 @@ def get_all_key_trends(
     """
     Return trend for every key the device has sent in the last `minutes`.
     Returns: { "temperature": {...}, "humidity": {...}, ... }
-
-    For long windows (> 60 min), uses a larger max_points sample to ensure
-    meaningful trend detection over the full day.
     """
     since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
@@ -199,17 +185,8 @@ def get_all_key_trends(
         .all()
     )
 
-    # Scale max_points with window size so daily trends have enough resolution
-    # 30min → 50pts, 3h → 100pts, 24h → 200pts (evenly sampled)
-    if minutes <= 60:
-        max_pts = 50
-    elif minutes <= 360:
-        max_pts = 100
-    else:
-        max_pts = 200
-
     return {
-        row.key: get_device_key_trend(db, device_id, row.key, minutes, max_points=max_pts)
+        row.key: get_device_key_trend(db, device_id, row.key, minutes)
         for row in keys
     }
 

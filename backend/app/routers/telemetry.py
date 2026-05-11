@@ -111,11 +111,7 @@ def get_telemetry_history(
         query = query.filter(TelemetryData.ts >= start_ts)
     if end_ts:
         query = query.filter(TelemetryData.ts <= end_ts)
-    # ORDER BY ts DESC + LIMIT → newest N rows, then reverse to ascending for chart display
-    # Previously was ASC+LIMIT which returned the OLDEST N rows — caused chart cliff
-    # (old history at 70°C + live WS value at 46°C = sudden drop)
-    records = query.order_by(TelemetryData.ts.desc()).limit(limit).all()
-    records = list(reversed(records))  # restore chronological order for chart
+    records = query.order_by(TelemetryData.ts.asc()).limit(limit).all()
     result = []
     for r in records:
         value = (r.value_num if r.value_num is not None else
@@ -136,15 +132,13 @@ def get_bulk_history(
     _get_device_owned(device_id, current_user, db)
     data: Dict[str, List[TelemetryDataPoint]] = {}
     for key in body.keys:
-        # DESC + LIMIT → newest N rows, then reverse to ascending for chart display
         records = (
             db.query(TelemetryData)
             .filter(and_(TelemetryData.device_id == device_id, TelemetryData.key == key))
-            .order_by(TelemetryData.ts.desc())
+            .order_by(TelemetryData.ts.asc())
             .limit(body.limit)
             .all()
         )
-        records = list(reversed(records))
         pts = []
         for r in records:
             value = (r.value_num if r.value_num is not None else

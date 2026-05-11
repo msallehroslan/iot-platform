@@ -31,8 +31,6 @@ Intent categories:
     RECOMMEND       → autonomous recommendation + proposed actions
 """
 from __future__ import annotations
-# Context compression + slow-loop intelligence (added)
-from app.services.taat_context_compressor import compress_context
 
 import json
 import logging
@@ -41,39 +39,6 @@ from typing import Any, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
-
-# ── Timezone Helpers ─────────────────────────────────────────────────────────
-
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
-
-MYT = ZoneInfo("Asia/Kuala_Lumpur")
-
-
-def _fmt_myt(dt):
-
-    if not dt:
-        return "unknown"
-
-    try:
-
-        if isinstance(dt, str):
-            dt = datetime.fromisoformat(
-                dt.replace("Z", "+00:00")
-            )
-
-        if dt.tzinfo is None:
-            dt = dt.replace(
-                tzinfo=timezone.utc
-            )
-
-        return dt.astimezone(MYT).strftime(
-            "%Y-%m-%d %H:%M MYT"
-        )
-
-    except Exception:
-        return str(dt)
-
 
 # ── Intent definitions ────────────────────────────────────────────────────────
 
@@ -168,9 +133,9 @@ Respond with ONLY the category name, nothing else."""
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
         return "RECOMMEND"
-    if any(w in msg for w in ["remember that","remember:","note that", "save that", "please remember","store this","memorize this","i prefer", "user prefers",
-    
-    ]):
+    if any(w in msg for w in ["remember that", "remember:", "note that", "save that",
+                               "is located in", "is used for", "is installed at",
+                               "controls the", "i prefer", "user prefers"]):
         return "REMEMBER"
 
     return "QUESTION"
@@ -210,11 +175,6 @@ def build_context(
                 "name":         d["name"],
                 "status":       d["status"],
                 "last_seen_at": d.get("last_seen_at"),
-
-                 # TEMP DEBUG
-                "label": d.get("label"),
-                "latitude": d.get("latitude"),
-                "longitude": d.get("longitude"),
             }
             for d in devices
         ],
@@ -243,58 +203,14 @@ def build_context(
                 all_alarms.append({**alarm, "device_name": d["name"]})
         ctx["active_alarms"] = all_alarms[:20]
 
-  
     # Device-specific context
-    focus_id = device_id
-
-    # Auto-match device from message
-    if not focus_id and message:
-
-        msg_lower = message.lower()
-
-        for d in devices:
-
-            if d["name"].lower() in msg_lower:
-                focus_id = d["id"]
-                break
-
-    # Fallback if only one device exists
-    if not focus_id and len(devices) == 1:
-        focus_id = devices[0]["id"]
+    focus_id = device_id or (devices[0]["id"] if len(devices) == 1 else None)
 
     if focus_id and intent in ("QUESTION", "DEVICE_CONTROL", "ALARM", "RCA", "RECOMMEND", "SCHEDULE"):
         ctx["telemetry"] = _safe(tool_get_latest_telemetry, db, focus_id)
         ctx["health"]    = _safe(tool_get_device_health,    db, focus_id)
         ctx["anomalies"] = _safe(tool_get_anomalies,        db, focus_id, hours=24)
         ctx["baseline"]  = _safe(tool_get_baseline,         db, focus_id)
-
-        # Session stats — available from day 1, no baseline prerequisite
-        # Gives TAAT per-key min/max/mean/stddev since device started collecting
-        try:
-            from app.services.trend_service import get_all_key_trends
-            from app.models.models import TelemetryData
-            from datetime import datetime, timezone, timedelta
-            import statistics as _stats
-
-            # Trends over last 3 hours (recent operational state)
-            trends_3h  = get_all_key_trends(db, str(focus_id), minutes=180)
-            # Trends over last 24 hours (full day view)
-            trends_24h = get_all_key_trends(db, str(focus_id), minutes=1440)
-
-            ctx["trends_3h"]  = {
-                k: {"trend": v["trend"], "mean": v["mean"], "std": v["std"],
-                    "min": v["min"], "max": v["max"], "change_pct": v["change_pct"]}
-                for k, v in trends_3h.items()
-                if k.lower() not in {"latitude","longitude","lat","lng","lon","altitude","rssi","snr"}
-            }
-            ctx["trends_24h"] = {
-                k: {"trend": v["trend"], "mean": v["mean"], "std": v["std"],
-                    "min": v["min"], "max": v["max"], "change_pct": v["change_pct"]}
-                for k, v in trends_24h.items()
-                if k.lower() not in {"latitude","longitude","lat","lng","lon","altitude","rssi","snr"}
-            }
-        except Exception as _tr_exc:
-            logger.debug("taat_planner: trend context unavailable: %s", _tr_exc)
 
     if focus_id and intent in ("DEVICE_CONTROL", "RCA", "SCHEDULE"):
         ctx["rpc_history"] = _safe(tool_get_rpc_history, db, focus_id, limit=5)
@@ -343,54 +259,7 @@ def build_context(
     if intent in ("RCA", "RECOMMEND"):
         ctx["audit_trail"] = _safe(tool_get_audit_log, db, current_user, limit=10)
 
-    # ── Slow-loop intelligence snapshot (zero DB, zero I/O) ───────────────────
-    if focus_id:
-        try:
-            from app.services.slow_loop_intelligence import slow_loop
-            snap = slow_loop.get_snapshot(str(focus_id))
-            if snap:
-                ctx["slow_intel"] = {
-                    "health_velocity":     snap.get("health_velocity"),
-                    "degradation_class":   snap.get("degradation_class"),
-                    "failure_probability": snap.get("failure_probability"),
-                    "anomaly_persistence": snap.get("anomaly_persistence", {}),
-                    "recommendations":     snap.get("recommendations", []),
-                    "rul_hours":           snap.get("rul_hours"),
-                    "temporal_chain":      snap.get("temporal_chain", [])[-5:],
-                }
-        except Exception as _sl_exc:
-            logger.debug("taat_planner: slow_loop snapshot unavailable: %s", _sl_exc)
-
-    # ── Baseline deviation + daily comparison for TAAT reasoning ──────────────
-    # Gives TAAT actual numbers: "temperature is 5.3σ above 30-day normal"
-    # and "today vs yesterday" comparisons — not just "baseline active"
-    # Daily comparison — runs for ANY device query, no baseline prerequisite
-    # daily_comparison just needs yesterday's telemetry in DB — no 30-day requirement
-    if focus_id:
-        try:
-            from app.services.baseline_service import get_daily_comparison
-            ctx["daily_comparison"] = get_daily_comparison(db, str(focus_id))
-        except Exception as _dc_exc:
-            logger.debug("taat_planner: daily_comparison unavailable: %s", _dc_exc)
-
-    # Baseline deviation — only if 30-day baseline exists AND we have live values
-    if focus_id and "baseline" in ctx and ctx["baseline"].get("status") == "active":
-        try:
-            from app.services.baseline_service import get_baseline_deviation
-            from app.services.data_service import get_latest_telemetry as _get_latest
-
-            latest    = _get_latest(db, str(focus_id))
-            # values is a dict {key: value} — not a list
-            raw_vals  = latest.get("values", {}) if latest else {}
-            live_vals = raw_vals if isinstance(raw_vals, dict) else {}
-
-            if live_vals:
-                ctx["baseline_deviation"] = get_baseline_deviation(db, str(focus_id), live_vals)
-        except Exception as _bd_exc:
-            logger.debug("taat_planner: baseline_deviation unavailable: %s", _bd_exc)
-
-    # compress_context reduces context size ~40% before prompt generation
-    return compress_context(ctx, intent=intent)
+    return ctx
 
 
 # ── Step 3: Safety Guard ──────────────────────────────────────────────────────
@@ -498,61 +367,12 @@ def build_system_prompt(
     ) or "  None"
 
     # Build telemetry section
-    trend_section    = ""  # populated below if trends available
-    coverage_section = ""  # data coverage declaration for TAAT reasoning
     telem_section = ""
-    # Detect device type from telemetry keys → inject domain knowledge
-    domain_knowledge = ""
     if "telemetry" in ctx:
         vals = ctx["telemetry"].get("values", {})
         telem_section = f"\nCURRENT TELEMETRY:\n" + "\n".join(
             f"  {k}: {v}" for k, v in list(vals.items())[:10]
         )
-        # Auto-detect device type and inject relevant diagnostic knowledge
-        try:
-            from app.services.taat_domain_knowledge import get_domain_knowledge
-            domain_knowledge = get_domain_knowledge(list(vals.keys()))
-        except Exception:
-            domain_knowledge = ""  # fail silently — domain knowledge is enrichment only
-
-    # Build trend section — available from day 1, crucial for new devices
-    trend_section = ""
-    if "trends_3h" in ctx and ctx["trends_3h"]:
-        t3 = ctx["trends_3h"]
-        lines = [f"  {k}: {v['trend']} (mean={v['mean']:.3f}, range={v['min']:.3f}–{v['max']:.3f}, change={v['change_pct']:+.1f}%)"
-                 for k, v in list(t3.items())[:6]]
-        trend_section += f"\nTRENDS (last 3 hours):\n" + "\n".join(lines)
-
-    if "trends_24h" in ctx and ctx["trends_24h"]:
-        t24 = ctx["trends_24h"]
-        lines = [f"  {k}: {v['trend']} (mean={v['mean']:.3f}, range={v['min']:.3f}–{v['max']:.3f}, change={v['change_pct']:+.1f}%)"
-                 for k, v in list(t24.items())[:6]]
-        trend_section += f"\nTRENDS (last 24 hours):\n" + "\n".join(lines)
-
-    # Data coverage declaration — tells TAAT exactly what it knows and doesn't know
-    baseline_status = ctx.get("baseline", {}).get("status", "unknown")
-    has_yesterday   = any("yesterday_mean" in v for v in ctx.get("daily_comparison", {}).values())
-    has_trends      = bool(ctx.get("trends_24h"))
-    has_baseline    = baseline_status == "active"
-
-    coverage_lines = []
-    if has_baseline:
-        coverage_lines.append("30-day statistical baseline: ACTIVE")
-    else:
-        coverage_lines.append("30-day baseline: LEARNING (not enough history yet — use trend/session data instead)")
-    if has_yesterday:
-        coverage_lines.append("Yesterday comparison: AVAILABLE")
-    else:
-        coverage_lines.append("Yesterday comparison: NOT AVAILABLE (device started recently)")
-    if has_trends:
-        coverage_lines.append("24h trend analysis: AVAILABLE")
-
-    coverage_section = f"\nDATA COVERAGE:\n" + "\n".join(f"  {l}" for l in coverage_lines)
-    coverage_section += (
-        "\n  IMPORTANT: If baseline is learning and no yesterday data, use the 3h/24h trends "
-        "and session min/max/mean to reason about normal vs abnormal. "
-        "Never claim you have no data — trend and session data are always available from day 1."
-    )
 
     # Build intelligence section
     intel_section = ""
@@ -564,142 +384,7 @@ def build_system_prompt(
         if a.get("anomaly_count", 0) > 0:
             intel_section += f"\nANOMALIES: {a['anomaly_count']} detected, most anomalous: {a.get('most_anomalous_key','?')}"
     if "baseline" in ctx and ctx["baseline"].get("status") == "active":
-        bl_keys = ctx["baseline"].get("keys", {})
-        # Inject actual baseline values so TAAT can reason about deviations
-        if bl_keys:
-            bl_lines = []
-            for bk, bv in list(bl_keys.items())[:6]:
-                mean   = bv.get("mean")
-                stddev = bv.get("stddev", 0)
-                upper  = bv.get("upper")
-                lower  = bv.get("lower")
-                if mean is not None:
-                    bl_lines.append(
-                        f"  {bk}: normal={mean:.3f}±{stddev:.3f}"
-                        + (f" (range {lower:.3f}–{upper:.3f})" if upper and lower else "")
-                    )
-            intel_section += f"\nBASELINE (30-day normal, current hour):\n" + "\n".join(bl_lines)
-
-    # Baseline deviation: how far are current readings from baseline?
-    if "baseline_deviation" in ctx:
-        dev = ctx["baseline_deviation"]
-        dev_lines = []
-        op_change_keys = []
-        for dk, dv in list(dev.items())[:6]:
-            status = dv.get("status", "")
-            conf   = dv.get("confidence", "UNKNOWN")
-            z      = dv.get("z_score")
-            if status == "OPERATING_POINT_CHANGE":
-                op_change_keys.append(dk)
-                dev_lines.append(
-                    f"  {dk}: {dv['value']:.3f} differs from baseline ({dv['baseline_mean']:.3f}) "
-                    f"— OPERATING POINT CHANGE [{conf} confidence baseline, {dv.get('sample_count',0)} samples]"
-                )
-            elif status in ("ABOVE_NORMAL", "BELOW_NORMAL") and z:
-                z_str = f">{abs(z):.1f}" if abs(z) >= 5.0 else f"{abs(z):.1f}"
-                dev_lines.append(
-                    f"  {dk}: {dv['value']:.3f} is {z_str}σ {'ABOVE' if z > 0 else 'BELOW'} "
-                    f"baseline ({dv['baseline_mean']:.3f}±{dv['baseline_stddev']:.3f}) [{conf} confidence]"
-                )
-        if op_change_keys:
-            dev_lines.insert(0,
-                f"  NOTE: {len(op_change_keys)} key(s) show operating point changes ({', '.join(op_change_keys)}). "
-                f"This means the device is running at a DIFFERENT OPERATING LEVEL than when the baseline "
-                f"was built. This is NOT necessarily a fault — but should be investigated if unexpected."
-            )
-        if dev_lines:
-            intel_section += f"\nBASELINE DEVIATIONS:\n" + "\n".join(dev_lines)
-
-    # Daily comparison: today vs yesterday — show ALL keys with data, no threshold filter
-    if "daily_comparison" in ctx:
-        dc = ctx["daily_comparison"]
-        dc_lines = []
-        for ck, cv in list(dc.items())[:6]:
-            if cv.get("today_pts", 0) > 0:
-                if "delta_pct" in cv:
-                    arrow = "↑" if cv["direction"] == "up" else ("↓" if cv["direction"] == "down" else "→")
-                    dc_lines.append(
-                        f"  {ck}: today avg={cv['today_mean']:.3f} "
-                        f"{arrow}{abs(cv['delta_pct']):.1f}% vs yesterday ({cv['yesterday_mean']:.3f}) "
-                        f"[today:{cv['today_pts']}pts, yesterday:{cv.get('yesterday_pts',0)}pts]"
-                    )
-                else:
-                    dc_lines.append(
-                        f"  {ck}: today avg={cv['today_mean']:.3f} [no yesterday data — first day]"
-                    )
-
-        # ── Device-type specific pattern detection in daily comparison ────────
-        # Uses the same key-name detection as the domain knowledge module
-        try:
-            from app.services.taat_domain_knowledge import detect_device_type
-            device_type = detect_device_type(list(dc.keys()))
-        except Exception:
-            device_type = "generic"
-
-        if device_type in ("pump_motor", "motor"):
-            motor_de  = dc.get("motor_de_velocity",  {}).get("delta_pct")
-            motor_nde = dc.get("motor_nde_velocity", {}).get("delta_pct")
-            pump_de   = dc.get("pump_de_velocity",   {}).get("delta_pct")
-            pump_nde  = dc.get("pump_nde_velocity",  {}).get("delta_pct")
-
-            if motor_de is not None and motor_nde is not None:
-                asymmetry = abs(motor_de - motor_nde)
-                if asymmetry > 15:
-                    dc_lines.append(
-                        f"  ⚠ MOTOR DE/NDE ASYMMETRY: Motor-DE {motor_de:+.1f}% vs Motor-NDE {motor_nde:+.1f}% "
-                        f"({asymmetry:.1f}% divergence) — drive-end specific issue (bearing/coupling/misalignment)."
-                    )
-
-            if motor_de is not None and pump_de is not None:
-                if motor_de < -20 and pump_de > 10:
-                    dc_lines.append(
-                        f"  ⚠ COUPLING SLIP: Motor-DE down {abs(motor_de):.1f}% while Pump-DE up {pump_de:.1f}% — "
-                        f"energy not transferring efficiently from motor shaft to pump."
-                    )
-                elif motor_de < -20 and pump_de < -10:
-                    dc_lines.append(
-                        f"  ℹ LOAD REDUCTION: Motor-DE and Pump-DE both declining — consistent with reduced load, not a fault."
-                    )
-
-        elif device_type == "power_meter":
-            voltage  = dc.get("voltage",       {}).get("delta_pct")
-            current  = dc.get("current",       {}).get("delta_pct")
-            pf       = dc.get("power_factor",  {}).get("delta_pct")
-            if voltage is not None and current is not None:
-                if voltage < -5 and current > 10:
-                    dc_lines.append(
-                        f"  ⚠ VOLTAGE SAG + CURRENT RISE: Supply issue or increased resistive load — check supply impedance."
-                    )
-            if pf is not None and pf < -10:
-                dc_lines.append(
-                    f"  ⚠ POWER FACTOR DECLINING ({pf:+.1f}%): Increased reactive load — consider capacitor compensation."
-                )
-
-        elif device_type == "flow_sensor":
-            flow  = next((dc.get(k,{}).get("delta_pct") for k in dc if "flow" in k.lower()), None)
-            level = next((dc.get(k,{}).get("delta_pct") for k in dc if "level" in k.lower()), None)
-            if flow is not None and flow < -30:
-                dc_lines.append(
-                    f"  ⚠ FLOW RATE DOWN {abs(flow):.1f}%: Check for blockage, valve position, or pump degradation."
-                )
-            if level is not None and abs(level) > 20:
-                direction = "rising" if level > 0 else "falling"
-                dc_lines.append(
-                    f"  ⚠ TANK LEVEL {level:+.1f}% ({direction}): Check inlet/outlet balance and valve states."
-                )
-
-        elif device_type == "vibration":
-            overall = next((dc.get(k,{}).get("delta_pct") for k in dc
-                            if any(p in k.lower() for p in ["rms","overall","vibration"])), None)
-            if overall is not None and overall > 20:
-                dc_lines.append(
-                    f"  ⚠ VIBRATION INCREASING +{overall:.1f}%: Progressive mechanical wear — schedule inspection."
-                )
-
-        if dc_lines:
-            intel_section += f"\nDAILY COMPARISON (today vs yesterday):\n" + "\n".join(dc_lines)
-        else:
-            intel_section += f"\nDAILY COMPARISON: No telemetry recorded today yet"
+        intel_section += f"\nBASELINE: active for {len(ctx['baseline'].get('keys',{}))} keys"
     if "key_intel" in ctx:
         ki = ctx["key_intel"]
         intel_section += (
@@ -718,61 +403,6 @@ def build_system_prompt(
         intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
     intel_section += dispatch_section
     intel_section += semantic_section
-
-    # ── Slow-loop predictive intelligence section ─────────────────────────────
-    if "slow_intel" in ctx:
-        si = ctx["slow_intel"]
-        parts = []
-        deg_class = si.get("degradation_class", "stable")
-        velocity  = si.get("health_velocity")
-        fp        = si.get("failure_probability")
-        rul       = si.get("rul_hours")
-        recs      = si.get("recommendations", [])
-        chain     = si.get("temporal_chain", [])
-
-        if velocity is not None:
-            direction = "degrading" if velocity < 0 else "recovering"
-            parts.append(f"Degradation: {deg_class} ({direction} at {abs(velocity):.1f} pts/h)")
-        if fp is not None:
-            parts.append(f"Failure probability: {fp:.0%}")
-        if rul is not None:
-            parts.append(f"Estimated RUL: {rul:.0f} hours")
-
-        persist = si.get("anomaly_persistence", {})
-        if persist:
-            top_p = sorted(persist.items(), key=lambda x: -x[1])[:3]
-            parts.append("Persistent anomalies: " + ", ".join(f"{k}({v} cycles)" for k, v in top_p))
-
-        if chain:
-            chain_str = " → ".join(e[1] for e in chain[-4:])
-            parts.append(f"Event chain: {chain_str}")
-
-        if parts:
-            intel_section += "\nPREDICTIVE INTELLIGENCE:\n" + "\n".join(f"  {p}" for p in parts)
-
-        if recs:
-            rec_lines = []
-            for i, r in enumerate(recs[:3], 1):
-                conf = int(r.get("confidence", 0) * 100)
-                urg  = r.get("urgency", "")
-                act  = r.get("action", "")
-                rec_lines.append(f"  {i}. {act} [{conf}% conf, {urg}]")
-            intel_section += "\nRANKED RECOMMENDATIONS:\n" + "\n".join(rec_lines)
-
-        # Conditional planning branch
-        hs_val = ctx.get("health", {}).get("health_score", 100) if "health" in ctx else 100
-        try:
-            hs_float = float(hs_val) if hs_val is not None else 100
-        except (ValueError, TypeError):
-            hs_float = 100
-        if hs_float < 30:
-            intel_section += "\nPLANNING BRANCH: health critical → prioritize maintenance scheduling."
-        elif fp is not None and fp > 0.7:
-            intel_section += "\nPLANNING BRANCH: high failure probability → lead with predictive maintenance."
-        elif deg_class == "rapid_decline":
-            intel_section += "\nPLANNING BRANCH: rapid degradation → recommend load reduction before inspection."
-        elif ctx.get("anomalies", {}).get("anomaly_count", 0) > 0:
-            intel_section += "\nPLANNING BRANCH: anomaly active → perform RCA before recommendations."
 
     # Role capabilities
     if role == "CUSTOMER_USER":
@@ -793,13 +423,12 @@ def build_system_prompt(
 You reason from real sensor data, never guess. Be concise and direct.
 Today: {now}
 
-DEVICES ({len(ctx.get('device_list',[]))}):{device_lines}
+DEVICES ({len(ctx.get('device_list',[]))}):
+{device_lines}
 
 ACTIVE ALARMS:
 {alarm_lines}
 {telem_section}
-{trend_section}
-{coverage_section}
 {intel_section}
 
 AGENT MEMORY:
@@ -813,10 +442,6 @@ RULES:
 3. For HIGH-risk actions, say: "⚠️ This will [description]. Reply 'proceed' to confirm."
 4. If you cannot find a device or key, say so — do not guess.
 5. Keep responses short unless asked for detail.
-6. When baseline is learning, use TRENDS and session min/max/mean as the reference — never say you have no data.
-7. OPERATING POINT CHANGE is NOT the same as failure. It means the device is running at a different level than when the baseline was built. Always distinguish between operating point changes and genuine degradation trends.
-
-{domain_knowledge}
 6. If RECENT SCHEDULED ACTIONS EXECUTED section is present, proactively inform the user at the start of your reply.
 7. When showing scheduled commands, format them as readable text — never raw JSON. Example: "⏰ Turn off led2 on ESP32-e823 at 09:12 UTC".
 8. If AGENT MEMORY shows a recent outcome for the same device/action the user just requested, mention it: "Note: I already did this X minutes ago." Then proceed with the action.

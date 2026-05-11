@@ -181,50 +181,7 @@ def delete_device(
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
           action="device.delete", resource="device", resource_id=str(device_id),
           detail={"name": device.name})
-
-    # Explicit pre-delete cleanup for tables that may not have SQLAlchemy
-    # relationships loaded (belt-and-suspenders alongside model cascade).
-    # Prevents FK constraint violations from RpcCommand, AnomalyScore,
-    # DeviceBaseline, DeviceHealthScore which were previously missing from
-    # the Device relationship cascade list.
-    from app.models.models import (
-        RpcCommand, AnomalyScore, DeviceBaseline, DeviceHealthScore,
-        TelemetryData, LatestTelemetry, Alarm, ThresholdRule, TelemetryKey,
-        Dashboard,
-    )
-    from app.models.models import IngestMetric
-    from sqlalchemy import text
-
-    did = device_id
-    did_str = str(device_id)
-
-    # Delete all child rows explicitly — belt-and-suspenders alongside DB CASCADE.
-    # Order matters: delete dependents before parents.
-    # Use raw SQL DELETE for large tables (TelemetryData) to avoid ORM overhead.
-    db.execute(text("DELETE FROM anomaly_scores WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM device_baselines WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM device_health_scores WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM rpc_commands WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM ingest_metrics WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM telemetry_data WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM latest_telemetry WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM telemetry_keys WHERE device_id = :did"), {"did": did})
-    db.execute(text("DELETE FROM alarms WHERE device_id = :did"), {"did": did})
-    db.execute(
-        text("DELETE FROM threshold_rules WHERE device_id = :did"),
-        {"did": did},
-    )
-    # Widgets in device dashboards
-    db.execute(
-        text("""DELETE FROM widgets WHERE dashboard_id IN (
-            SELECT id FROM dashboards WHERE device_id = :did
-        )"""),
-        {"did": did},
-    )
-    db.execute(text("DELETE FROM dashboards WHERE device_id = :did"), {"did": did})
-
-    # Now delete the device itself
-    db.execute(text("DELETE FROM devices WHERE id = :did"), {"did": did})
+    db.delete(device)
     db.commit()
 
 
