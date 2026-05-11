@@ -292,7 +292,7 @@ export function useDashboardRuntime(activeDash, user) {
       await Promise.allSettled(
         widgetDeviceIds.map(async devId => {
           try {
-            const r = await fetch(`${base}/intelligence/snapshot/${devId}`, {
+            const r = await fetch(`${base}/intelligence/unified/${devId}`, {
               headers: { Authorization: `Bearer ${token}` },
             });
             if (r.ok) updates[devId] = await r.json();

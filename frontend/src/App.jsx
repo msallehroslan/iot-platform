@@ -118,71 +118,153 @@ const NAV = [
 ];
 
 const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
-  const [col, setCol] = useState(false);
-  const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
+  const [col, setCol] = React.useState(false);
+  const ini  = user ? (user.first_name?.[0] || user.email?.[0] || "U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
+
   return (
-    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
-        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis Nexus</span>}
+    <aside style={{
+      width: col ? 56 : 224, flexShrink: 0, display: "flex", flexDirection: "column",
+      height: "100vh", background: "#EAF2FF", transition: "width 200ms", position: "relative",
+    }}>
+      {/* Logo */}
+      <div style={{ padding: col ? "18px 14px" : "20px 16px 16px", borderBottom: "1px solid #D8E3F3", overflow: "hidden", minHeight: 60, display: "flex", alignItems: "center" }}>
+        {!col
+          ? <span style={{ fontWeight: 700, fontSize: 13, color: "#0B1426", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>TriAxis Nexus</span>
+          : <div style={{ width: 28, height: 28, borderRadius: 8, background: "#2F8CFF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z"/></svg>
+            </div>
+        }
       </div>
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
-        {NAV.filter(({id}) => {
-          // Hide admin-only pages from non-admin users
+
+      {/* Nav */}
+      <nav style={{ flex: 1, overflowY: "auto", padding: col ? "12px 6px 0" : "12px 8px 0" }}>
+        {!col && <p style={{ padding: "8px 12px 4px", fontSize: 10, fontWeight: 600, color: "#6B7F9F", textTransform: "uppercase", letterSpacing: "0.18em", margin: 0 }}>Menu</p>}
+        {NAV.filter(({ id }) => {
           const adminOnly = ["customers", "users", "api-keys", "system-metrics", "audit-log"];
           if (adminOnly.includes(id) && user?.role !== "TENANT_ADMIN") return false;
           return true;
-        }).map(({id,label,icon}) => (
-          <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
-            <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
-            {!col && <span className="truncate">{label}</span>}
-            {!col && id==="alarms" && alarmCount>0 && <span className="ml-auto bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">{alarmCount}</span>}
-            {!col && id==="device-dashboards" && <span className="ml-auto text-[9px] font-bold bg-[#2F8CFF] text-white px-1.5 py-0.5 rounded-full">NEW</span>}
-            {!col && page===id && !["alarms","device-dashboards"].includes(id) && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#2F8CFF] flex-shrink-0"/>}
-          </button>
-        ))}
+        }).map(({ id, label, icon }) => {
+          const active = page === id;
+          return (
+            <button key={id} title={col ? label : undefined} onClick={() => setPage(id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center",
+                gap: col ? 0 : 12, justifyContent: col ? "center" : "flex-start",
+                padding: col ? "10px 0" : "10px 12px",
+                borderRadius: 8, fontSize: 13,
+                fontWeight: active ? 600 : 500,
+                color: active ? "#0B4BB3" : "#334866",
+                background: active ? "#D7E8FF" : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left", marginBottom: 2,
+                transition: "background 150ms",
+              }}
+              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(215,232,255,0.6)"; }}
+              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
+              <svg style={{ width: 17, height: 17, flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d={icon}/>
+              </svg>
+              {!col && <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>}
+              {!col && id === "alarms" && alarmCount > 0 && (
+                <span style={{ background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 9999, minWidth: 18, textAlign: "center" }}>{alarmCount}</span>
+              )}
+              {!col && id === "device-dashboards" && (
+                <span style={{ background: "#2F8CFF", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 9999 }}>NEW</span>
+              )}
+              {!col && active && !["alarms", "device-dashboards"].includes(id) && (
+                <span style={{ width: 6, height: 6, borderRadius: 9999, background: "#2F8CFF", flexShrink: 0 }}/>
+              )}
+            </button>
+          );
+        })}
       </nav>
-      <div className="border-t border-[#D8E3F3] p-3 space-y-2">
-        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
+
+      {/* Footer */}
+      <div style={{ borderTop: "1px solid #D8E3F3", padding: col ? "10px 6px" : 12, display: "flex", flexDirection: "column", gap: col ? 6 : 10 }}>
+        {/* User */}
+        <div onClick={onLogout}
+          style={{ display: "flex", alignItems: "center", gap: col ? 0 : 10, justifyContent: col ? "center" : "flex-start", padding: "8px 10px", borderRadius: 8, cursor: "pointer", transition: "background 150ms" }}
+          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <div style={{ width: 28, height: 28, borderRadius: 9999, background: "#2F8CFF", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{ini}</div>
+          {!col && <div style={{ overflow: "hidden", flex: 1 }}>
+            <p style={{ fontSize: 12, fontWeight: 500, color: "#0B1426", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</p>
+            <p style={{ fontSize: 10, color: "#6B7F9F", margin: 0 }}>{user?.role || "TENANT_ADMIN"} · Sign out</p>
+          </div>}
+        </div>
+
+        {/* Branding */}
         {!col && (
-          <div className="mx-1 px-2 py-2 flex flex-col items-center gap-2">
-            <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
-            <div className="flex items-center justify-center gap-2.5 w-full">
-              <div className="flex items-center gap-1.5 border-r border-[#C5D5E8] pr-2.5">
-                <img src="/taat-logo-2.png" alt="TAAT" className="h-6 w-auto object-contain" />
-                <div className="flex flex-col leading-none">
-                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis AI</span>
-                  <span className="text-[7px] text-[#6B7F9F]">Technologies</span>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: 4 }}>
+            <span style={{ fontSize: 9, color: "#6B7F9F" }}>In collaboration with</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, borderRight: "1px solid #C5D5E8", paddingRight: 10 }}>
+                <img src="/taat-logo-2.png" alt="TAAT" style={{ height: 22 }}/>
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: "#07142F" }}>TriAxis AI</span>
+                  <span style={{ fontSize: 7, color: "#6B7F9F" }}>Technologies</span>
                 </div>
               </div>
-              <div className="flex items-center gap-1">
-                <img src="/greenson-logo.jpg" alt="Greenson" className="h-4 w-auto object-contain" />
-                <div className="flex flex-col leading-none">
-                  <span className="text-[9px] font-bold text-[#0B1426]">Greenson</span>
-                  <span className="text-[7px] text-[#6B7F9F]">Technology</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <img src="/greenson-logo.jpg" alt="Greenson" style={{ height: 16 }}/>
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: "#0B1426" }}>Greenson</span>
+                  <span style={{ fontSize: 7, color: "#6B7F9F" }}>Technology</span>
                 </div>
               </div>
             </div>
           </div>
         )}
-        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+
+        {/* Collapse toggle */}
+        <button onClick={() => setCol(c => !c)} style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "6px 0", borderRadius: 8, border: "none", background: "transparent",
+          color: "#6B7F9F", cursor: "pointer", transition: "background 150ms",
+        }}
+          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <svg style={{ width: 16, height: 16, transform: col ? "rotate(180deg)" : "none", transition: "transform 200ms" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
       </div>
     </aside>
   );
 }); // end Sidebar memo
 
 const Header = React.memo(function Header({ title, onRefresh, refreshing }) {
-  const [time, setTime] = useState(new Date());
-  useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
+  const [time, setTime] = React.useState(new Date());
+  React.useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
-    <header className="h-16 flex-shrink-0 border-b flex items-center justify-between px-7 shadow-sm shadow-blue-100/30" style={{background:"#F4F8FF",borderColor:"#D8E3F3"}}>
-      <div><h1 className="text-base font-bold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
-      <div className="flex items-center gap-3">
-        <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
-        <div className="w-px h-4 bg-[#D8E3F3]"/>
-        <span className="text-[11px] font-mono text-[#6B7F9F]">{time.toLocaleTimeString()}</span>
+    <header style={{
+      height: 64, flexShrink: 0, display: "flex", alignItems: "center",
+      justifyContent: "space-between", padding: "0 28px",
+      background: "#F4F8FF", borderBottom: "1px solid #D8E3F3",
+      boxShadow: "0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)",
+    }}>
+      <div>
+        <h1 style={{ fontSize: 16, fontWeight: 700, color: "#0B1426", margin: 0 }}>{title}</h1>
+        <p style={{ fontSize: 11, color: "#6B7F9F", marginTop: 2, margin: 0 }}>
+          {time.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+        </p>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button onClick={onRefresh}
+          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 500, color: "#334866", padding: "6px 12px", borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", transition: "background 150ms" }}
+          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+          <svg style={{ width: 14, height: 14 }} className={refreshing ? "animate-spin" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Refresh
+        </button>
+        <div style={{ width: 1, height: 16, background: "#D8E3F3" }}/>
+        <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: "#6B7F9F" }}>
+          {time.toLocaleTimeString()}
+        </span>
       </div>
     </header>
   );
@@ -291,7 +373,7 @@ function OverviewPage({ refreshKey, onToast }) {
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
-          <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+          <div key={label} style={{background:"#FFFFFF",border:"1px solid #D8E3F3",borderRadius:16,boxShadow:"0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)",padding:20,display:"flex",flexDirection:"column",gap:12,transition:"box-shadow 200ms",cursor:"default"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 6px -1px rgba(59,130,246,0.08), 0 2px 4px -2px rgba(15,23,42,0.06)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)"}>
             <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
             {/* Trend line removed — was fake sine wave unrelated to real data */}
             <div style={{height:36,borderRadius:8,background:`${color}08`,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -320,7 +402,7 @@ function OverviewPage({ refreshKey, onToast }) {
               const trends=s?.trends||{};
               const insights=s?.insights||[];
               return (
-                <div key={d.id} className="rounded-2xl border p-4 shadow-sm hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
+                <div key={d.id} style={{background:"#FFFFFF",border:"1px solid #D8E3F3",borderRadius:16,boxShadow:"0 1px 2px rgba(59,130,246,0.04)",padding:16,transition:"box-shadow 200ms"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 6px -1px rgba(59,130,246,0.08), 0 2px 4px -2px rgba(15,23,42,0.06)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(59,130,246,0.04)"}>
                   {/* Header */}
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 min-w-0">
