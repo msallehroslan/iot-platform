@@ -118,153 +118,71 @@ const NAV = [
 ];
 
 const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
-  const [col, setCol] = React.useState(false);
-  const ini  = user ? (user.first_name?.[0] || user.email?.[0] || "U").toUpperCase() : "U";
+  const [col, setCol] = useState(false);
+  const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
-
   return (
-    <aside style={{
-      width: col ? 56 : 224, flexShrink: 0, display: "flex", flexDirection: "column",
-      height: "100vh", background: "#EAF2FF", transition: "width 200ms", position: "relative",
-    }}>
-      {/* Logo */}
-      <div style={{ padding: col ? "18px 14px" : "20px 16px 16px", borderBottom: "1px solid #D8E3F3", overflow: "hidden", minHeight: 60, display: "flex", alignItems: "center" }}>
-        {!col
-          ? <span style={{ fontWeight: 700, fontSize: 13, color: "#0B1426", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>TriAxis Nexus</span>
-          : <div style={{ width: 28, height: 28, borderRadius: 8, background: "#2F8CFF", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z"/></svg>
-            </div>
-        }
+    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
+      <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
+        {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">TriAxis Nexus</span>}
       </div>
-
-      {/* Nav */}
-      <nav style={{ flex: 1, overflowY: "auto", padding: col ? "12px 6px 0" : "12px 8px 0" }}>
-        {!col && <p style={{ padding: "8px 12px 4px", fontSize: 10, fontWeight: 600, color: "#6B7F9F", textTransform: "uppercase", letterSpacing: "0.18em", margin: 0 }}>Menu</p>}
-        {NAV.filter(({ id }) => {
+      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+        {!col && <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-[#6B7F9F]">Menu</p>}
+        {NAV.filter(({id}) => {
+          // Hide admin-only pages from non-admin users
           const adminOnly = ["customers", "users", "api-keys", "system-metrics", "audit-log"];
           if (adminOnly.includes(id) && user?.role !== "TENANT_ADMIN") return false;
           return true;
-        }).map(({ id, label, icon }) => {
-          const active = page === id;
-          return (
-            <button key={id} title={col ? label : undefined} onClick={() => setPage(id)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center",
-                gap: col ? 0 : 12, justifyContent: col ? "center" : "flex-start",
-                padding: col ? "10px 0" : "10px 12px",
-                borderRadius: 8, fontSize: 13,
-                fontWeight: active ? 600 : 500,
-                color: active ? "#0B4BB3" : "#334866",
-                background: active ? "#D7E8FF" : "transparent",
-                border: "none", cursor: "pointer", textAlign: "left", marginBottom: 2,
-                transition: "background 150ms",
-              }}
-              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(215,232,255,0.6)"; }}
-              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
-              <svg style={{ width: 17, height: 17, flexShrink: 0 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d={icon}/>
-              </svg>
-              {!col && <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>}
-              {!col && id === "alarms" && alarmCount > 0 && (
-                <span style={{ background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 9999, minWidth: 18, textAlign: "center" }}>{alarmCount}</span>
-              )}
-              {!col && id === "device-dashboards" && (
-                <span style={{ background: "#2F8CFF", color: "#fff", fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 9999 }}>NEW</span>
-              )}
-              {!col && active && !["alarms", "device-dashboards"].includes(id) && (
-                <span style={{ width: 6, height: 6, borderRadius: 9999, background: "#2F8CFF", flexShrink: 0 }}/>
-              )}
-            </button>
-          );
-        })}
+        }).map(({id,label,icon}) => (
+          <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
+            <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
+            {!col && <span className="truncate">{label}</span>}
+            {!col && id==="alarms" && alarmCount>0 && <span className="ml-auto bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">{alarmCount}</span>}
+            {!col && id==="device-dashboards" && <span className="ml-auto text-[9px] font-bold bg-[#2F8CFF] text-white px-1.5 py-0.5 rounded-full">NEW</span>}
+            {!col && page===id && !["alarms","device-dashboards"].includes(id) && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-[#2F8CFF] flex-shrink-0"/>}
+          </button>
+        ))}
       </nav>
-
-      {/* Footer */}
-      <div style={{ borderTop: "1px solid #D8E3F3", padding: col ? "10px 6px" : 12, display: "flex", flexDirection: "column", gap: col ? 6 : 10 }}>
-        {/* User */}
-        <div onClick={onLogout}
-          style={{ display: "flex", alignItems: "center", gap: col ? 0 : 10, justifyContent: col ? "center" : "flex-start", padding: "8px 10px", borderRadius: 8, cursor: "pointer", transition: "background 150ms" }}
-          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-          <div style={{ width: 28, height: 28, borderRadius: 9999, background: "#2F8CFF", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>{ini}</div>
-          {!col && <div style={{ overflow: "hidden", flex: 1 }}>
-            <p style={{ fontSize: 12, fontWeight: 500, color: "#0B1426", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</p>
-            <p style={{ fontSize: 10, color: "#6B7F9F", margin: 0 }}>{user?.role || "TENANT_ADMIN"} · Sign out</p>
-          </div>}
-        </div>
-
-        {/* Branding */}
+      <div className="border-t border-[#D8E3F3] p-3 space-y-2">
+        {!col && <div onClick={onLogout} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg cursor-pointer hover:bg-[#D7E8FF] transition-colors overflow-hidden"><div className="w-7 h-7 rounded-full bg-[#2F8CFF] flex items-center justify-center text-xs font-bold text-white flex-shrink-0">{ini}</div><div className="overflow-hidden"><p className="text-xs font-medium text-[#0B1426] truncate">{name}</p><p className="text-[10px] text-[#6B7F9F]">{user?.role||"TENANT_ADMIN"} · Sign out</p></div></div>}
         {!col && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: 4 }}>
-            <span style={{ fontSize: 9, color: "#6B7F9F" }}>In collaboration with</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, borderRight: "1px solid #C5D5E8", paddingRight: 10 }}>
-                <img src="/taat-logo-2.png" alt="TAAT" style={{ height: 22 }}/>
-                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: "#07142F" }}>TriAxis AI</span>
-                  <span style={{ fontSize: 7, color: "#6B7F9F" }}>Technologies</span>
+          <div className="mx-1 px-2 py-2 flex flex-col items-center gap-2">
+            <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
+            <div className="flex items-center justify-center gap-2.5 w-full">
+              <div className="flex items-center gap-1.5 border-r border-[#C5D5E8] pr-2.5">
+                <img src="/taat-logo-2.png" alt="TAAT" className="h-6 w-auto object-contain" />
+                <div className="flex flex-col leading-none">
+                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis AI</span>
+                  <span className="text-[7px] text-[#6B7F9F]">Technologies</span>
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <img src="/greenson-logo.jpg" alt="Greenson" style={{ height: 16 }}/>
-                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: "#0B1426" }}>Greenson</span>
-                  <span style={{ fontSize: 7, color: "#6B7F9F" }}>Technology</span>
+              <div className="flex items-center gap-1">
+                <img src="/greenson-logo.jpg" alt="Greenson" className="h-4 w-auto object-contain" />
+                <div className="flex flex-col leading-none">
+                  <span className="text-[9px] font-bold text-[#0B1426]">Greenson</span>
+                  <span className="text-[7px] text-[#6B7F9F]">Technology</span>
                 </div>
               </div>
             </div>
           </div>
         )}
-
-        {/* Collapse toggle */}
-        <button onClick={() => setCol(c => !c)} style={{
-          width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "6px 0", borderRadius: 8, border: "none", background: "transparent",
-          color: "#6B7F9F", cursor: "pointer", transition: "background 150ms",
-        }}
-          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-          <svg style={{ width: 16, height: 16, transform: col ? "rotate(180deg)" : "none", transition: "transform 200ms" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-        </button>
+        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
     </aside>
   );
 }); // end Sidebar memo
 
 const Header = React.memo(function Header({ title, onRefresh, refreshing }) {
-  const [time, setTime] = React.useState(new Date());
-  React.useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
+  const [time, setTime] = useState(new Date());
+  useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
-    <header style={{
-      height: 64, flexShrink: 0, display: "flex", alignItems: "center",
-      justifyContent: "space-between", padding: "0 28px",
-      background: "#F4F8FF", borderBottom: "1px solid #D8E3F3",
-      boxShadow: "0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)",
-    }}>
-      <div>
-        <h1 style={{ fontSize: 16, fontWeight: 700, color: "#0B1426", margin: 0 }}>{title}</h1>
-        <p style={{ fontSize: 11, color: "#6B7F9F", marginTop: 2, margin: 0 }}>
-          {time.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-        </p>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={onRefresh}
-          style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 500, color: "#334866", padding: "6px 12px", borderRadius: 8, background: "transparent", border: "none", cursor: "pointer", transition: "background 150ms" }}
-          onMouseEnter={e => e.currentTarget.style.background = "#D7E8FF"}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-          <svg style={{ width: 14, height: 14 }} className={refreshing ? "animate-spin" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polyline points="23 4 23 10 17 10"/>
-            <polyline points="1 20 1 14 7 14"/>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-          </svg>
-          Refresh
-        </button>
-        <div style={{ width: 1, height: 16, background: "#D8E3F3" }}/>
-        <span style={{ fontSize: 11, fontFamily: "'JetBrains Mono', monospace", color: "#6B7F9F" }}>
-          {time.toLocaleTimeString()}
-        </span>
+    <header className="h-16 flex-shrink-0 border-b flex items-center justify-between px-7 shadow-sm shadow-blue-100/30" style={{background:"#F4F8FF",borderColor:"#D8E3F3"}}>
+      <div><h1 className="text-base font-bold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
+      <div className="flex items-center gap-3">
+        <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
+        <div className="w-px h-4 bg-[#D8E3F3]"/>
+        <span className="text-[11px] font-mono text-[#6B7F9F]">{time.toLocaleTimeString()}</span>
       </div>
     </header>
   );
@@ -373,7 +291,7 @@ function OverviewPage({ refreshKey, onToast }) {
       {/* ── Stat cards ── */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         {[{label:"Total Devices",value:stats?.total_devices,color:"#3b82f6",bg:"bg-[#EAF2FF]",ic:"text-[#2F8CFF]",path:"M2 3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V3zM8 21h8M12 17v4"},{label:"Active Nodes",value:stats?.active_devices,color:"#10b981",bg:"bg-emerald-50",ic:"text-emerald-500",path:"M1.42 9a16 16 0 0 1 21.16 0M5 12.55a11 11 0 0 1 14.08 0M10.83 15.76a6.06 6.06 0 0 1 2.34 0M12 20h.01"},{label:"Active Alarms",value:stats?.active_alarms,color:"#f59e0b",bg:"bg-amber-50",ic:"text-amber-500",path:"M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9m-4.73 13a2 2 0 0 1-3.46 0"},{label:"Events Today",value:stats?.telemetry_today?.toLocaleString(),color:"#8b5cf6",bg:"bg-violet-50",ic:"text-violet-500",path:"M4 7c0-1.1.9-2 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7zm0 5h16"}].map(({label,value,color,bg,ic,path})=>(
-          <div key={label} style={{background:"#FFFFFF",border:"1px solid #D8E3F3",borderRadius:16,boxShadow:"0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)",padding:20,display:"flex",flexDirection:"column",gap:12,transition:"box-shadow 200ms",cursor:"default"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 6px -1px rgba(59,130,246,0.08), 0 2px 4px -2px rgba(15,23,42,0.06)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(59,130,246,0.04), 0 1px 3px rgba(15,23,42,0.04)"}>
+          <div key={label} className="rounded-2xl border p-5 flex flex-col gap-3 shadow-sm shadow-blue-100/40 hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
             <div className="flex items-start justify-between"><div><p className="text-[11px] font-semibold uppercase tracking-widest text-[#6B7F9F] mb-1">{label}</p><p className="text-3xl font-bold text-[#0B1426] leading-none">{loading?"—":(value??0)}</p></div><div className={`w-11 h-11 rounded-xl ${bg} flex items-center justify-center flex-shrink-0`}><svg className={`w-5 h-5 ${ic}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg></div></div>
             {/* Trend line removed — was fake sine wave unrelated to real data */}
             <div style={{height:36,borderRadius:8,background:`${color}08`,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -402,7 +320,7 @@ function OverviewPage({ refreshKey, onToast }) {
               const trends=s?.trends||{};
               const insights=s?.insights||[];
               return (
-                <div key={d.id} style={{background:"#FFFFFF",border:"1px solid #D8E3F3",borderRadius:16,boxShadow:"0 1px 2px rgba(59,130,246,0.04)",padding:16,transition:"box-shadow 200ms"}} onMouseEnter={e=>e.currentTarget.style.boxShadow="0 4px 6px -1px rgba(59,130,246,0.08), 0 2px 4px -2px rgba(15,23,42,0.06)"} onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(59,130,246,0.04)"}>
+                <div key={d.id} className="rounded-2xl border p-4 shadow-sm hover:shadow-md transition-shadow" style={{background:"#FFFFFF",borderColor:"#D8E3F3"}}>
                   {/* Header */}
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2 min-w-0">
@@ -2267,47 +2185,42 @@ function LoginPage({ onLogin }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "linear-gradient(180deg, #F7FAFF 0%, #EEF3FB 100%)" }}>
       <style>{`
-        @keyframes tn-pulse { 0%,100% { opacity:0.6; transform:scale(1); } 50% { opacity:1; transform:scale(1.4); } }
-        @keyframes tn-orbit-1 { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
-        @keyframes tn-orbit-2 { from { transform:rotate(360deg); } to { transform:rotate(0deg); } }
-        @keyframes tn-wave { 0% { stroke-dashoffset:0; } 100% { stroke-dashoffset:-120; } }
-        @keyframes tn-float { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-6px); } }
-        .tn-feat:hover { transform:translateY(-2px); box-shadow:0 12px 30px -10px rgba(15,42,82,0.18); border-color:rgba(47,140,255,0.35)!important; }
-        .tn-feat { transition:transform .25s ease, box-shadow .25s ease, border-color .25s ease; }
-        .tn-btn-primary { transition:transform .15s ease, box-shadow .15s ease, background .15s ease; }
-        .tn-btn-primary:hover { background:#1F7AEC!important; box-shadow:0 10px 24px -6px rgba(47,140,255,0.55)!important; transform:translateY(-1px); }
-        .tn-input { transition:border-color .15s ease, box-shadow .15s ease; }
-        .tn-input:focus { border-color:#2F8CFF!important; box-shadow:0 0 0 4px rgba(47,140,255,0.12)!important; outline:none; }
-        .tn-tab { transition:background .2s ease, color .2s ease, box-shadow .2s ease; }
-        .tn-demo { transition:border-color .2s ease, background .2s ease; }
-        .tn-demo:hover { border-color:#2F8CFF!important; background:#F4F8FF!important; }
+        @keyframes tn-pulse { 0%,100%{opacity:0.6;transform:scale(1);}50%{opacity:1;transform:scale(1.4);} }
+        @keyframes tn-orbit-1 { from{transform:rotate(0deg);}to{transform:rotate(360deg);} }
+        @keyframes tn-orbit-2 { from{transform:rotate(360deg);}to{transform:rotate(0deg);} }
+        @keyframes tn-wave { 0%{stroke-dashoffset:0;}100%{stroke-dashoffset:-120;} }
+        @keyframes tn-float { 0%,100%{transform:translateY(0);}50%{transform:translateY(-6px);} }
+        .tn-feat:hover{transform:translateY(-2px);box-shadow:0 12px 30px -10px rgba(15,42,82,0.18);border-color:rgba(47,140,255,0.35)!important;}
+        .tn-feat{transition:transform .25s ease,box-shadow .25s ease,border-color .25s ease;}
+        .tn-btn-primary{transition:transform .15s ease,box-shadow .15s ease,background .15s ease;}
+        .tn-btn-primary:hover{background:#1F7AEC!important;box-shadow:0 10px 24px -6px rgba(47,140,255,0.55)!important;transform:translateY(-1px);}
+        .tn-input{transition:border-color .15s ease,box-shadow .15s ease;}
+        .tn-input:focus{border-color:#2F8CFF!important;box-shadow:0 0 0 4px rgba(47,140,255,0.12)!important;outline:none;}
+        .tn-tab{transition:background .2s ease,color .2s ease,box-shadow .2s ease;}
+        .tn-demo{transition:border-color .2s ease,background .2s ease;}
+        .tn-demo:hover{border-color:#2F8CFF!important;background:#F4F8FF!important;}
       `}</style>
-
-      {/* Top header */}
-      <header style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 40px", background:"rgba(255,255,255,0.85)", backdropFilter:"blur(10px)", borderBottom:"1px solid #EAF0F8", position:"relative", zIndex:10 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <img src="/taat-logo-2.png" alt="TAAT" style={{ height:30 }}/>
-          <div style={{ width:1, height:22, background:"#E2E8F0" }}/>
-          <div style={{ display:"flex", flexDirection:"column", lineHeight:1.15 }}>
-            <span style={{ fontSize:14, fontWeight:700, color:"#0B1426", letterSpacing:"-0.005em" }}>TriAxis AI Technologies</span>
-            <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:10, fontWeight:500, color:"#6B7F9F", letterSpacing:"0.18em", textTransform:"uppercase" }}>Industrial AI · IoT</span>
+      <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 40px",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(10px)",borderBottom:"1px solid #EAF0F8",position:"relative",zIndex:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <img src="/taat-logo-2.png" alt="TAAT" style={{height:30}}/>
+          <div style={{width:1,height:22,background:"#E2E8F0"}}/>
+          <div style={{display:"flex",flexDirection:"column",lineHeight:1.15}}>
+            <span style={{fontSize:14,fontWeight:700,color:"#0B1426",letterSpacing:"-0.005em"}}>TriAxis AI Technologies</span>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#6B7F9F",letterSpacing:"0.18em",textTransform:"uppercase"}}>Industrial AI · IoT</span>
           </div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:10, fontWeight:500, color:"#94A3B8", letterSpacing:"0.18em", textTransform:"uppercase" }}>In collaboration with</span>
-          <div style={{ display:"flex", alignItems:"center", gap:10, padding:"6px 12px", background:"#FFFFFF", border:"1px solid #EAF0F8", borderRadius:8 }}>
-            <img src="/greenson-logo.jpg" alt="Greenson" style={{ height:22, borderRadius:3 }}/>
-            <span style={{ fontSize:13, fontWeight:700, color:"#0B1426" }}>Greenson Technology</span>
-            <span style={{ width:6, height:6, borderRadius:9999, background:"#10B981", boxShadow:"0 0 0 3px rgba(16,185,129,0.18)" }}/>
+        <div style={{display:"flex",alignItems:"center",gap:14}}>
+          <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>In collaboration with</span>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:"#FFFFFF",border:"1px solid #EAF0F8",borderRadius:8}}>
+            <img src="/greenson-logo.jpg" alt="Greenson" style={{height:22,borderRadius:3}}/>
+            <span style={{fontSize:13,fontWeight:700,color:"#0B1426"}}>Greenson Technology</span>
+            <span style={{width:6,height:6,borderRadius:9999,background:"#10B981",boxShadow:"0 0 0 3px rgba(16,185,129,0.18)"}}/>
           </div>
         </div>
       </header>
-
-      {/* Main body */}
-      <div style={{ flex:1, display:"grid", gridTemplateColumns:"1.15fr 1fr", gap:0, alignItems:"stretch", position:"relative", overflow:"hidden" }}>
-        {/* Background */}
-        <div aria-hidden="true" style={{ position:"absolute", inset:0, pointerEvents:"none", background:"radial-gradient(900px 600px at 10% 10%, rgba(47,140,255,0.12), transparent 60%), radial-gradient(700px 500px at 95% 90%, rgba(47,140,255,0.08), transparent 60%)" }}/>
-        <svg aria-hidden="true" width="100%" height="100%" style={{ position:"absolute", inset:0, opacity:0.5, pointerEvents:"none" }}>
+      <div style={{flex:1,display:"grid",gridTemplateColumns:"1.15fr 1fr",gap:0,alignItems:"stretch",position:"relative",overflow:"hidden"}}>
+        <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",background:"radial-gradient(900px 600px at 10% 10%,rgba(47,140,255,0.12),transparent 60%),radial-gradient(700px 500px at 95% 90%,rgba(47,140,255,0.08),transparent 60%)"}}/>
+        <svg aria-hidden="true" width="100%" height="100%" style={{position:"absolute",inset:0,opacity:0.5,pointerEvents:"none"}}>
           <defs>
             <pattern id="tn-grid" x="0" y="0" width="56" height="56" patternUnits="userSpaceOnUse"><path d="M56 0H0V56" fill="none" stroke="#D8E3F3" strokeWidth="0.6"/></pattern>
             <pattern id="tn-dots" x="0" y="0" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.8" fill="#C7D5E8"/></pattern>
@@ -2315,159 +2228,765 @@ function LoginPage({ onLogin }) {
           <rect width="100%" height="100%" fill="url(#tn-grid)"/>
           <rect width="100%" height="100%" fill="url(#tn-dots)" opacity="0.7"/>
         </svg>
-        <svg aria-hidden="true" viewBox="0 0 1200 80" preserveAspectRatio="none" style={{ position:"absolute", bottom:0, left:0, width:"100%", height:80, opacity:0.35, pointerEvents:"none" }}>
-          <path d="M0 40 Q150 10 300 40 T600 40 T900 40 T1200 40" fill="none" stroke="#2F8CFF" strokeWidth="1.2" strokeDasharray="4 8" style={{ animation:"tn-wave 6s linear infinite" }}/>
-          <path d="M0 50 Q150 70 300 50 T600 50 T900 50 T1200 50" fill="none" stroke="#2F8CFF" strokeWidth="0.8" strokeDasharray="2 10" opacity="0.6" style={{ animation:"tn-wave 9s linear infinite" }}/>
+        <svg aria-hidden="true" viewBox="0 0 1200 80" preserveAspectRatio="none" style={{position:"absolute",bottom:0,left:0,width:"100%",height:80,opacity:0.35,pointerEvents:"none"}}>
+          <path d="M0 40 Q150 10 300 40 T600 40 T900 40 T1200 40" fill="none" stroke="#2F8CFF" strokeWidth="1.2" strokeDasharray="4 8" style={{animation:"tn-wave 6s linear infinite"}}/>
         </svg>
-
-        {/* LEFT: brand + features */}
-        <div style={{ padding:"64px 64px 64px 72px", display:"flex", flexDirection:"column", justifyContent:"center", position:"relative", zIndex:2 }}>
-          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:28 }}>
-            <span style={{ width:32, height:1.5, background:"linear-gradient(90deg, #2F8CFF, transparent)" }}/>
-            <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:10, fontWeight:600, color:"#2F8CFF", letterSpacing:"0.32em", textTransform:"uppercase" }}>Industrial AI · IoT Platform</span>
+        <div style={{padding:"64px 64px 64px 72px",display:"flex",flexDirection:"column",justifyContent:"center",position:"relative",zIndex:2}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}>
+            <span style={{width:32,height:1.5,background:"linear-gradient(90deg,#2F8CFF,transparent)"}}/>
+            <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:600,color:"#2F8CFF",letterSpacing:"0.32em",textTransform:"uppercase"}}>Industrial AI · IoT Platform</span>
           </div>
-
-          <div style={{ display:"flex", alignItems:"center", gap:28, marginBottom:28 }}>
-            <div style={{ position:"relative", width:132, height:132, flexShrink:0, animation:"tn-float 6s ease-in-out infinite" }}>
-              <svg viewBox="0 0 132 132" style={{ position:"absolute", inset:0, animation:"tn-orbit-1 22s linear infinite" }}>
-                <circle cx="66" cy="66" r="62" fill="none" stroke="#CFE0FB" strokeWidth="0.8" strokeDasharray="2 6"/>
-                <circle cx="66" cy="4" r="2.5" fill="#2F8CFF"/>
-              </svg>
-              <svg viewBox="0 0 132 132" style={{ position:"absolute", inset:0, animation:"tn-orbit-2 14s linear infinite" }}>
-                <circle cx="66" cy="66" r="50" fill="none" stroke="#A7C5F4" strokeWidth="0.6" strokeDasharray="1 4"/>
-                <circle cx="116" cy="66" r="2" fill="#10B981"/>
-              </svg>
-              <div style={{ position:"absolute", inset:14, borderRadius:"50%", background:"radial-gradient(circle at 30% 25%, #FFFFFF 0%, #E8F1FF 55%, #D2E3FB 100%)", boxShadow:"inset 0 2px 8px rgba(255,255,255,0.9), 0 16px 36px -10px rgba(47,140,255,0.45), 0 0 0 1px rgba(47,140,255,0.12)", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden" }}>
-                <img src="/taat-robot.png" alt="TAAT" style={{ width:"82%", height:"82%", objectFit:"contain" }}/>
+          <div style={{display:"flex",alignItems:"center",gap:28,marginBottom:28}}>
+            <div style={{position:"relative",width:132,height:132,flexShrink:0,animation:"tn-float 6s ease-in-out infinite"}}>
+              <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-1 22s linear infinite"}}><circle cx="66" cy="66" r="62" fill="none" stroke="#CFE0FB" strokeWidth="0.8" strokeDasharray="2 6"/><circle cx="66" cy="4" r="2.5" fill="#2F8CFF"/></svg>
+              <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-2 14s linear infinite"}}><circle cx="66" cy="66" r="50" fill="none" stroke="#A7C5F4" strokeWidth="0.6" strokeDasharray="1 4"/><circle cx="116" cy="66" r="2" fill="#10B981"/></svg>
+              <div style={{position:"absolute",inset:14,borderRadius:"50%",background:"radial-gradient(circle at 30% 25%,#FFFFFF 0%,#E8F1FF 55%,#D2E3FB 100%)",boxShadow:"inset 0 2px 8px rgba(255,255,255,0.9),0 16px 36px -10px rgba(47,140,255,0.45)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                <img src="/taat-robot.png" alt="TAAT" style={{width:"82%",height:"82%",objectFit:"contain"}}/>
               </div>
-              <div style={{ position:"absolute", bottom:-6, left:"50%", transform:"translateX(-50%)", padding:"3px 10px", background:"#0B1426", color:"#FFFFFF", fontFamily:"'JetBrains Mono', monospace", fontSize:9, fontWeight:600, letterSpacing:"0.22em", borderRadius:9999, boxShadow:"0 6px 14px -4px rgba(11,20,38,0.5)" }}>TAAT</div>
+              <div style={{position:"absolute",bottom:-6,left:"50%",transform:"translateX(-50%)",padding:"3px 10px",background:"#0B1426",color:"#FFFFFF",fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,letterSpacing:"0.22em",borderRadius:9999}}>TAAT</div>
             </div>
             <div>
-              <h1 style={{ fontSize:52, fontWeight:700, color:"#0B1426", letterSpacing:"-0.03em", lineHeight:1.02, margin:0 }}>
-                <span style={{ color:"#2F8CFF" }}>TriAxis</span> Nexus<br/>Platform
+              <h1 style={{fontSize:52,fontWeight:700,color:"#0B1426",letterSpacing:"-0.03em",lineHeight:1.02,margin:0}}>
+                <span style={{color:"#2F8CFF"}}>TriAxis</span> Nexus<br/>Platform
               </h1>
-              <p style={{ fontSize:14, fontWeight:500, color:"#475569", margin:"10px 0 0", letterSpacing:"0.01em" }}>
-                AI-powered industrial IoT intelligence — predictive, autonomous, enterprise-grade.
-              </p>
+              <p style={{fontSize:14,fontWeight:500,color:"#475569",margin:"10px 0 0"}}>AI-powered industrial IoT intelligence — predictive, autonomous, enterprise-grade.</p>
             </div>
           </div>
-
-          {/* Live stats strip */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:0, maxWidth:580, marginBottom:28, background:"rgba(255,255,255,0.75)", backdropFilter:"blur(8px)", border:"1px solid #EAF0F8", borderRadius:12, padding:"14px 4px", boxShadow:"0 1px 2px rgba(15,42,82,0.04)" }}>
-            {stats.map((s, i) => (
-              <div key={s.l} style={{ padding:"0 16px", borderRight: i < stats.length-1 ? "1px solid #EAF0F8" : "none", display:"flex", flexDirection:"column", gap:4 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                  <span style={{ width:6, height:6, borderRadius:9999, background:s.dot, animation:"tn-pulse 2s ease-in-out infinite" }}/>
-                  <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:9, fontWeight:600, color:"#94A3B8", letterSpacing:"0.18em", textTransform:"uppercase" }}>{s.l}</span>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:0,maxWidth:580,marginBottom:28,background:"rgba(255,255,255,0.75)",backdropFilter:"blur(8px)",border:"1px solid #EAF0F8",borderRadius:12,padding:"14px 4px"}}>
+            {stats.map((s,i)=>(
+              <div key={s.l} style={{padding:"0 16px",borderRight:i<stats.length-1?"1px solid #EAF0F8":"none",display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{width:6,height:6,borderRadius:9999,background:s.dot,animation:"tn-pulse 2s ease-in-out infinite"}}/>
+                  <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>{s.l}</span>
                 </div>
-                <span style={{ fontSize:22, fontWeight:700, color:"#0B1426", letterSpacing:"-0.02em" }}>{s.v}</span>
+                <span style={{fontSize:22,fontWeight:700,color:"#0B1426",letterSpacing:"-0.02em"}}>{s.v}</span>
               </div>
             ))}
           </div>
-
-          {/* Feature cards */}
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, maxWidth:580 }}>
-            {features.map((f) => (
-              <div key={f.t} className="tn-feat" style={{ background:"rgba(255,255,255,0.9)", backdropFilter:"blur(8px)", border:"1px solid #EAF0F8", borderRadius:12, padding:"16px 18px", boxShadow:"0 1px 2px rgba(15,42,82,0.04)", display:"flex", alignItems:"center", gap:14 }}>
-                <div style={{ width:38, height:38, borderRadius:10, background:"linear-gradient(135deg, #EAF2FF, #D8E7FC)", border:"1px solid #D2E1F8", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,maxWidth:580}}>
+            {features.map((f)=>(
+              <div key={f.t} className="tn-feat" style={{background:"rgba(255,255,255,0.9)",backdropFilter:"blur(8px)",border:"1px solid #EAF0F8",borderRadius:12,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
+                <div style={{width:38,height:38,borderRadius:10,background:"linear-gradient(135deg,#EAF2FF,#D8E7FC)",border:"1px solid #D2E1F8",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{f.icon}</svg>
                 </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:2 }}>
-                    <span style={{ fontSize:13.5, fontWeight:700, color:"#0B1426" }}>{f.t}</span>
-                    <span style={{ width:5, height:5, borderRadius:9999, background:"#10B981", animation:"tn-pulse 2s ease-in-out infinite" }}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                    <span style={{fontSize:13.5,fontWeight:700,color:"#0B1426"}}>{f.t}</span>
+                    <span style={{width:5,height:5,borderRadius:9999,background:"#10B981",animation:"tn-pulse 2s ease-in-out infinite"}}/>
                   </div>
-                  <div style={{ fontSize:11.5, color:"#6B7F9F" }}>{f.s}</div>
+                  <div style={{fontSize:11.5,color:"#6B7F9F"}}>{f.s}</div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-
-        {/* RIGHT: sign in card */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:"48px 72px 48px 24px", position:"relative", zIndex:2 }}>
-          <div aria-hidden="true" style={{ position:"absolute", width:380, height:380, borderRadius:"50%", background:"radial-gradient(circle, rgba(47,140,255,0.18), transparent 65%)", filter:"blur(10px)" }}/>
-          <div style={{ position:"relative", width:"100%", maxWidth:420, background:"rgba(255,255,255,0.92)", backdropFilter:"blur(14px)", borderRadius:18, padding:36, boxShadow:"0 40px 80px -20px rgba(15,42,82,0.22), 0 12px 24px -12px rgba(15,42,82,0.10), inset 0 1px 0 rgba(255,255,255,0.9)", border:"1px solid rgba(208,222,244,0.9)" }}>
-            <div aria-hidden="true" style={{ position:"absolute", top:0, left:24, right:24, height:2, background:"linear-gradient(90deg, transparent, #2F8CFF, transparent)", borderRadius:2 }}/>
-
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:22 }}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 72px 48px 24px",position:"relative",zIndex:2}}>
+          <div style={{position:"relative",width:"100%",maxWidth:420,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(14px)",borderRadius:18,padding:36,boxShadow:"0 40px 80px -20px rgba(15,42,82,0.22)",border:"1px solid rgba(208,222,244,0.9)"}}>
+            <div aria-hidden="true" style={{position:"absolute",top:0,left:24,right:24,height:2,background:"linear-gradient(90deg,transparent,#2F8CFF,transparent)",borderRadius:2}}/>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
               <div>
-                <h2 style={{ fontSize:24, fontWeight:700, color:"#0B1426", margin:0, marginBottom:4, letterSpacing:"-0.018em" }}>Welcome back</h2>
-                <p style={{ fontSize:12.5, color:"#6B7F9F", margin:0 }}>Sign in to continue to TriAxis Nexus</p>
+                <h2 style={{fontSize:24,fontWeight:700,color:"#0B1426",margin:0,marginBottom:4}}>Welcome back</h2>
+                <p style={{fontSize:12.5,color:"#6B7F9F",margin:0}}>Sign in to continue to TriAxis Nexus</p>
               </div>
-              <div style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 10px", background:"rgba(16,185,129,0.08)", border:"1px solid rgba(16,185,129,0.25)", borderRadius:9999 }}>
-                <span style={{ width:6, height:6, borderRadius:9999, background:"#10B981", animation:"tn-pulse 2s ease-in-out infinite" }}/>
-                <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:9, fontWeight:600, color:"#0B8459", letterSpacing:"0.18em", textTransform:"uppercase" }}>Secure</span>
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 10px",background:"rgba(16,185,129,0.08)",border:"1px solid rgba(16,185,129,0.25)",borderRadius:9999}}>
+                <span style={{width:6,height:6,borderRadius:9999,background:"#10B981",animation:"tn-pulse 2s ease-in-out infinite"}}/>
+                <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,color:"#0B8459",letterSpacing:"0.18em",textTransform:"uppercase"}}>Secure</span>
               </div>
             </div>
-
-            {/* Tabs */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", background:"#F4F8FF", padding:4, borderRadius:10, marginBottom:22, gap:4, border:"1px solid #E2EBF8" }}>
-              <button onClick={() => setTab("signin")} className="tn-tab" style={{ padding:"9px 0", fontSize:13, fontWeight:600, border:"none", borderRadius:8, cursor:"pointer", background: tab==="signin" ? "#FFFFFF" : "transparent", color: tab==="signin" ? "#0B1426" : "#6B7F9F", boxShadow: tab==="signin" ? "0 1px 3px rgba(15,42,82,0.10)" : "none" }}>Sign In</button>
-              <button onClick={() => setTab("neworg")} className="tn-tab" style={{ padding:"9px 0", fontSize:13, fontWeight:600, border:"none", borderRadius:8, cursor:"pointer", background: tab==="neworg" ? "#FFFFFF" : "transparent", color: tab==="neworg" ? "#0B1426" : "#6B7F9F", boxShadow: tab==="neworg" ? "0 1px 3px rgba(15,42,82,0.10)" : "none" }}>New Organization</button>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",background:"#F4F8FF",padding:4,borderRadius:10,marginBottom:22,gap:4,border:"1px solid #E2EBF8"}}>
+              <button onClick={()=>setTab("signin")} className="tn-tab" style={{padding:"9px 0",fontSize:13,fontWeight:600,border:"none",borderRadius:8,cursor:"pointer",background:tab==="signin"?"#FFFFFF":"transparent",color:tab==="signin"?"#0B1426":"#6B7F9F",boxShadow:tab==="signin"?"0 1px 3px rgba(15,42,82,0.10)":"none"}}>Sign In</button>
+              <button onClick={()=>setTab("neworg")} className="tn-tab" style={{padding:"9px 0",fontSize:13,fontWeight:600,border:"none",borderRadius:8,cursor:"pointer",background:tab==="neworg"?"#FFFFFF":"transparent",color:tab==="neworg"?"#0B1426":"#6B7F9F",boxShadow:tab==="neworg"?"0 1px 3px rgba(15,42,82,0.10)":"none"}}>New Organization</button>
             </div>
-
-            {tab === "neworg" && (
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:16 }}>
-                <div>
-                  <label style={{ display:"block", fontSize:11, fontWeight:600, color:"#475569", marginBottom:6, letterSpacing:"0.04em", textTransform:"uppercase" }}>First Name</label>
-                  <input className="tn-input" value={fname} onChange={e=>setFname(e.target.value)} style={{ width:"100%", padding:"11px 13px", background:"#FFFFFF", border:"1px solid #E2E8F0", borderRadius:9, fontSize:13, color:"#0B1426", boxSizing:"border-box" }}/>
-                </div>
-                <div>
-                  <label style={{ display:"block", fontSize:11, fontWeight:600, color:"#475569", marginBottom:6, letterSpacing:"0.04em", textTransform:"uppercase" }}>Last Name</label>
-                  <input className="tn-input" value={lname} onChange={e=>setLname(e.target.value)} style={{ width:"100%", padding:"11px 13px", background:"#FFFFFF", border:"1px solid #E2E8F0", borderRadius:9, fontSize:13, color:"#0B1426", boxSizing:"border-box" }}/>
-                </div>
+            {tab==="neworg"&&(
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+                <div><label style={{display:"block",fontSize:11,fontWeight:600,color:"#475569",marginBottom:6,textTransform:"uppercase"}}>First Name</label><input className="tn-input" value={fname} onChange={e=>setFname(e.target.value)} style={{width:"100%",padding:"11px 13px",background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:9,fontSize:13,color:"#0B1426",boxSizing:"border-box"}}/></div>
+                <div><label style={{display:"block",fontSize:11,fontWeight:600,color:"#475569",marginBottom:6,textTransform:"uppercase"}}>Last Name</label><input className="tn-input" value={lname} onChange={e=>setLname(e.target.value)} style={{width:"100%",padding:"11px 13px",background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:9,fontSize:13,color:"#0B1426",boxSizing:"border-box"}}/></div>
               </div>
             )}
-
-            <label style={{ display:"block", fontSize:11, fontWeight:600, color:"#475569", marginBottom:6, letterSpacing:"0.04em", textTransform:"uppercase" }}>Work Email</label>
-            <input className="tn-input" value={email} onChange={e=>setEmail(e.target.value)} style={{ width:"100%", padding:"11px 13px", background:"#FFFFFF", border:"1px solid #E2E8F0", borderRadius:9, fontSize:13, color:"#0B1426", marginBottom:16, boxSizing:"border-box" }}/>
-
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:6 }}>
-              <label style={{ fontSize:11, fontWeight:600, color:"#475569", letterSpacing:"0.04em", textTransform:"uppercase" }}>Password</label>
-              {tab === "signin" && <a href="#" style={{ fontSize:12, fontWeight:500, color:"#2F8CFF", textDecoration:"none" }}>Forgot?</a>}
+            <label style={{display:"block",fontSize:11,fontWeight:600,color:"#475569",marginBottom:6,textTransform:"uppercase"}}>Work Email</label>
+            <input className="tn-input" value={email} onChange={e=>setEmail(e.target.value)} style={{width:"100%",padding:"11px 13px",background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:9,fontSize:13,color:"#0B1426",marginBottom:16,boxSizing:"border-box"}}/>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+              <label style={{fontSize:11,fontWeight:600,color:"#475569",textTransform:"uppercase"}}>Password</label>
+              {tab==="signin"&&<a href="#" style={{fontSize:12,fontWeight:500,color:"#2F8CFF",textDecoration:"none"}}>Forgot?</a>}
             </div>
-            <input className="tn-input" type="password" value={pw} onChange={e=>setPw(e.target.value)} style={{ width:"100%", padding:"11px 13px", background:"#FFFFFF", border:"1px solid #E2E8F0", borderRadius:9, fontSize:13, color:"#0B1426", marginBottom:20, boxSizing:"border-box" }}/>
-
-            {error && <p style={{ fontSize:12, color:"#DC2626", marginBottom:12, textAlign:"center" }}>{error}</p>}
-
-            <button onClick={submit} disabled={loading} className="tn-btn-primary" style={{ width:"100%", background:"#2F8CFF", color:"#FFFFFF", fontSize:14, fontWeight:600, padding:13, borderRadius:10, border:"none", cursor:"pointer", boxShadow:"0 8px 18px -4px rgba(47,140,255,0.45)", display:"flex", alignItems:"center", justifyContent:"center", gap:8, opacity: loading ? 0.7 : 1 }}>
-              {loading ? "Signing in…" : (tab === "signin" ? "Sign In to Nexus" : "Create Account")}
-              {!loading && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>}
+            <input className="tn-input" type="password" value={pw} onChange={e=>setPw(e.target.value)} style={{width:"100%",padding:"11px 13px",background:"#FFFFFF",border:"1px solid #E2E8F0",borderRadius:9,fontSize:13,color:"#0B1426",marginBottom:20,boxSizing:"border-box"}}/>
+            {error&&<p style={{fontSize:12,color:"#DC2626",marginBottom:12,textAlign:"center"}}>{error}</p>}
+            <button onClick={submit} disabled={loading} className="tn-btn-primary" style={{width:"100%",background:"#2F8CFF",color:"#FFFFFF",fontSize:14,fontWeight:600,padding:13,borderRadius:10,border:"none",cursor:"pointer",boxShadow:"0 8px 18px -4px rgba(47,140,255,0.45)",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?0.7:1}}>
+              {loading?"Signing in…":(tab==="signin"?"Sign In to Nexus":"Create Account")}
+              {!loading&&<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>}
             </button>
-
-            <div style={{ display:"flex", alignItems:"center", gap:12, margin:"20px 0" }}>
-              <div style={{ flex:1, height:1, background:"#EAF0F8" }}/>
-              <span style={{ fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:"#94A3B8", letterSpacing:"0.18em", textTransform:"uppercase" }}>or</span>
-              <div style={{ flex:1, height:1, background:"#EAF0F8" }}/>
+            <div style={{display:"flex",alignItems:"center",gap:12,margin:"20px 0"}}>
+              <div style={{flex:1,height:1,background:"#EAF0F8"}}/>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>or</span>
+              <div style={{flex:1,height:1,background:"#EAF0F8"}}/>
             </div>
-
-            <button onClick={() => { setEmail("demo@triaxisai.com"); setPw("demo1234"); setTimeout(submit, 0); }} className="tn-demo" style={{ width:"100%", background:"#FFFFFF", color:"#0B1426", fontSize:13, fontWeight:600, padding:11, borderRadius:10, border:"1px solid #E2E8F0", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <button onClick={()=>{setEmail("demo@triaxisai.com");setPw("demo1234");setTimeout(submit,0);}} className="tn-demo" style={{width:"100%",background:"#FFFFFF",color:"#0B1426",fontSize:13,fontWeight:600,padding:11,borderRadius:10,border:"1px solid #E2E8F0",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2F8CFF" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               Try Demo Account
             </button>
-
-            <p style={{ fontSize:11, color:"#94A3B8", textAlign:"center", marginTop:18, marginBottom:0, lineHeight:1.5 }}>
-              By signing in you agree to our <a href="#" style={{ color:"#2F8CFF", textDecoration:"none" }}>Terms</a> and <a href="#" style={{ color:"#2F8CFF", textDecoration:"none" }}>Privacy Policy</a>.
-            </p>
+            <p style={{fontSize:11,color:"#94A3B8",textAlign:"center",marginTop:18,marginBottom:0,lineHeight:1.5}}>By signing in you agree to our <a href="#" style={{color:"#2F8CFF",textDecoration:"none"}}>Terms</a> and <a href="#" style={{color:"#2F8CFF",textDecoration:"none"}}>Privacy Policy</a>.</p>
           </div>
         </div>
       </div>
-
-      {/* Footer */}
-      <footer style={{ padding:"16px 40px", display:"flex", alignItems:"center", justifyContent:"space-between", borderTop:"1px solid #EAF0F8", background:"rgba(255,255,255,0.85)", backdropFilter:"blur(8px)", position:"relative", zIndex:10 }}>
-        <span style={{ fontSize:11.5, color:"#94A3B8" }}>© 2026 TriAxis AI Technologies · In collaboration with Greenson Technology</span>
-        <div style={{ display:"flex", alignItems:"center", gap:18, fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:"#94A3B8", letterSpacing:"0.16em", textTransform:"uppercase" }}>
-          <span style={{ display:"flex", alignItems:"center", gap:6 }}>
-            <span style={{ width:6, height:6, borderRadius:9999, background:"#10B981", animation:"tn-pulse 2s ease-in-out infinite" }}/>
-            All systems operational
-          </span>
+      <footer style={{padding:"16px 40px",display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid #EAF0F8",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(8px)",position:"relative",zIndex:10}}>
+        <span style={{fontSize:11.5,color:"#94A3B8"}}>© 2026 TriAxis AI Technologies · In collaboration with Greenson Technology</span>
+        <div style={{display:"flex",alignItems:"center",gap:18,fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"#94A3B8",letterSpacing:"0.16em",textTransform:"uppercase"}}>
+          <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:6,height:6,borderRadius:9999,background:"#10B981",animation:"tn-pulse 2s ease-in-out infinite"}}/>All systems operational</span>
           <span>v3.0.0</span>
         </div>
       </footer>
     </div>
   );
 }
+
+
+const PAGE_TITLES = {
+  overview:"Overview", "user-dashboards":"My Dashboards", "device-dashboards":"Device Dashboards",
+  devices:"Devices", alarms:"Alarms",
+  "rule-chains":"Rule Chains (Threshold Rules)", customers:"Customers", users:"Users & Roles", settings:"Settings", "api-keys":"API Keys", "system-metrics":"System Metrics", "audit-log":"Audit Log",
+};
+
+// ── AI Chatbot Widget ─────────────────────────────────────────────────────────
+const AIChatbot = React.memo(function AIChatbot({ user }) {
+  const STORAGE_KEY = "taat_chat_history";
+  const MAX_STORED  = 20;
+
+  const [open,    setOpen]    = useState(false);
+  const [msgs,    setMsgs]    = useState(() => {
+    // Restore chat history from localStorage
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
+  });
+  const [input,   setInput]   = useState("");
+  const [loading, setLoading] = useState(false);
+  const [tab,     setTab]     = useState("chat"); // "chat" | "report"
+  const [report,  setReport]  = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [usage,   setUsage]   = useState(null);  // Groq rate limit usage
+  const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
+
+  // Persist chat history to localStorage
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs.slice(-MAX_STORED))); } catch {}
+  }, [msgs]);
+
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:"smooth"}); }, [msgs]);
+  useEffect(() => { if (open && tab==="chat") setTimeout(()=>inputRef.current?.focus(), 100); }, [open, tab]);
+
+  // Fetch usage when panel opens
+  useEffect(() => {
+    if (open) intelligenceApi.usage().then(setUsage).catch(()=>{});
+  }, [open]);
+
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpData, setHelpData] = useState(null); // dynamic device/key/rule data for help panel
+
+  // Fetch real device+key+rule data when help panel opens
+  const loadHelpData = async () => {
+    if (helpData) return; // already loaded
+    try {
+      const [devRes, rulesRes] = await Promise.allSettled([
+        deviceApi.list({ limit: 20 }),
+        fetch(API_BASE + "/threshold-rules/", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` }
+        }).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+
+      const devices = devRes.status === "fulfilled"
+        ? (Array.isArray(devRes.value) ? devRes.value : devRes.value?.items || [])
+        : [];
+
+      const rules = rulesRes.status === "fulfilled" ? (rulesRes.value || []) : [];
+
+      // Fetch telemetry keys for each active device
+      const activeDevs = devices.filter(d => d.status === "ACTIVE").slice(0, 4);
+      const keyResults = await Promise.allSettled(
+        activeDevs.map(d =>
+          telemetryApi.keys(d.id)
+            .then(r => ({ deviceId: d.id, deviceName: d.name, keys: (r?.keys || []).filter(k =>
+              !["latitude","longitude","lat","lng","lon","altitude","rssi","snr"].includes(k.toLowerCase())
+            )}))
+            .catch(() => ({ deviceId: d.id, deviceName: d.name, keys: [] }))
+        )
+      );
+
+      const deviceKeys = keyResults
+        .filter(r => r.status === "fulfilled")
+        .map(r => r.value);
+
+      setHelpData({ devices, deviceKeys, rules });
+    } catch {
+      setHelpData({ devices: [], deviceKeys: [], rules: [] });
+    }
+  };
+
+  const clearHistory = () => {
+    const fresh = [{ role:"assistant", content:"I'm TAAT — your intelligent IoT agent.\nI analyse your devices, detect anomalies, and execute actions in real time.\nAsk me anything, or tell me what to do." }];
+    setMsgs(fresh);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  };
+
+  const loadReport = async () => {
+    setReportLoading(true);
+    try {
+      const r = await intelligenceApi.dailyReport();
+      setReport(r);
+    } catch(e) { setReport({error: e.message}); }
+    finally { setReportLoading(false); }
+  };
+
+  useEffect(() => { if (tab === "report" && !report) loadReport(); }, [tab]);
+
+  const send = async (overrideText) => {
+    const text = (overrideText || input).trim();
+    if (!text || loading) return;
+    const userMsg = { role:"user", content: text };
+    setMsgs(m => [...m, userMsg]);
+    setInput("");
+    setLoading(true);
+    setTimeout(()=>inputRef.current?.focus(), 50);
+    try {
+      const history = [...msgs, userMsg].slice(-10);
+      // Pass pending_confirm if the last assistant message had a HIGH-risk action waiting
+      const lastAssistant = [...msgs].reverse().find(m => m.role === "assistant");
+      const pendingConfirm = lastAssistant?.confirm_required || null;
+      const res = await intelligenceApi.chat(history, null, pendingConfirm);
+      setMsgs(m => [...m, {
+        role:           "assistant",
+        content:        res.reply,
+        rpc_executed:   res.rpc_executed   || null,
+        alarm_actioned: res.alarm_actioned || null,
+        rule_actioned:  res.rule_actioned  || null,
+        user_actioned:  res.user_actioned  || null,
+      }]);
+      // Update usage counter from response
+      if (res.rate) setUsage(res.rate);
+    } catch(e) {
+      // Handle 429 rate limit gracefully
+      if (e.message?.includes("rate_limit_exceeded") || e.message?.includes("429")) {
+        const detail = (() => { try { return JSON.parse(e.message); } catch { return null; } })();
+        setMsgs(m => [...m, { role:"assistant", content: detail?.message || `⏳ You've reached the AI request limit for this hour. Please wait before sending more messages.` }]);
+        intelligenceApi.usage().then(setUsage).catch(()=>{});
+      } else {
+        const errMsg = e.message || String(e);
+        setMsgs(m => [...m, { role:"assistant", content:`⚠️ Error: ${errMsg.slice(0,200)}` }]);
+        console.error("TAAT error:", e);
+      }
+    } finally {
+      setLoading(false);
+      setTimeout(()=>inputRef.current?.focus(), 50);
+    }
+  };
+
+  const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+
+  // ── Dynamic suggestions based on live platform data ───────────────────────
+  const [suggestions, setSuggestions] = useState([]);
+  const [usedSuggestions, setUsedSuggestions] = useState(new Set());
+
+  const buildSuggestions = async () => {
+    try {
+      const chips = [];
+
+      // Fetch live data in parallel
+      const [alarmsRes, devicesRes] = await Promise.allSettled([
+        alarmApi.list({ status: "ACTIVE_UNACK", limit: 20 }),
+        deviceApi.list(),
+      ]);
+
+      const alarms  = alarmsRes.status  === "fulfilled" ? (alarmsRes.value  || []) : [];
+      const devices = devicesRes.status === "fulfilled" ? (Array.isArray(devicesRes.value) ? devicesRes.value : devicesRes.value?.items || []) : [];
+
+      // 🔴 Urgent — alarms
+      const critical = alarms.filter(a => a.severity === "CRITICAL");
+      const major    = alarms.filter(a => a.severity === "MAJOR");
+
+      if (critical.length > 0) {
+        chips.push({ label: `🔴 Ack ${critical.length} critical alarm${critical.length>1?"s":""}`, msg: `Acknowledge all critical alarms`, priority: 1 });
+        if (critical[0].device_name) {
+          chips.push({ label: `🔍 Why did ${critical[0].device_name} alarm?`, msg: `Why did ${critical[0].device_name} trigger a critical alarm?`, priority: 1 });
+        }
+      } else if (major.length > 0) {
+        chips.push({ label: `🟠 Ack ${major.length} major alarm${major.length>1?"s":""}`, msg: `Acknowledge all major alarms`, priority: 2 });
+      } else if (alarms.length > 0) {
+        chips.push({ label: `⚠️ Acknowledge ${alarms.length} alarm${alarms.length>1?"s":""}`, msg: `Acknowledge all alarms`, priority: 2 });
+      }
+
+      // 🔌 Offline devices
+      const offline = devices.filter(d => d.status === "INACTIVE");
+      if (offline.length === 1) {
+        chips.push({ label: `🔌 Why is ${offline[0].name} offline?`, msg: `Why is ${offline[0].name} offline?`, priority: 1 });
+      } else if (offline.length > 1) {
+        chips.push({ label: `🔌 ${offline.length} devices offline`, msg: `Which devices are offline and why?`, priority: 2 });
+      }
+
+      // 📊 Insights — always available
+      if (alarms.length === 0 && offline.length === 0) {
+        chips.push({ label: "✅ Fleet all clear — what's next?", msg: "All systems look healthy. What should I monitor?", priority: 3 });
+      }
+
+      // Fetch fleet health for maintenance alerts
+      try {
+        const health = await intelligenceApi.fleetHealth();
+        const maintenance = (health.devices || []).filter(d => d.health?.maintenance_due);
+        if (maintenance.length > 0) {
+          chips.push({ label: `🔧 ${maintenance[0].device_name} needs maintenance`, msg: `What maintenance does ${maintenance[0].device_name} need?`, priority: 1 });
+        }
+        const critical_health = (health.devices || []).filter(d => d.health?.health_label === "CRITICAL");
+        if (critical_health.length > 0 && !chips.find(c=>c.priority===1)) {
+          chips.push({ label: `🚨 ${critical_health[0].device_name} health critical`, msg: `What is wrong with ${critical_health[0].device_name}?`, priority: 1 });
+        }
+      } catch {}
+
+      // 📈 Always-useful actions
+      chips.push({ label: "📊 Daily health report", msg: "Daily health report", priority: 4 });
+      chips.push({ label: "🏭 Fleet overview", msg: "Give me a fleet overview — all devices, alarms and status", priority: 4 });
+
+      // Controllable device — show a control chip
+      const activeDevice = devices.find(d => d.status === "ACTIVE");
+      if (activeDevice) {
+        chips.push({ label: `⚡ Control ${activeDevice.name}`, msg: `What can I control on ${activeDevice.name}?`, priority: 3 });
+      }
+
+      // Sort by priority, limit to 5, filter already used
+      const sorted = chips
+        .filter(c => !usedSuggestions.has(c.label))
+        .sort((a,b) => a.priority - b.priority)
+        .slice(0, 5);
+
+      setSuggestions(sorted);
+    } catch {
+      // Fallback static chips if fetch fails
+      setSuggestions([
+        { label: "🏭 Fleet overview",      msg: "Give me a fleet overview" },
+        { label: "📊 Daily health report", msg: "Daily health report" },
+        { label: "⚠️ Check alarms",        msg: "Are there any active alarms?" },
+      ]);
+    }
+  };
+
+  // Build suggestions when chat opens or after each message
+  useEffect(() => { if (open && msgs.length <= 1) buildSuggestions(); }, [open]);
+
+  const handleSuggestion = (chip) => {
+    setUsedSuggestions(s => new Set([...s, chip.label]));
+    send(chip.msg);
+  };
+
+  return (
+    <>
+      {/* Floating button */}
+      <button onClick={()=>setOpen(o=>!o)} style={{
+        position:"fixed", bottom:24, right:24, zIndex:50,
+        width:60, height:60, borderRadius:"50%",
+        background: open ? "#0B1426" : "linear-gradient(135deg,#0B1426,#1a2e5a)",
+        border: open ? "2px solid #334866" : "2px solid rgba(47,140,255,0.5)",
+        cursor:"pointer",
+        boxShadow: open ? "0 4px 20px rgba(0,0,0,0.4)" : "0 4px 24px rgba(47,140,255,0.5), 0 0 0 1px rgba(16,185,129,0.15)",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        transition:"all 0.2s",
+        overflow:"hidden",
+        padding:0,
+      }}>
+        {open ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        ) : (
+          <img src="/taat-robot.png" alt="TAAT AI" style={{width:56,height:56,objectFit:"cover",borderRadius:"50%"}} />
+        )}
+      </button>
+
+      {/* Chat panel */}
+      {open && (
+        <div style={{
+          position:"fixed", bottom:88, right:24, zIndex:50,
+          width:360, height:480,
+          background:"white", borderRadius:20,
+          border:"1px solid #D8E3F3",
+          boxShadow:"0 12px 48px rgba(11,20,38,0.15)",
+          display:"flex", flexDirection:"column",
+          overflow:"hidden",
+          animation:"slideUp 0.2s ease",
+        }}>
+          {/* Header */}
+          <div style={{padding:"14px 16px", background:"linear-gradient(135deg,#0B1426,#1a2e5a)", display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
+            <div style={{width:36,height:36,borderRadius:"50%",overflow:"hidden",border:"1.5px solid rgba(47,140,255,0.5)",flexShrink:0}}>
+              <img src="/taat-robot.png" alt="TAAT AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+            </div>
+            <div>
+              <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>TriAxis AI Assistant</p>
+              <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.3</p>
+            </div>
+            <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
+              {/* Usage pill — hidden for unlimited users */}
+              {usage && !usage.excluded && (
+                <div title={`${usage.used}/${usage.limit} requests used this hour. Resets in ${usage.resets_in_mins} min.`} style={{
+                  fontSize:9, padding:"2px 7px", borderRadius:20, fontWeight:600,
+                  background: usage.pct_used >= 90 ? "rgba(239,68,68,0.3)" : usage.pct_used >= 70 ? "rgba(245,158,11,0.3)" : "rgba(16,185,129,0.2)",
+                  color:      usage.pct_used >= 90 ? "#fca5a5" : usage.pct_used >= 70 ? "#fcd34d" : "#6ee7b7",
+                  cursor:"help",
+                }}>
+                  {usage.used}/{usage.limit}
+                </div>
+              )}
+              <div style={{width:6,height:6,borderRadius:"50%",background:"#10b981"}}/>
+              <button onClick={clearHistory} title="Clear history" style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.5}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              </button>
+              <button onClick={()=>{setShowHelp(h=>!h);loadHelpData();}} title="Command help" style={{background: showHelp ? "rgba(47,140,255,0.3)" : "none",border:"none",cursor:"pointer",padding:"2px 4px",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" style={{width:13,height:13}}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </button>
+              <button onClick={()=>setOpen(false)} style={{background:"none",border:"none",cursor:"pointer",padding:2,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2.5" style={{width:14,height:14}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{display:"flex",borderBottom:"1px solid #EAF2FF",flexShrink:0}}>
+            {[["chat","💬 Chat"],["report","📊 Report"]].map(([t,label])=>(
+              <button key={t} onClick={()=>setTab(t)} style={{
+                flex:1, padding:"8px 0", fontSize:11, fontWeight: tab===t ? 700 : 500,
+                color: tab===t ? "#2F8CFF" : "#94a3b8",
+                background:"none", border:"none", cursor:"pointer",
+                borderBottom: tab===t ? "2px solid #2F8CFF" : "2px solid transparent",
+                transition:"all 0.15s",
+              }}>{label}</button>
+            ))}
+          </div>
+
+          {/* Tab: Report */}
+          {tab === "report" && !showHelp && (
+            <div style={{flex:1,overflowY:"auto",padding:"14px"}}>
+              {reportLoading && (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {[1,2,3].map(i=><div key={i} style={{height:14,borderRadius:6,background:"#f1f5f9",animation:"pulse 1.5s infinite"}}/>)}
+                </div>
+              )}
+              {report && !reportLoading && (
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {report.error && <p style={{fontSize:11,color:"#ef4444"}}>{report.error}</p>}
+                  {report.narrative && (
+                    <div style={{padding:"10px 12px",background:"#F4F8FF",borderRadius:10,fontSize:11,lineHeight:1.7,color:"#334866",whiteSpace:"pre-wrap"}}>
+                      {report.narrative}
+                    </div>
+                  )}
+                  {report.report && (
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"flex",gap:8}}>
+                        {[
+                          {label:"Devices", val: report.report.total_devices, color:"#3b82f6"},
+                          {label:"Alarms",  val: report.report.active_alarms, color:"#f59e0b"},
+                          {label:"Critical",val: report.report.critical_devices, color:"#ef4444"},
+                        ].map(s=>(
+                          <div key={s.label} style={{flex:1,padding:"8px",background:"#F4F8FF",borderRadius:8,textAlign:"center",border:`1px solid ${s.color}22`}}>
+                            <p style={{fontSize:18,fontWeight:700,color:s.color,margin:0}}>{s.val}</p>
+                            <p style={{fontSize:9,color:"#94a3b8",margin:0}}>{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {report.report.maintenance_needed?.length > 0 && (
+                        <div style={{padding:"8px 10px",background:"#fef3c7",borderRadius:8,border:"1px solid #fde68a"}}>
+                          <p style={{fontSize:10,fontWeight:700,color:"#92400e",margin:"0 0 4px"}}>⚠️ Maintenance Needed</p>
+                          {report.report.maintenance_needed.map(d=>(
+                            <p key={d} style={{fontSize:10,color:"#78350f",margin:"1px 0"}}>• {d}</p>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {report.report.devices?.slice(0,6).map(d=>(
+                          <div key={d.device} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:"#F4F8FF",borderRadius:6}}>
+                            <div style={{width:6,height:6,borderRadius:"50%",flexShrink:0,background:d.health_label==="HEALTHY"?"#10b981":d.health_label==="WARNING"?"#f59e0b":"#ef4444"}}/>
+                            <span style={{fontSize:10,fontWeight:600,color:"#334866",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.device}</span>
+                            <span style={{fontSize:10,color:"#94a3b8"}}>{d.health_score != null ? Math.round(d.health_score)+"%" : "–"}</span>
+                            {d.active_alarms > 0 && <span style={{fontSize:9,padding:"1px 5px",borderRadius:8,background:"#fef2f2",color:"#ef4444",fontWeight:600}}>{d.active_alarms}</span>}
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={loadReport} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
+                        🔄 Refresh Report
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Help Panel — Dynamic based on real tenant devices/keys/rules */}
+          {showHelp && (() => {
+            const hd = helpData;
+            const devKeys = hd?.deviceKeys || [];
+            const rules   = hd?.rules || [];
+            const devices = hd?.devices || [];
+            const loading = !hd;
+
+            // Build dynamic sections from real data
+            const sections = [];
+
+            // ── Device Control — real device names + their actual telemetry keys ──
+            const ctrlCmds = [];
+            devKeys.forEach(({ deviceName, keys }) => {
+              if (keys.length > 0) {
+                ctrlCmds.push(`What can I control on ${deviceName}?`);
+                ctrlCmds.push(`Show status of ${deviceName}`);
+                keys.slice(0, 2).forEach(k => {
+                  ctrlCmds.push(`Set ${deviceName} ${k} to safe level`);
+                });
+              }
+            });
+            if (devices.length > 0) {
+              const first = devices.find(d => d.status === "ACTIVE") || devices[0];
+              ctrlCmds.push(`Restart ${first.name}`);
+              ctrlCmds.push(`What is ${first.name} doing right now?`);
+            }
+            if (ctrlCmds.length === 0) {
+              ctrlCmds.push("What devices are connected?", "Show all active devices", "Which device is most critical?");
+            }
+            sections.push({ cat: "⚡ Device Control", color: "#2F8CFF", cmds: ctrlCmds.slice(0, 6) });
+
+            // ── Alarm Rules — built from real telemetry keys ──
+            const alarmCmds = [];
+            const allKeys = [...new Set(devKeys.flatMap(d => d.keys))].slice(0, 4);
+            allKeys.forEach(k => {
+              alarmCmds.push(`Create critical alarm when ${k} is too high`);
+            });
+            // Existing rules
+            rules.slice(0, 2).forEach(r => {
+              alarmCmds.push(`Change the ${r.key} rule threshold`);
+              alarmCmds.push(`Delete the ${r.key} rule`);
+            });
+            if (alarmCmds.length === 0) {
+              alarmCmds.push("Show all alarm rules", "Create a new alarm rule", "Delete all rules chain");
+            }
+            sections.push({ cat: "🔔 Alarm Rules", color: "#f59e0b", cmds: alarmCmds.slice(0, 5) });
+
+            // ── Alarm Actions ──
+            sections.push({
+              cat: "🚨 Alarm Actions", color: "#ef4444",
+              cmds: ["Acknowledge all alarms", "Acknowledge all critical alarms", "Clear all warnings", "Resolve all alarms"],
+            });
+
+            // ── Insights — real device names ──
+            const insightCmds = ["Give me a fleet overview", "Which device is most critical?", "What are the current trends?"];
+            devKeys.forEach(({ deviceName, keys }) => {
+              if (keys.includes("temperature") || keys.some(k => k.includes("temp"))) {
+                insightCmds.push(`Is ${deviceName} temperature normal?`);
+              }
+              insightCmds.push(`How has ${deviceName} been behaving today vs yesterday?`);
+            });
+            insightCmds.push("Daily health report");
+            sections.push({ cat: "📊 Insights & Analysis", color: "#10b981", cmds: insightCmds.slice(0, 6) });
+
+            // ── User Management ──
+            sections.push({
+              cat: "👥 User Management", color: "#8b5cf6",
+              cmds: ["List all users", "Invite a new admin", "Invite a new tenant user", "Show user roles"],
+            });
+
+            return (
+              <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <p style={{fontSize:11,fontWeight:700,color:"#334866",margin:0}}>💡 What you can ask TAAT</p>
+                  {loading && <span style={{fontSize:9,color:"#94a3b8"}}>Loading your devices…</span>}
+                </div>
+
+                {sections.map(section=>(
+                  <div key={section.cat} style={{background:"#F8FAFF",borderRadius:8,padding:"8px 10px",border:`1px solid ${section.color}22`}}>
+                    <p style={{fontSize:10,fontWeight:700,color:section.color,margin:"0 0 6px"}}>{section.cat}</p>
+                    {section.cmds.map(cmd=>(
+                      <button key={cmd} onClick={()=>{setShowHelp(false);setTab("chat");setTimeout(()=>send(cmd),100);}}
+                        style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",
+                          padding:"3px 0",fontSize:10,color:"#334866",cursor:"pointer",borderBottom:"1px solid #f1f5f9"}}>
+                        → {cmd}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+
+                <button onClick={()=>setShowHelp(false)} style={{fontSize:10,padding:"6px",borderRadius:6,border:"1px solid #D8E3F3",background:"white",color:"#334866",cursor:"pointer"}}>
+                  ← Back to chat
+                </button>
+              </div>
+            );
+          })()}
+
+          {/* Tab: Chat */}
+          {tab === "chat" && !showHelp && <>
+          {/* Messages */}
+          <div style={{flex:1,overflowY:"auto",padding:"12px 14px",display:"flex",flexDirection:"column",gap:10}}>
+            {msgs.map((m,i)=>(
+              <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-end",gap:6}}>
+                {m.role==="assistant" && (
+                  <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
+                    <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                  </div>
+                )}
+                <div style={{
+                  maxWidth:"78%", padding:"8px 12px", borderRadius: m.role==="user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                  background: m.role==="user" ? "linear-gradient(135deg,#2F8CFF,#0B4BB3)" : "#F4F8FF",
+                  color: m.role==="user" ? "white" : "#334866",
+                  fontSize:12, lineHeight:1.6,
+                  whiteSpace:"pre-wrap",
+                }}>
+                  {m.content}
+                  {m.rpc_executed && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
+                        {m.rpc_executed.is_schedule_list
+                          ? `📋 ${m.rpc_executed.count} scheduled command(s)`
+                          : m.rpc_executed.is_schedule_cancel
+                          ? `🗑 ${m.rpc_executed.cancelled} scheduled command(s) cancelled`
+                          : m.rpc_executed.is_scheduled
+                          ? `⏰ Scheduled → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)} — ${m.rpc_executed.human_label || m.rpc_executed.scheduled_for}${m.rpc_executed.repeat_interval_hours ? ` · every ${m.rpc_executed.repeat_interval_hours}h` : ""}`
+                          : `✅ RPC → ${m.rpc_executed.device_name}: ${JSON.stringify(m.rpc_executed.params)}`
+                        }
+                      </span>
+                    </div>
+                  )}
+                  {m.alarm_actioned && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#d97706",fontWeight:600}}>
+                        {m.alarm_actioned.count} alarm(s) {m.alarm_actioned.action.replace("_all","")}d{m.alarm_actioned.severity ? ` (${m.alarm_actioned.severity})` : ""}
+                      </span>
+                    </div>
+                  )}
+                  {m.confirm_required && (
+                    <div style={{marginTop:8,padding:"8px 10px",borderRadius:8,background:"#fffbeb",border:"1px solid #f59e0b",display:"flex",flexDirection:"column",gap:6}}>
+                      <div style={{display:"flex",alignItems:"center",gap:5}}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" style={{width:12,height:12,flexShrink:0}}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                        <span style={{fontSize:10,fontWeight:700,color:"#92400e"}}>HIGH RISK — Confirmation required</span>
+                      </div>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>send("proceed")} style={{flex:1,padding:"4px 0",borderRadius:6,background:"#ef4444",color:"white",fontSize:10,fontWeight:700,border:"none",cursor:"pointer"}}>✓ Proceed</button>
+                        <button onClick={()=>send("cancel")} style={{flex:1,padding:"4px 0",borderRadius:6,background:"white",color:"#64748b",fontSize:10,fontWeight:600,border:"1px solid #D8E3F3",cursor:"pointer"}}>✕ Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                  {m.intent && m.intent !== "QUESTION" && (
+                    <div style={{marginTop:4,display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{fontSize:8,padding:"1px 6px",borderRadius:20,background:"#F4F8FF",color:"#6B7F9F",border:"1px solid #D8E3F3",fontWeight:600}}>{m.intent}</span>
+                      {m.risk && m.risk !== "LOW" && (
+                        <span style={{fontSize:8,padding:"1px 6px",borderRadius:20,
+                          background:m.risk==="HIGH"||m.risk==="CRITICAL"?"#fef2f2":"#fffbeb",
+                          color:m.risk==="HIGH"||m.risk==="CRITICAL"?"#dc2626":"#d97706",
+                          border:m.risk==="HIGH"||m.risk==="CRITICAL"?"1px solid #fca5a5":"1px solid #fde68a",
+                          fontWeight:600}}>{m.risk} RISK</span>
+                      )}
+                    </div>
+                  )}
+                  {m.rule_actioned && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
+                        {m.rule_actioned.action === "deleted_all"
+                          ? `Rule deleted → all rules (${m.rule_actioned.count} removed)`
+                          : m.rule_actioned.action === "deleted"
+                          ? `Rule deleted → ${m.rule_actioned.key}`
+                          : m.rule_actioned.action === "updated"
+                          ? `Rule updated → ${m.rule_actioned.key} ${m.rule_actioned.condition || ""} ${m.rule_actioned.threshold ?? ""}`
+                          : `Rule created → ${m.rule_actioned.device || "all devices"}: {${m.rule_actioned.key} ${m.rule_actioned.condition} ${m.rule_actioned.threshold}} (${m.rule_actioned.severity})`
+                        }
+                      </span>
+                    </div>
+                  )}
+                  {m.user_actioned && !m.user_actioned.error && m.user_actioned.action !== "list" && (
+                    <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(16,185,129,0.12)",border:"1px solid rgba(16,185,129,0.3)",display:"flex",alignItems:"center",gap:5}}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
+                      <span style={{fontSize:10,color:"#059669",fontWeight:600}}>
+                        {m.user_actioned.action === "invited"
+                          ? `User invited → ${m.user_actioned.email} (${m.user_actioned.role})`
+                          : m.user_actioned.action === "deleted"
+                          ? `User deleted → ${m.user_actioned.email}`
+                          : `Role updated → ${m.user_actioned.email}: ${m.user_actioned.old_role} → ${m.user_actioned.new_role}`
+                        }
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+            {loading && (
+              <div style={{display:"flex",justifyContent:"flex-start",alignItems:"flex-end",gap:6}}>
+                <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
+                  <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                </div>
+                <div style={{padding:"10px 14px",background:"#F4F8FF",borderRadius:"16px 16px 16px 4px",display:"flex",gap:4,alignItems:"center"}}>
+                  {[0,1,2].map(i=>(
+                    <div key={i} style={{width:6,height:6,borderRadius:"50%",background:"#94a3b8",animation:`bounce 1s ${i*0.2}s infinite`}}/>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div ref={bottomRef}/>
+          </div>
+
+          {/* Dynamic Suggestions (shown when only 1 message) */}
+          {msgs.length===1 && (
+            <div style={{padding:"0 14px 10px",display:"flex",gap:6,flexWrap:"wrap"}}>
+              {suggestions.length === 0 ? (
+                // Loading skeleton
+                [1,2,3].map(i=>(
+                  <div key={i} style={{height:26,width:i===1?140:i===2?120:100,borderRadius:20,background:"#f1f5f9",animation:"pulse 1.5s infinite"}}/>
+                ))
+              ) : (
+                suggestions.map(chip=>(
+                  <button key={chip.label} onClick={()=>handleSuggestion(chip)} style={{
+                    fontSize:10, padding:"5px 11px", borderRadius:20,
+                    border:"1px solid #D8E3F3", background:"#F4F8FF",
+                    color:"#334866", cursor:"pointer", whiteSpace:"nowrap",
+                    transition:"all 0.15s", lineHeight:1.4,
+                  }}
+                  onMouseEnter={e=>{e.target.style.background="#EAF2FF";e.target.style.borderColor="#2F8CFF";}}
+                  onMouseLeave={e=>{e.target.style.background="#F4F8FF";e.target.style.borderColor="#D8E3F3";}}>
+                    {chip.label}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Input */}
+          <div style={{padding:"10px 12px",borderTop:"1px solid #EAF2FF",display:"flex",gap:8,alignItems:"flex-end",flexShrink:0}}>
+            <textarea
+              ref={inputRef}
+              value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKey}
+              placeholder="Ask about devices, alarms, trends…"
+              rows={1}
+              style={{
+                flex:1, padding:"8px 12px", border:"1px solid #D8E3F3", borderRadius:12,
+                fontSize:12, color:"#334866", resize:"none", outline:"none",
+                background:"#F8FAFF", fontFamily:"inherit", lineHeight:1.5,
+                maxHeight:80, overflow:"auto",
+              }}
+            />
+            <button onClick={send} disabled={loading||!input.trim()} style={{
+              width:36,height:36,borderRadius:"50%",border:"none",
+              background: input.trim() ? "linear-gradient(135deg,#2F8CFF,#0B4BB3)" : "#e2e8f0",
+              cursor: input.trim() ? "pointer" : "default",
+              display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,
+              transition:"background 0.2s",
+            }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" style={{width:14,height:14}}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+          </>}
+        </div>
+      )}
+
+      <style>{`
+        @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes bounce  { 0%,80%,100% { transform:scale(0.6); opacity:0.4; } 40% { transform:scale(1); opacity:1; } }
+        @keyframes pulse   { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+      `}</style>
+    </>
+  );
+}); // end AIChatbot memo
 
 export default function App() {
   const [user,       setUser]       = useState(() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } });
