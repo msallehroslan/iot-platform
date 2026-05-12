@@ -151,14 +151,14 @@ const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, ala
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
             <div className="flex items-center justify-center gap-2.5 w-full">
               <div className="flex items-center gap-1.5 border-r border-[#C5D5E8] pr-2.5">
-                <img src="/iotera-logo.png" alt="Iotera" className="h-6 w-auto object-contain" style={{mixBlendMode:"multiply"}} />
+                <img src="/iotera-logo.png" alt="Iotera" className="h-6 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
                   <span className="text-[9px] font-bold text-[#07142F]">Iotera</span>
                   <span className="text-[7px] text-[#6B7F9F]">Technologies</span>
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <img src="/fkee-logo.png" alt="FKEE UTHM" className="h-4 w-auto object-contain" style={{mixBlendMode:"multiply"}} />
+                <img src="/fkee-logo.png" alt="FKEE UTHM" className="h-4 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
                   <span className="text-[9px] font-bold text-[#0B1426]">FKEE UTHM</span>
                 </div>
@@ -2201,7 +2201,7 @@ function LoginPage({ onLogin }) {
       `}</style>
       <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 40px",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(10px)",borderBottom:"1px solid #EAF0F8",position:"relative",zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <img src="/iotera-logo.png" alt="Iotera" style={{height:30,mixBlendMode:"multiply"}}/>
+          <img src="/iotera-logo.png" alt="Iotera" style={{height:30}}/>
           <div style={{width:1,height:22,background:"#E2E8F0"}}/>
           <div style={{display:"flex",flexDirection:"column",lineHeight:1.15}}>
             <span style={{fontSize:14,fontWeight:700,color:"#0B1426",letterSpacing:"-0.005em"}}>Iotera Technologies</span>
@@ -2211,7 +2211,7 @@ function LoginPage({ onLogin }) {
         <div style={{display:"flex",alignItems:"center",gap:14}}>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>In collaboration with</span>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:"#FFFFFF",border:"1px solid #EAF0F8",borderRadius:8}}>
-            <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:22,borderRadius:3,mixBlendMode:"multiply"}}/>
+            <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:22}}/>
             <span style={{fontSize:13,fontWeight:700,color:"#0B1426"}}>FKEE UTHM</span>
             <span style={{width:6,height:6,borderRadius:9999,background:"#10B981",boxShadow:"0 0 0 3px rgba(16,185,129,0.18)"}}/>
           </div>
