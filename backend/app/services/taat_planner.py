@@ -527,6 +527,17 @@ async def _extract_rule_action(api_key, message, ctx, call_groq) -> Optional[dic
     if any(w in msg_lower for w in ["delete all", "remove all", "clear all rules"]):
         return {"action": "delete", "delete_all": True}
 
+    # Fast path UPDATE — change/update/modify + key + number
+    import re as _re
+    if any(w in msg_lower for w in ["change", "update", "modify", "change the", "update the"]):
+        for rule in rules:
+            rkey = rule.get("key", "") if isinstance(rule, dict) else str(rule)
+            if rkey.lower() in msg_lower:
+                nums = _re.findall(r'[0-9]+\.?[0-9]*', message)
+                if nums:
+                    dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+                    return {"action": "update", "key": rkey, "device_name": dn, "threshold": float(nums[0])}
+
     prompt = f"""Extract threshold rule action from: "{message}"
 Devices: {json.dumps([d['name'] for d in devices])}
 Existing rules: {json.dumps(rules)}
