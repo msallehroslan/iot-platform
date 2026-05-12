@@ -151,17 +151,16 @@ const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, ala
             <span className="text-[9px] text-[#6B7F9F] tracking-wide">In collaboration with</span>
             <div className="flex items-center justify-center gap-2.5 w-full">
               <div className="flex items-center gap-1.5 border-r border-[#C5D5E8] pr-2.5">
-                <img src="/taat-logo-2.png" alt="TAAT" className="h-6 w-auto object-contain" />
+                <img src="/iotera-logo.png" alt="Iotera" className="h-6 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
-                  <span className="text-[9px] font-bold text-[#07142F]">TriAxis AI</span>
+                  <span className="text-[9px] font-bold text-[#07142F]">Iotera</span>
                   <span className="text-[7px] text-[#6B7F9F]">Technologies</span>
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <img src="/greenson-logo.jpg" alt="Greenson" className="h-4 w-auto object-contain" />
+                <img src="/fkee-logo.png" alt="FKEE UTHM" className="h-4 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
-                  <span className="text-[9px] font-bold text-[#0B1426]">Greenson</span>
-                  <span className="text-[7px] text-[#6B7F9F]">Technology</span>
+                  <span className="text-[9px] font-bold text-[#0B1426]">FKEE UTHM</span>
                 </div>
               </div>
             </div>
@@ -2202,18 +2201,18 @@ function LoginPage({ onLogin }) {
       `}</style>
       <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 40px",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(10px)",borderBottom:"1px solid #EAF0F8",position:"relative",zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
-          <img src="/taat-logo-2.png" alt="TAAT" style={{height:30}}/>
+          <img src="/iotera-logo.png" alt="Iotera" style={{height:30}}/>
           <div style={{width:1,height:22,background:"#E2E8F0"}}/>
           <div style={{display:"flex",flexDirection:"column",lineHeight:1.15}}>
-            <span style={{fontSize:14,fontWeight:700,color:"#0B1426",letterSpacing:"-0.005em"}}>TriAxis AI Technologies</span>
+            <span style={{fontSize:14,fontWeight:700,color:"#0B1426",letterSpacing:"-0.005em"}}>Iotera Technologies</span>
             <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#6B7F9F",letterSpacing:"0.18em",textTransform:"uppercase"}}>Industrial AI · IoT</span>
           </div>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>In collaboration with</span>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:"#FFFFFF",border:"1px solid #EAF0F8",borderRadius:8}}>
-            <img src="/greenson-logo.jpg" alt="Greenson" style={{height:22,borderRadius:3}}/>
-            <span style={{fontSize:13,fontWeight:700,color:"#0B1426"}}>Greenson Technology</span>
+            <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:22,borderRadius:3}}/>
+            <span style={{fontSize:13,fontWeight:700,color:"#0B1426"}}>FKEE UTHM</span>
             <span style={{width:6,height:6,borderRadius:9999,background:"#10B981",boxShadow:"0 0 0 3px rgba(16,185,129,0.18)"}}/>
           </div>
         </div>
@@ -2241,7 +2240,7 @@ function LoginPage({ onLogin }) {
               <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-1 22s linear infinite"}}><circle cx="66" cy="66" r="62" fill="none" stroke="#CFE0FB" strokeWidth="0.8" strokeDasharray="2 6"/><circle cx="66" cy="4" r="2.5" fill="#2F8CFF"/></svg>
               <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-2 14s linear infinite"}}><circle cx="66" cy="66" r="50" fill="none" stroke="#A7C5F4" strokeWidth="0.6" strokeDasharray="1 4"/><circle cx="116" cy="66" r="2" fill="#10B981"/></svg>
               <div style={{position:"absolute",inset:14,borderRadius:"50%",background:"radial-gradient(circle at 30% 25%,#FFFFFF 0%,#E8F1FF 55%,#D2E3FB 100%)",boxShadow:"inset 0 2px 8px rgba(255,255,255,0.9),0 16px 36px -10px rgba(47,140,255,0.45)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                <img src="/taat-robot.png" alt="TAAT" style={{width:"82%",height:"82%",objectFit:"contain"}}/>
+                <img src="/taat-robot.png" alt="Iotera" style={{width:"82%",height:"82%",objectFit:"contain"}}/>
               </div>
               <div style={{position:"absolute",bottom:-6,left:"50%",transform:"translateX(-50%)",padding:"3px 10px",background:"#0B1426",color:"#FFFFFF",fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,letterSpacing:"0.22em",borderRadius:9999}}>TAAT</div>
             </div>
@@ -2329,7 +2328,7 @@ function LoginPage({ onLogin }) {
         </div>
       </div>
       <footer style={{padding:"16px 40px",display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid #EAF0F8",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(8px)",position:"relative",zIndex:10}}>
-        <span style={{fontSize:11.5,color:"#94A3B8"}}>© 2026 TriAxis AI Technologies · In collaboration with Greenson Technology</span>
+        <span style={{fontSize:11.5,color:"#94A3B8"}}>© 2026 Iotera Technologies · In collaboration with FKEE UTHM</span>
         <div style={{display:"flex",alignItems:"center",gap:18,fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"#94A3B8",letterSpacing:"0.16em",textTransform:"uppercase"}}>
           <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:6,height:6,borderRadius:9999,background:"#10B981",animation:"tn-pulse 2s ease-in-out infinite"}}/>All systems operational</span>
           <span>v3.0.0</span>
@@ -2617,7 +2616,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
               <img src="/taat-robot.png" alt="TAAT AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
             </div>
             <div>
-              <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>TriAxis AI Assistant</p>
+              <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>Iotera AI Assistant</p>
               <p style={{fontSize:10,color:"rgba(255,255,255,0.5)",margin:0}}>Powered by Groq · Llama 3.3</p>
             </div>
             <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6}}>
