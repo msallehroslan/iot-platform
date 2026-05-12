@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.auth_deps import get_current_user_id
 from app.core.database import engine, Base, get_db
 from app.models import models
-from app.routers import intelligence
+from app.routers import intelligence, intelligence_data
 from app.routers import (
     auth, devices, telemetry, alarms, customers,
     dashboard, dashboards, ws, user_dashboards,
@@ -231,7 +231,9 @@ app.include_router(metrics.router,           prefix="/api/v1")
 app.include_router(api_keys.router,          prefix="/api/v1")
 app.include_router(observability.router,     prefix="/api/v1")
 app.include_router(intelligence.router,      prefix="/api/v1")
+app.include_router(intelligence_data.router_data, prefix="/api/v1")
 app.include_router(widgets.router,           prefix="/api/v1")
+
 
 
 @app.get("/", tags=["System"])
