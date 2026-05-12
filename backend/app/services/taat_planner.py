@@ -311,6 +311,19 @@ def get_action_risk(intent: str, action: dict, message: str) -> str:
 
 # ── Step 4: Planner Prompt Builder ────────────────────────────────────────────
 
+def _fmt_myt(ts_str: str) -> str:
+    """Convert ISO UTC timestamp string to MYT for display."""
+    try:
+        from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(ZoneInfo("Asia/Kuala_Lumpur")).strftime("%Y-%m-%d %H:%M MYT")
+    except Exception:
+        return ts_str[:16].replace("T", " ")
+
+
 def build_system_prompt(
     tenant_name: str,
     intent: str,
