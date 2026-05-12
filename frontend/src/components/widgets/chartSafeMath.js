@@ -46,7 +46,10 @@ export function safeRange(arr, minSpread = 1) {
   const mn = safeMin(arr, 0);
   let   mx = safeMax(arr, mn + minSpread);
   if (mx - mn < minSpread) mx = mn + minSpread;
-  return { mn, mx, rng: mx - mn };
+  // Add 10% padding top and bottom so sudden spikes/drops don't dominate the axis
+  const spread = mx - mn;
+  const pad = spread * 0.10;
+  return { mn: mn - pad, mx: mx + pad, rng: (mx + pad) - (mn - pad) };
 }
 
 export function sanitizePoints(pts) {
