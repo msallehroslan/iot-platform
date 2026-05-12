@@ -158,7 +158,7 @@ const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, ala
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <img src="/fkee-logo.png" alt="FKEE UTHM" className="h-4 w-auto object-contain" />
+                <img src="/fkee-logo.png" alt="FKEE UTHM" className="h-6 w-auto object-contain" />
                 <div className="flex flex-col leading-none">
                   <span className="text-[9px] font-bold text-[#0B1426]">FKEE UTHM</span>
                 </div>
@@ -2211,7 +2211,7 @@ function LoginPage({ onLogin }) {
         <div style={{display:"flex",alignItems:"center",gap:14}}>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>In collaboration with</span>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:"#FFFFFF",border:"1px solid #EAF0F8",borderRadius:8}}>
-            <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:22}}/>
+            <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:32,objectFit:"contain"}}/>
             <span style={{fontSize:13,fontWeight:700,color:"#0B1426"}}>FKEE UTHM</span>
             <span style={{width:6,height:6,borderRadius:9999,background:"#10B981",boxShadow:"0 0 0 3px rgba(16,185,129,0.18)"}}/>
           </div>
@@ -2239,8 +2239,8 @@ function LoginPage({ onLogin }) {
             <div style={{position:"relative",width:132,height:132,flexShrink:0,animation:"tn-float 6s ease-in-out infinite"}}>
               <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-1 22s linear infinite"}}><circle cx="66" cy="66" r="62" fill="none" stroke="#CFE0FB" strokeWidth="0.8" strokeDasharray="2 6"/><circle cx="66" cy="4" r="2.5" fill="#2F8CFF"/></svg>
               <svg viewBox="0 0 132 132" style={{position:"absolute",inset:0,animation:"tn-orbit-2 14s linear infinite"}}><circle cx="66" cy="66" r="50" fill="none" stroke="#A7C5F4" strokeWidth="0.6" strokeDasharray="1 4"/><circle cx="116" cy="66" r="2" fill="#10B981"/></svg>
-              <div style={{position:"absolute",inset:14,borderRadius:"50%",background:"radial-gradient(circle at 30% 25%,#FFFFFF 0%,#E8F1FF 55%,#D2E3FB 100%)",boxShadow:"inset 0 2px 8px rgba(255,255,255,0.9),0 16px 36px -10px rgba(47,140,255,0.45)",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-                <img src="/taat-robot.png" alt="Iotera" style={{width:"82%",height:"82%",objectFit:"contain"}}/>
+              <div style={{position:"absolute",inset:0,borderRadius:"50%",background:"transparent",display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible"}}>
+                <img src="/taat-robot-transparent.png" alt="Iotera" style={{width:"82%",height:"82%",objectFit:"contain"}}/>
               </div>
               <div style={{position:"absolute",bottom:-6,left:"50%",transform:"translateX(-50%)",padding:"3px 10px",background:"#0B1426",color:"#FFFFFF",fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,letterSpacing:"0.22em",borderRadius:9999}}>TAAT</div>
             </div>
@@ -2594,7 +2594,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
         {open ? (
           <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2.5" style={{width:20,height:20}}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         ) : (
-          <img src="/taat-robot.png" alt="TAAT AI" style={{width:56,height:56,objectFit:"cover",borderRadius:"50%"}} />
+          <img src="/taat-robot-transparent.png" alt="TAAT AI" style={{width:56,height:56,objectFit:"cover",borderRadius:"50%"}} />
         )}
       </button>
 
@@ -2613,7 +2613,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
           {/* Header */}
           <div style={{padding:"14px 16px", background:"linear-gradient(135deg,#0B1426,#1a2e5a)", display:"flex", alignItems:"center", gap:10, flexShrink:0}}>
             <div style={{width:36,height:36,borderRadius:"50%",overflow:"hidden",border:"1.5px solid rgba(47,140,255,0.5)",flexShrink:0}}>
-              <img src="/taat-robot.png" alt="TAAT AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+              <img src="/taat-robot-transparent.png" alt="TAAT AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
             </div>
             <div>
               <p style={{fontSize:13,fontWeight:700,color:"white",margin:0}}>Iotera AI Assistant</p>
@@ -2821,7 +2821,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
               <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-end",gap:6}}>
                 {m.role==="assistant" && (
                   <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
-                    <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                    <img src="/taat-robot-transparent.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
                   </div>
                 )}
                 <div style={{
@@ -2913,7 +2913,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
             {loading && (
               <div style={{display:"flex",justifyContent:"flex-start",alignItems:"flex-end",gap:6}}>
                 <div style={{width:24,height:24,borderRadius:"50%",overflow:"hidden",border:"1px solid rgba(47,140,255,0.3)",flexShrink:0}}>
-                  <img src="/taat-robot.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+                  <img src="/taat-robot-transparent.png" alt="AI" style={{width:"100%",height:"100%",objectFit:"cover"}} />
                 </div>
                 <div style={{padding:"10px 14px",background:"#F4F8FF",borderRadius:"16px 16px 16px 4px",display:"flex",gap:4,alignItems:"center"}}>
                   {[0,1,2].map(i=>(
