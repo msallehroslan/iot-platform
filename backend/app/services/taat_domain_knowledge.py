@@ -30,6 +30,11 @@ def _has_all(keys: set, *patterns: str) -> bool:
 
 # ── Device type detectors ─────────────────────────────────────────────────────
 
+def _is_gluciq(keys: set) -> bool:
+    """GlucIQ blood glucose monitoring system."""
+    return _has_any(keys, "glucose_mmol", "glucose_prediction",
+                    "carbs_iob", "insulin_iob", "rmse_roll", "ceg_ab_roll")
+
 def _is_pump_motor(keys: set) -> bool:
     """Pump-motor assembly — has both motor and pump velocity measurements."""
     has_motor = _has_any(keys, "motor_de", "motor_nde", "motor_velocity", "motor_speed")
@@ -78,6 +83,61 @@ def _is_led_relay(keys: set) -> bool:
 
 
 # ── Domain knowledge blocks ───────────────────────────────────────────────────
+
+def _knowledge_gluciq() -> str:
+    return """GLUCIQ BLOOD GLUCOSE MONITORING DOMAIN KNOWLEDGE (T1DM Patient):
+
+CLINICAL THRESHOLDS (Malaysian standard, mmol/L):
+- Hypoglycemia:   glucose < 4.0 mmol/L → DANGEROUS — patient needs sugar immediately
+- Target range:   4.0 – 10.0 mmol/L   → NORMAL — no action needed
+- Hyperglycemia:  glucose > 10.0 mmol/L → needs insulin correction
+
+TELEMETRY KEYS EXPLAINED:
+- glucose_mmol:             current CGM reading in mmol/L (updates every second)
+- glucose_prediction_mmol:  GlucIQ model prediction 30 minutes ahead
+- risk_status:              HYPOGLYCEMIA_RISK / TARGET_RANGE / HYPERGLYCEMIA_RISK
+- current_risk:             live risk based on current glucose (updates every second)
+- velocity:                 glucose rate of change (mmol/L per 5 min)
+                            > +0.5 = rising fast (post-meal)
+                            < -0.5 = dropping fast (insulin action or exercise)
+- carbs_iob:                carbohydrates on board in grams (exponential decay of recent meals)
+- insulin_iob:              insulin on board in units (exponential decay of recent doses)
+- carbs_input:              carbs entered this interval (grams)
+- insulin_input:            insulin dosed this interval (units)
+- online_updates:           number of self-learning gradient updates
+                            higher = model more personalised to this patient
+
+ACCURACY METRICS:
+- rmse_roll:    rolling RMSE in mmol/L — lower is better, target < 1.5 mmol/L
+- mae_roll:     rolling MAE in mmol/L — lower is better
+- mard_roll:    mean absolute relative difference in % — target < 20%
+- ceg_ab_roll:  Clarke Error Grid Zone A+B percentage
+                > 95% = clinically safe predictions
+                < 80% = dangerous prediction errors
+
+SELF-LEARNING SYSTEM:
+- GlucIQ uses online gradient descent to personalise predictions for each patient
+- Only the personalisation gate layers update (LSTM/GRU backbone stays frozen)
+- Model accuracy improves as online_updates increases over days
+- Patient profile (mean glucose, TIR, hypo rate etc.) auto-updates every 24 hours
+
+PATIENT CONTEXT (Patient 2 — GlucIQ-Patient2-Demo):
+- Simulated Malaysian T1DM patient in reactive physiological mode
+- Randomised daily schedule: breakfast, lunch, dinner + random snacks/corrections
+- Sick days (~14% of days): reduced insulin sensitivity → higher glucose
+- Exercise days (~20% of days): increased insulin sensitivity → lower glucose
+- Baseline target glucose: 6.5 mmol/L
+
+CLINICAL INTERPRETATION GUIDE:
+- If glucose_prediction_mmol < 4.0 AND current glucose is dropping (negative velocity)
+  → warn about impending hypoglycemia, recommend carbohydrate intake
+- If glucose_prediction_mmol > 10.0 AND carbs_iob is high
+  → expected post-meal rise, monitor and consider correction bolus
+- If rmse_roll > 2.0 → prediction accuracy is poor, treat predictions with caution
+- If ceg_ab_roll < 85% → significant prediction errors, check model status
+- If online_updates = 0 → model just started, predictions are generic (less accurate)
+- If online_updates > 100 → model well-personalised to this patient"""
+
 
 def _knowledge_pump_motor() -> str:
     return """ROTATING MACHINERY DOMAIN KNOWLEDGE (Pump-Motor Assembly):
@@ -180,8 +240,10 @@ def _knowledge_led_relay() -> str:
 
 # ── Profile registry ──────────────────────────────────────────────────────────
 # Order matters — more specific detectors first
+# GlucIQ is first so it always matches before generic detectors
 
 DEVICE_PROFILES = [
+    ("gluciq",        _is_gluciq,           _knowledge_gluciq),
     ("pump_motor",    _is_pump_motor,       _knowledge_pump_motor),
     ("motor",         _is_motor_only,       _knowledge_motor_only),
     ("compressor",    _is_compressor,       _knowledge_compressor),
