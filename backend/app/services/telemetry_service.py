@@ -381,7 +381,16 @@ async def ingest_telemetry(
                 },
             )
         )
-        db.execute(upsert_stmt)
+        try:
+            db.execute(upsert_stmt)
+        except Exception as e:
+            db.rollback()
+            if "ForeignKeyViolation" in str(e) or "foreign key" in str(e).lower():
+                logger.warning(
+                    "telemetry.rejected token=%s device no longer exists", token
+                )
+                return {"status": "rejected", "reason": "device_deleted", "keys_saved": 0}
+            raise
 
         keys_saved += 1
 
