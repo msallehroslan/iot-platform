@@ -181,7 +181,8 @@ def delete_device(
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
           action="device.delete", resource="device", resource_id=str(device_id),
           detail={"name": device.name})
-    db.delete(device)
+    from sqlalchemy import text
+    db.execute(text("DELETE FROM devices WHERE id = :id"), {"id": str(device_id)})
     db.commit()
 
 
