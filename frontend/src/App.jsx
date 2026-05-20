@@ -484,7 +484,13 @@ function DevicesPage({ onOpenDrawer, onToast, user }) {
 
   const handleDel = async id => {
     if (!window.confirm("Delete this device? This will remove all its telemetry, alarms, rules and history. This cannot be undone.")) return;
-    try { await deviceApi.delete(id); onToast("Device deleted"); fetchPage(page, debouncedSearch); }
+    try {
+      await deviceApi.delete(id);
+      // Close any open WebSocket connection for this device
+      TelemetrySocket.reconnect(id);
+      onToast("Device deleted");
+      fetchPage(page, debouncedSearch);
+    }
     catch (e) { onToast(e.message, "error"); }
   };
 
