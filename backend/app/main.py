@@ -188,24 +188,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Request tracing middleware ────────────────────────────────────────────────
-import time, uuid as _uuid
 
-@app.middleware("http")
-async def request_tracing_middleware(request, call_next):
-    request_id = str(_uuid.uuid4())[:8]
-    start = time.time()
-    response = await call_next(request)
-    duration_ms = round((time.time() - start) * 1000)
-    response.headers["X-Request-ID"] = request_id
-    # Log slow requests
-    if duration_ms > 2000:
-        logger.warning("slow_request request_id=%s method=%s path=%s duration_ms=%d status=%d",
-                       request_id, request.method, request.url.path, duration_ms, response.status_code)
-    elif request.method != "GET" or "/telemetry/" in request.url.path:
-        logger.info("request request_id=%s method=%s path=%s duration_ms=%d status=%d",
-                    request_id, request.method, request.url.path, duration_ms, response.status_code)
-    return response
+# ── CORS middleware — must be before request tracing ─────────────────────────
+import time, uuid as _uuid
 
 app.add_middleware(
     CORSMiddleware,
@@ -214,6 +199,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Request tracing middleware ────────────────────────────────────────────────
+@app.middleware("http")
+async def request_tracing_middleware(request, call_next):
+    request_id = str(_uuid.uuid4())[:8]
+    start = time.time()
+    response = await call_next(request)
+    duration_ms = round((time.time() - start) * 1000)
+    response.headers["X-Request-ID"] = request_id
+    if duration_ms > 2000:
+        logger.warning("slow_request request_id=%s method=%s path=%s duration_ms=%d status=%d",
+                       request_id, request.method, request.url.path, duration_ms, response.status_code)
+    elif request.method != "GET" or "/telemetry/" in request.url.path:
+        logger.info("request request_id=%s method=%s path=%s duration_ms=%d status=%d",
+                    request_id, request.method, request.url.path, duration_ms, response.status_code)
+    return response
+
+
 
 app.include_router(auth.router,              prefix="/api/v1")
 app.include_router(devices.router,           prefix="/api/v1")
