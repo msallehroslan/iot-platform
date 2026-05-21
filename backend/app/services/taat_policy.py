@@ -118,13 +118,38 @@ def set_policy(
             "reason":    reason or f"Set at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         })
 
-        entry = AgentMemory(
-            tenant_id   = tenant_id,
-            user_id     = user_id,
-            memory_type = "auto_execute_policy",
-            content     = content,
+        # Upsert — update existing row if one already exists for this device+key
+        existing = (
+            db.query(AgentMemory)
+            .filter(
+                AgentMemory.tenant_id   == tenant_id,
+                AgentMemory.memory_type == "auto_execute_policy",
+            )
+            .all()
         )
-        db.add(entry)
+        matched = None
+        for row in existing:
+            try:
+                import json as _json
+                e = _json.loads(row.content)
+                if (e.get("device_id", "*") == (device_id or "*") and
+                        e.get("key", "*") == (key or "*")):
+                    matched = row
+                    break
+            except Exception:
+                continue
+
+        if matched:
+            matched.content    = content
+            matched.user_id    = user_id
+        else:
+            entry = AgentMemory(
+                tenant_id   = tenant_id,
+                user_id     = user_id,
+                memory_type = "auto_execute_policy",
+                content     = content,
+            )
+            db.add(entry)
         db.commit()
 
         logger.info(

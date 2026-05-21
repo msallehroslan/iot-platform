@@ -22,6 +22,7 @@ Supported plan types:
     RCA            → telemetry + anomalies + baseline + key_intel + memory
     RECOMMEND      → all intel layers → propose actions
     USER           → (direct execution, no plan needed)
+    FLEET          → compare/rank all devices (multi-device queries)
 """
 from __future__ import annotations
 
@@ -272,6 +273,43 @@ def _find_key_in_message(message: str, ctx: dict) -> Optional[str]:
     return None
 
 
+def _plan_fleet(ctx, action, message, device_id) -> Plan:
+    """
+    Multi-device query — fetch health + alarms for all devices.
+    Used for: 'compare all pumps', 'which device has most alarms',
+              'show fleet status', 'rank devices by health'.
+    Each device gets its own get_health + get_alarms step.
+    Steps are independent so the executor runs them in parallel.
+    """
+    devices = ctx.get("device_list", [])
+    steps   = [Step("get_devices", {}, "Fetch device list")]
+
+    for dev in devices[:10]:  # cap at 10 to avoid runaway DB load
+        dev_id   = dev.get("id", "")
+        dev_name = dev.get("name", dev_id[:8])
+        if not dev_id:
+            continue
+        steps.append(Step(
+            "get_health",
+            {"device_id": dev_id},
+            f"Health: {dev_name}",
+            f"health_{dev_id[:8]}",
+        ))
+        steps.append(Step(
+            "get_alarms",
+            {"device_id": dev_id},
+            f"Alarms: {dev_name}",
+            f"alarms_{dev_id[:8]}",
+        ))
+
+    return Plan(
+        intent  = "FLEET",
+        steps   = steps,
+        risk    = "LOW",
+        summary = f"Fleet comparison across {len(devices)} device(s)",
+    )
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 _PLAN_BUILDERS = {
@@ -281,4 +319,5 @@ _PLAN_BUILDERS = {
     "RULE":           _plan_rule,
     "RCA":            _plan_rca,
     "RECOMMEND":      _plan_recommend,
+    "FLEET":          _plan_fleet,
 }

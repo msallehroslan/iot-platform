@@ -73,6 +73,31 @@ def get_memories(
         return []
 
 
+def _extract_aliases(all_mem: list, device_name: str) -> set:
+    """
+    Extract known aliases for a device from semantic/alias memory entries.
+    e.g. memory says 'ESP32-e823 controls test LED' — 'test LED' becomes an alias.
+    Returns a set of lowercase alias tokens to also match against.
+    """
+    aliases: set = set()
+    if not device_name:
+        return aliases
+    name_lower = device_name.lower()
+    for m in all_mem:
+        if m.get("type") not in (MTYPE_SEMANTIC, "device_alias", "device_context"):
+            continue
+        content = m.get("content", "").lower()
+        if name_lower not in content:
+            continue
+        # Grab significant words from the same memory entry as alias candidates
+        words = [w.strip(".,;:()") for w in content.split() if len(w) > 3]
+        for w in words:
+            if w != name_lower and w not in ("device", "with", "that", "this",
+                                              "from", "into", "also", "when"):
+                aliases.add(w)
+    return aliases
+
+
 def get_relevant_memories(
     db: Session,
     tenant_id: UUID,
@@ -82,23 +107,39 @@ def get_relevant_memories(
 ) -> list[dict]:
     """
     Fetch memories relevant to a specific device or key.
-    Semantic memories retrieved first (higher priority).
-    Used by context builder to inject focused memory into the system prompt.
+    Scoring: type priority + exact match + alias/token match.
+    Semantic memories always retrieved first (higher priority).
     """
     all_mem = get_memories(db, tenant_id, limit=100)
+
+    # Build alias set from existing semantic memories for fuzzy matching
+    aliases = _extract_aliases(all_mem, device_name) if device_name else set()
+
+    # Tokenise device_name for partial match (e.g. "Pump" matches "Pump-01")
+    name_tokens: set = set()
+    if device_name:
+        name_tokens = {t.lower() for t in device_name.replace("-", " ").replace("_", " ").split() if len(t) > 2}
 
     # Score by relevance + type priority
     scored = []
     for m in all_mem:
         content_lower = m["content"].lower()
-        # Base score: semantic = 10, incident = 3, action = 1
-        type_score = 10 if m["type"] == MTYPE_SEMANTIC else                      3  if m["type"] == MTYPE_INCIDENT else 1
+        # Base score: semantic = 10, incident = 3, action = 1, others = 1
+        type_score = (10 if m["type"] == MTYPE_SEMANTIC else
+                       3 if m["type"] == MTYPE_INCIDENT else 1)
 
         match_score = 0
-        if device_name and device_name.lower() in content_lower:
-            match_score += 4
+        if device_name:
+            if device_name.lower() in content_lower:
+                match_score += 4          # exact device name match
+            elif any(t in content_lower for t in name_tokens):
+                match_score += 2          # partial token match (e.g. "Pump" in "primary pump")
+            elif aliases and any(a in content_lower for a in aliases):
+                match_score += 1          # alias match
+
         if key and key.lower() in content_lower:
             match_score += 2
+
         if match_score > 0 or not (device_name or key):
             scored.append((type_score + match_score, m))
 

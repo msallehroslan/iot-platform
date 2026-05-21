@@ -53,6 +53,7 @@ INTENT_CATEGORIES = [
     "RECOMMEND",
     "SCHEDULE",
     "REMEMBER",      # save semantic/location/preference memory
+    "FLEET",         # compare/rank all devices
 ]
 
 CUSTOMER_ALLOWED_INTENTS = {"QUESTION", "REPORT"}
@@ -82,6 +83,7 @@ Categories:
 - REPORT: daily report, fleet summary, generate report
 - RCA: root cause analysis, "why did", "what caused", "explain this anomaly"
 - RECOMMEND: "what should I do", "recommend", "suggest", anomaly + asking for action
+- FLEET: compare all devices, rank by health/alarms, "which device is worst", "show all devices", "fleet overview", "compare pumps"
 
 IMPORTANT: If the message contains a future time ("at midnight", "at 9am", "tomorrow", "every X hours", "in X hours"), classify as SCHEDULE even if it also contains control words like "turn on/off".
 
@@ -129,6 +131,10 @@ Respond with ONLY the category name, nothing else."""
         return "USER"
     if any(w in msg for w in ["daily report", "fleet report", "generate report"]):
         return "REPORT"
+    if any(w in msg for w in ["compare all", "compare device", "compare pump", "rank device",
+                               "rank by health", "rank by alarm", "fleet overview",
+                               "all devices", "which device is", "worst device", "best device"]):
+        return "FLEET"
     if any(w in msg for w in ["why did", "what caused", "root cause", "explain"]):
         return "RCA"
     if any(w in msg for w in ["recommend", "what should", "suggest", "advise"]):
