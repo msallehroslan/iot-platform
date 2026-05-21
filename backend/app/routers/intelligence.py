@@ -443,17 +443,39 @@ class ChatRequest(BaseModel):
 
 
 async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
-    """Helper: call Groq and return text reply. Defaults to FAST model."""
+    """Helper: call Groq and return text reply. Retries on 429/5xx with exponential backoff."""
+    import asyncio as _asyncio
     use_model = model or GROQ_MODEL_FAST
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": use_model, "max_tokens": max_tokens,
-                  "messages": messages, "temperature": temperature},
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+    delays = [1.0, 3.0]  # wait 1s then 3s before final attempt
+    last_exc = None
+    for attempt, delay in enumerate([0.0] + delays):
+        if delay:
+            await _asyncio.sleep(delay)
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={"model": use_model, "max_tokens": max_tokens,
+                          "messages": messages, "temperature": temperature},
+                )
+                if resp.status_code in (429, 500, 502, 503) and attempt < len(delays):
+                    logger.warning("_call_groq attempt %d status=%d — retrying", attempt + 1, resp.status_code)
+                    last_exc = httpx.HTTPStatusError(f"HTTP {resp.status_code}", request=resp.request, response=resp)
+                    continue
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code not in (429, 500, 502, 503) or attempt >= len(delays):
+                raise
+            logger.warning("_call_groq attempt %d status=%d — retrying", attempt + 1, exc.response.status_code)
+        except httpx.TimeoutException as exc:
+            last_exc = exc
+            if attempt >= len(delays):
+                raise
+            logger.warning("_call_groq attempt %d timeout — retrying", attempt + 1)
+    raise last_exc
 
 
 # ── Groq model strategy ──────────────────────────────────────────────────────
@@ -1344,6 +1366,11 @@ async def ai_chat(
     device_id_str = str(body.device_id) if body.device_id else None
     try:
         ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
+        try:
+            from app.services.taat_context_compressor import compress_context
+            ctx = compress_context(ctx, intent=intent)
+        except Exception as _ce:
+            logger.warning("compress_context failed (using raw ctx): %s", _ce)
     except Exception as exc:
         logger.error("build_context failed: %s", exc)
         ctx = {"intent": intent, "device_list": devices,
@@ -1417,14 +1444,40 @@ async def ai_chat(
                     )
                     action_result = trace.to_chip_data()
 
-                    # ── Step 7: Plan-aware verification ───────────────────
-                    try:
-                        verification = await verify_actions(plan, trace, db)
+                    # ── Step 7: Plan-aware verification (background) ──────
+                    # Run verification in background — don't block the HTTP response.
+                    # Verification result is pushed via WebSocket when complete.
+                    needs_verify = any(getattr(s, "requires_verification", False) for s in plan.steps)
+                    if needs_verify:
+                        import asyncio as _asyncio
+                        from app.core.websocket_manager import manager as _ws_manager
+
+                        async def _bg_verify(plan=plan, trace=trace, device_id=device_id_str):
+                            try:
+                                ver = await verify_actions(plan, trace, db)
+                                if device_id:
+                                    await _ws_manager.broadcast_json(str(device_id), {
+                                        "type":         "verification",
+                                        "trace_id":     trace.trace_id,
+                                        "verification": ver,
+                                    })
+                                logger.info("bg_verify done trace_id=%s overall=%s",
+                                            trace.trace_id, ver.get("overall"))
+                            except Exception as _ve:
+                                logger.warning("bg_verify failed trace_id=%s: %s", trace.trace_id, _ve)
+
+                        _asyncio.ensure_future(_bg_verify())
+                        verification = {"overall": "pending", "verified": False,
+                                        "steps": {}, "message": "Verification running in background"}
                         ctx["verification"] = verification
-                    except Exception as exc:
-                        logger.debug("verify_actions skipped: %s", exc)
-                        verification = {"overall": "skipped", "verified": True,
-                                        "steps": {}, "message": ""}
+                    else:
+                        try:
+                            verification = await verify_actions(plan, trace, db)
+                            ctx["verification"] = verification
+                        except Exception as exc:
+                            logger.debug("verify_actions skipped: %s", exc)
+                            verification = {"overall": "skipped", "verified": True,
+                                            "steps": {}, "message": ""}
 
                     # ── Step 7b: Decision engine ─────────────────────────────
                     if trace.errors:
@@ -1593,6 +1646,35 @@ async def ai_chat(
                 logger.info("semantic.saved tenant=%s content=%s", current_user.tenant_id, fact[:80])
             except Exception as exc:
                 logger.error("remember failed: %s", exc)
+
+    # ── READ intents: run through planner for rich parallel data ─────────────
+    # QUESTION, RCA, RECOMMEND, FLEET all need the planner + executor to
+    # fetch per-device data before the system prompt is built.
+    elif intent in ("QUESTION", "RCA", "RECOMMEND", "FLEET"):
+        try:
+            plan = make_plan(
+                intent    = intent,
+                ctx       = ctx,
+                action    = None,
+                message   = last_user_msg,
+                device_id = device_id_str,
+            )
+            trace = await run_plan(
+                plan         = plan,
+                db           = db,
+                current_user = current_user,
+                extra_kwargs = {"devices": devices, "api_key": api_key},
+            )
+            # Merge trace results into ctx so build_system_prompt sees them
+            for key, val in trace.results.items():
+                if key not in ctx:
+                    ctx[key] = val
+            logger.info(
+                "read_plan trace_id=%s intent=%s steps=%d",
+                trace.trace_id, intent, len(trace.steps),
+            )
+        except Exception as exc:
+            logger.error("read plan execution failed intent=%s: %s", intent, exc)
 
     # ── Step 9: Build system prompt ───────────────────────────────────────────
     # Inject relevant memory for current device/key
