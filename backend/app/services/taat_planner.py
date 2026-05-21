@@ -415,9 +415,10 @@ def build_system_prompt(
         )
     if "rpc_history" in ctx:
         rh = ctx["rpc_history"]
-        if rh.get("count", 0) > 0:
-            last = rh["commands"][0]
-            intel_section += f"\nLAST RPC: {last['method']} {last['params']} → {last['status']}"
+        cmds = rh.get("commands") or rh.get("history") or rh.get("results") or []
+        if rh.get("count", 0) > 0 and cmds:
+            last = cmds[0]
+            intel_section += f"\nLAST RPC: {last.get('method','?')} {last.get('params',{})} → {last.get('status','?')}"
     if ctx.get("decision_summary"):
         intel_section += f"\nDECISION ENGINE: {ctx['decision_summary']}"
     intel_section += dispatch_section
