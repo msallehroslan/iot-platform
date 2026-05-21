@@ -256,6 +256,20 @@ async def tool_write_memory(
         return _error("write_memory", str(e))
 
 
+async def tool_get_pump_analysis(
+    db: Session, current_user,
+    device_id: str, **_
+) -> ToolResult:
+    """DE/NDE asymmetry detection + pump efficiency estimation."""
+    if not device_id:
+        return _error("get_pump_analysis", "device_id required")
+    try:
+        from app.services.taat_tools import tool_get_pump_analysis as _fn
+        return _result("get_pump_analysis", _fn(db, device_id))
+    except Exception as e:
+        return _error("get_pump_analysis", str(e))
+
+
 # ── Registry map: name → callable ────────────────────────────────────────────
 
 REGISTRY: Dict[str, Callable] = {
@@ -273,6 +287,7 @@ REGISTRY: Dict[str, Callable] = {
     "delete_rule":           tool_delete_rule,
     "get_memory":            tool_get_memory,
     "write_memory":          tool_write_memory,
+    "get_pump_analysis":     tool_get_pump_analysis,
 }
 
 

@@ -238,6 +238,7 @@ def _plan_rca(ctx, action, message, device_id) -> Plan:
             Step("get_health",     {"device_id": device_id}, "Fetch health score",      "health"),
             Step("get_alarms",     {"device_id": device_id}, "Fetch active alarms",     "alarms"),
             Step("get_memory",     {"device_id": device_id}, "Fetch device memory",     "memory"),
+            Step("get_pump_analysis", {"device_id": device_id}, "DE/NDE asymmetry + efficiency", "pump_analysis"),
         ]
         # Try to enrich the most anomalous key
         most_anom = ctx.get("anomalies", {}).get("most_anomalous_key")

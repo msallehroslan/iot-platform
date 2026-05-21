@@ -450,3 +450,393 @@ def _resolve_device_ids(db: Session, current_user, device_id: Optional[str]) -> 
     if current_user.role == "CUSTOMER_USER" and current_user.customer_id:
         q = q.filter(Device.customer_id == current_user.customer_id)
     return [str(r[0]) for r in q.all()]
+
+
+# ── Pump Analysis: DE/NDE Asymmetry + Efficiency ──────────────────────────────
+
+def tool_get_pump_analysis(db: Session, device_id: str) -> dict:
+    """
+    Compute two structured analyses for pump-motor devices:
+
+    1. DE/NDE Asymmetry Detection
+       Compares Drive End vs Non-Drive End velocity readings across
+       motor and pump. Determines fault type deterministically from
+       the ratio and direction of change — does not rely on LLM inference.
+
+    2. Pump Efficiency Estimation
+       Calculates hydraulic and overall efficiency from available telemetry.
+       Gracefully degrades when sensors are missing:
+         flow + diff_pressure + power  → full hydraulic + overall efficiency
+         flow + diff_pressure          → hydraulic efficiency only
+         power + current trend         → electrical load efficiency proxy
+         none of the above             → BEP deviation from velocity trend only
+
+    Returns structured dict injected into TAAT context before system prompt.
+    """
+    from app.services.data_service import get_latest_telemetry, get_baseline_now
+    from app.services.trend_service import get_device_key_trend
+
+    telemetry = get_latest_telemetry(db, device_id)
+    baseline  = get_baseline_now(db, device_id)
+    values    = telemetry.get("values", {})
+    b_keys    = baseline.get("keys", {}) if baseline.get("status") == "active" else {}
+
+    result = {
+        "device_id":    device_id,
+        "asymmetry":    _compute_de_nde_asymmetry(values, b_keys),
+        "efficiency":   _compute_pump_efficiency(values, b_keys, db, device_id),
+    }
+    return result
+
+
+def _compute_de_nde_asymmetry(values: dict, b_keys: dict) -> dict:
+    """
+    Deterministically detect DE/NDE asymmetry patterns.
+    Returns fault_type, severity, confidence, and recommended action.
+
+    Fault classification matrix:
+      Motor-DE drop + Motor-NDE stable           → drive_end_bearing_or_misalignment
+      Motor-DE drop + Pump-DE rise               → coupling_slip
+      Motor-DE drop + Pump-DE drop (symmetric)   → load_change_normal
+      Pump-DE rise + Pump-NDE stable             → pump_side_bearing_or_imbalance
+      All stable                                 → no_fault
+    """
+    def _get(key_patterns):
+        """Find first matching key value from telemetry."""
+        for k, v in values.items():
+            kl = k.lower()
+            if any(p in kl for p in key_patterns):
+                try:
+                    return k, float(v)
+                except (TypeError, ValueError):
+                    pass
+        return None, None
+
+    def _baseline_mean(key):
+        b = b_keys.get(key, {})
+        return b.get("mean") if b else None
+
+    # Resolve actual key names and values
+    m_de_key, m_de_val = _get(["motor_de_velocity", "motor_de_speed", "motor_de"])
+    m_nde_key, m_nde_val = _get(["motor_nde_velocity", "motor_nde_speed", "motor_nde"])
+    p_de_key, p_de_val = _get(["pump_de_velocity", "pump_de_speed", "pump_de"])
+    p_nde_key, p_nde_val = _get(["pump_nde_velocity", "pump_nde_speed", "pump_nde"])
+
+    available = {k: v for k, v in [
+        ("motor_de", (m_de_key, m_de_val)),
+        ("motor_nde", (m_nde_key, m_nde_val)),
+        ("pump_de", (p_de_key, p_de_val)),
+        ("pump_nde", (p_nde_key, p_nde_val)),
+    ] if v[0] is not None}
+
+    if len(available) < 2:
+        return {
+            "available":   False,
+            "reason":      "Insufficient DE/NDE keys in telemetry",
+            "keys_found":  list(available.keys()),
+        }
+
+    # Compute deviations from baseline mean (% change)
+    def _dev(key_name, val, actual_key):
+        mean = _baseline_mean(actual_key) if actual_key else None
+        if mean and mean != 0:
+            return (val - mean) / mean * 100
+        return 0.0
+
+    m_de_dev  = _dev("motor_de",  m_de_val,  m_de_key)  if m_de_val  is not None else None
+    m_nde_dev = _dev("motor_nde", m_nde_val, m_nde_key) if m_nde_val is not None else None
+    p_de_dev  = _dev("pump_de",   p_de_val,  p_de_key)  if p_de_val  is not None else None
+    p_nde_dev = _dev("pump_nde",  p_nde_val, p_nde_key) if p_nde_val is not None else None
+
+    # Asymmetry threshold — >15% divergence between DE and NDE is significant
+    ASYM_THRESHOLD = 15.0
+    COUPLING_THRESHOLD = 10.0
+
+    fault_type   = "no_fault"
+    severity     = "LOW"
+    confidence   = "low"
+    description  = "DE/NDE readings are symmetric — no asymmetry detected"
+    action       = "Continue normal monitoring"
+    ratio        = None
+
+    # ── Case 1: Motor-DE drop + Pump-DE rise = coupling slip ─────────────────
+    if (m_de_dev is not None and p_de_dev is not None
+            and m_de_dev < -COUPLING_THRESHOLD and p_de_dev > COUPLING_THRESHOLD):
+        fault_type  = "coupling_slip"
+        severity    = "CRITICAL"
+        confidence  = "high"
+        ratio       = round(abs(p_de_dev - m_de_dev), 1)
+        description = (
+            f"COUPLING SLIP: Motor-DE deviating {m_de_dev:+.1f}% while Pump-DE "
+            f"deviating {p_de_dev:+.1f}% from baseline. "
+            f"Motor is spinning but not transferring torque to pump shaft."
+        )
+        action = (
+            "Shut down and inspect coupling immediately. "
+            "Check for worn jaw inserts, broken spider element, or loose keyway."
+        )
+
+    # ── Case 2: Motor-DE drop + Motor-NDE stable = drive-end fault ───────────
+    elif (m_de_dev is not None and m_nde_dev is not None
+          and abs(m_de_dev - m_nde_dev) > ASYM_THRESHOLD
+          and m_de_dev < m_nde_dev):
+        fault_type  = "drive_end_bearing_or_misalignment"
+        severity    = "HIGH" if abs(m_de_dev) > 25 else "MEDIUM"
+        confidence  = "high"
+        ratio       = round(abs(m_de_dev - m_nde_dev), 1)
+        description = (
+            f"DRIVE-END ASYMMETRY: Motor-DE {m_de_dev:+.1f}% vs Motor-NDE "
+            f"{m_nde_dev:+.1f}% from baseline (divergence={ratio}%). "
+            f"Fault is localised at the drive end — bearing wear, coupling misalignment, or shaft issue."
+        )
+        action = (
+            "Inspect drive-end bearing condition and coupling alignment. "
+            "Check for vibration sidebands at 1× and 2× shaft frequency. "
+            "Schedule bearing replacement if ISO 10816 Zone C exceeded."
+        )
+
+    # ── Case 3: Pump-DE + Pump-NDE diverging = pump-side fault ───────────────
+    elif (p_de_dev is not None and p_nde_dev is not None
+          and abs(p_de_dev - p_nde_dev) > ASYM_THRESHOLD):
+        fault_type  = "pump_side_bearing_or_imbalance"
+        severity    = "HIGH" if abs(p_de_dev - p_nde_dev) > 30 else "MEDIUM"
+        confidence  = "high"
+        ratio       = round(abs(p_de_dev - p_nde_dev), 1)
+        description = (
+            f"PUMP-SIDE ASYMMETRY: Pump-DE {p_de_dev:+.1f}% vs Pump-NDE "
+            f"{p_nde_dev:+.1f}% from baseline (divergence={ratio}%). "
+            f"Indicates impeller imbalance or pump-side bearing fault."
+        )
+        action = (
+            "Inspect pump impeller for erosion, cavitation damage, or debris. "
+            "Check pump-side bearing condition. "
+            "Verify seal condition — pump asymmetry often precedes seal failure."
+        )
+
+    # ── Case 4: All drop together = normal load change ────────────────────────
+    elif (m_de_dev is not None and m_nde_dev is not None
+          and abs(m_de_dev - m_nde_dev) <= ASYM_THRESHOLD
+          and m_de_dev < -COUPLING_THRESHOLD):
+        fault_type  = "load_change_normal"
+        severity    = "LOW"
+        confidence  = "medium"
+        description = (
+            f"SYMMETRIC REDUCTION: Motor-DE {m_de_dev:+.1f}% and Motor-NDE "
+            f"{m_nde_dev:+.1f}% declining proportionally — consistent with "
+            f"load reduction or speed setpoint change, not a mechanical fault."
+        )
+        action = "Confirm with operator if a setpoint change or valve adjustment was made."
+
+    return {
+        "available":   True,
+        "fault_type":  fault_type,
+        "severity":    severity,
+        "confidence":  confidence,
+        "description": description,
+        "action":      action,
+        "ratio_pct":   ratio,
+        "readings": {
+            k: {"value": v[1], "key_name": v[0], "deviation_pct": d}
+            for k, v, d in [
+                ("motor_de",  (m_de_key,  m_de_val),  m_de_dev),
+                ("motor_nde", (m_nde_key, m_nde_val), m_nde_dev),
+                ("pump_de",   (p_de_key,  p_de_val),  p_de_dev),
+                ("pump_nde",  (p_nde_key, p_nde_val), p_nde_dev),
+            ] if v[0] is not None
+        },
+    }
+
+
+def _compute_pump_efficiency(
+    values: dict,
+    b_keys: dict,
+    db,
+    device_id: str,
+) -> dict:
+    """
+    Compute pump efficiency with graceful degradation based on available sensors.
+
+    Tier 1 (full):    flow + diff_pressure + power     → hydraulic + overall efficiency
+    Tier 2 (partial): flow + diff_pressure              → hydraulic efficiency only
+    Tier 3 (proxy):   power + baseline comparison       → electrical load deviation
+    Tier 4 (minimal): velocity trend only               → BEP deviation estimate
+
+    Efficiency formulas:
+      Hydraulic power (W) = flow_m3s × diff_pressure_pa × fluid_density
+      Hydraulic efficiency = hydraulic_power / shaft_power × 100
+      Overall efficiency   = hydraulic_power / electrical_power × 100
+    """
+    import math
+
+    def _find_val(*patterns):
+        for k, v in values.items():
+            kl = k.lower()
+            if any(p in kl for p in patterns):
+                try:
+                    return k, float(v)
+                except (TypeError, ValueError):
+                    pass
+        return None, None
+
+    FLUID_DENSITY = 1000.0  # kg/m³ water (standard)
+    GRAVITY       = 9.81    # m/s²
+
+    # Discover sensors
+    flow_key, flow_val         = _find_val("flow_rate", "flow_m3", "volumetric_flow", "flow_lpm", "flow")
+    press_in_key, press_in     = _find_val("inlet_pressure", "suction_pressure", "pressure_in", "p_in")
+    press_out_key, press_out   = _find_val("outlet_pressure", "discharge_pressure", "pressure_out", "p_out")
+    diff_key, diff_press       = _find_val("diff_pressure", "differential_pressure", "delta_pressure")
+    power_key, power_kw        = _find_val("motor_power", "power_kw", "active_power", "shaft_power")
+    current_key, current_a     = _find_val("current", "motor_current", "amps", "phase_current")
+    voltage_key, voltage_v     = _find_val("voltage", "motor_voltage", "volts")
+    speed_key, speed_rpm       = _find_val("motor_rpm", "pump_rpm", "speed_rpm", "motor_speed_rpm")
+
+    # Derive differential pressure if not directly available
+    if diff_press is None and press_in is not None and press_out is not None:
+        diff_press = press_out - press_in
+
+    # Derive power from current × voltage if direct power not available
+    if power_kw is None and current_a is not None and voltage_v is not None:
+        power_kw = (current_a * voltage_v * 1.732 * 0.85) / 1000  # 3-phase, PF=0.85 assumed
+
+    tier = "none"
+    hydraulic_eff  = None
+    overall_eff    = None
+    hydraulic_kw   = None
+    bep_deviation  = None
+    efficiency_status = "UNKNOWN"
+    efficiency_note   = ""
+    sensors_used      = []
+
+    # ── Tier 1 / 2: Flow + Differential Pressure ─────────────────────────────
+    if flow_val is not None and diff_press is not None:
+        # Normalise flow to m³/s
+        flow_m3s = flow_val
+        if flow_key and ("lpm" in flow_key.lower() or "l_min" in flow_key.lower()):
+            flow_m3s = flow_val / 60000  # L/min → m³/s
+        elif flow_key and ("m3h" in flow_key.lower() or "m3_h" in flow_key.lower()):
+            flow_m3s = flow_val / 3600   # m³/h → m³/s
+        elif flow_val > 10:              # heuristic: large values likely L/min
+            flow_m3s = flow_val / 60000
+
+        # Normalise pressure to Pa
+        diff_pa = diff_press
+        if diff_press < 50:              # heuristic: small values likely bar
+            diff_pa = diff_press * 100000
+        elif diff_press < 2000:          # likely kPa
+            diff_pa = diff_press * 1000
+
+        hydraulic_kw = (flow_m3s * diff_pa) / 1000  # W → kW
+        sensors_used += [flow_key, diff_key or f"{press_in_key}→{press_out_key}"]
+
+        if power_kw and power_kw > 0:
+            tier = "full"
+            hydraulic_eff = round(min((hydraulic_kw / power_kw) * 100, 100), 1)
+            overall_eff   = hydraulic_eff  # same when shaft ≈ electrical for motor+pump
+
+            # Efficiency status thresholds (centrifugal pump typical)
+            if hydraulic_eff >= 75:
+                efficiency_status = "GOOD"
+                efficiency_note   = f"Efficiency {hydraulic_eff}% — operating near BEP"
+            elif hydraulic_eff >= 60:
+                efficiency_status = "ACCEPTABLE"
+                efficiency_note   = f"Efficiency {hydraulic_eff}% — moderate losses, check wear rings"
+            elif hydraulic_eff >= 45:
+                efficiency_status = "DEGRADED"
+                efficiency_note   = f"Efficiency {hydraulic_eff}% — significant losses, inspect impeller and wear rings"
+            else:
+                efficiency_status = "CRITICAL"
+                efficiency_note   = f"Efficiency {hydraulic_eff}% — severe degradation, immediate inspection needed"
+
+            sensors_used.append(power_key)
+        else:
+            tier = "partial"
+            efficiency_note = (
+                f"Hydraulic power = {hydraulic_kw:.2f} kW. "
+                f"No motor power sensor — overall efficiency cannot be computed. "
+                f"Add motor_power or current+voltage keys for full efficiency."
+            )
+            efficiency_status = "PARTIAL"
+
+    # ── Tier 3: Power + Baseline comparison ──────────────────────────────────
+    elif power_kw is not None:
+        tier = "proxy"
+        b_power = b_keys.get(power_key, {}).get("mean") if power_key else None
+        if b_power and b_power > 0:
+            load_dev = ((power_kw - b_power) / b_power) * 100
+            if load_dev > 15:
+                efficiency_status = "DEGRADED"
+                efficiency_note   = (
+                    f"Motor consuming {load_dev:+.1f}% more power than baseline "
+                    f"({power_kw:.1f}kW vs baseline {b_power:.1f}kW). "
+                    f"Possible impeller wear, increased friction, or off-BEP operation."
+                )
+            elif load_dev < -15:
+                efficiency_status = "WARNING"
+                efficiency_note   = (
+                    f"Motor consuming {load_dev:+.1f}% less power than baseline. "
+                    f"Check for reduced load — possible partial blockage or valve throttling."
+                )
+            else:
+                efficiency_status = "NORMAL"
+                efficiency_note   = f"Motor power {power_kw:.1f}kW within {load_dev:+.1f}% of baseline — normal load."
+        else:
+            efficiency_status = "NO_BASELINE"
+            efficiency_note   = f"Motor power={power_kw:.1f}kW detected but no baseline established yet. Continue monitoring."
+        sensors_used.append(power_key)
+
+    # ── Tier 4: Velocity trend → BEP deviation estimate ──────────────────────
+    else:
+        tier = "minimal"
+        # Use motor DE velocity as proxy for speed, compare to baseline
+        m_de_vals = [(k, float(v)) for k, v in values.items()
+                     if "motor_de" in k.lower() or "pump_de" in k.lower()
+                     and isinstance(v, (int, float))]
+        if m_de_vals and b_keys:
+            key, val = m_de_vals[0]
+            b = b_keys.get(key, {})
+            b_mean = b.get("mean")
+            if b_mean and b_mean > 0:
+                bep_deviation = round(((val - b_mean) / b_mean) * 100, 1)
+                if abs(bep_deviation) > 20:
+                    efficiency_status = "OFF_BEP"
+                    efficiency_note   = (
+                        f"Velocity {bep_deviation:+.1f}% from baseline mean — "
+                        f"likely operating off Best Efficiency Point. "
+                        f"Add flow_rate and pressure sensors for accurate efficiency."
+                    )
+                else:
+                    efficiency_status = "NEAR_BEP"
+                    efficiency_note   = (
+                        f"Velocity {bep_deviation:+.1f}% from baseline — "
+                        f"estimated near BEP. Add flow_rate and pressure sensors for accuracy."
+                    )
+        if not efficiency_note:
+            efficiency_note = (
+                "No flow, pressure, or power sensors detected. "
+                "Add flow_rate + differential_pressure + motor_power for efficiency monitoring."
+            )
+        efficiency_status = efficiency_status or "NO_SENSORS"
+
+    return {
+        "tier":             tier,
+        "hydraulic_kw":     round(hydraulic_kw, 3) if hydraulic_kw is not None else None,
+        "hydraulic_eff_pct": hydraulic_eff,
+        "overall_eff_pct":  overall_eff,
+        "bep_deviation_pct": bep_deviation,
+        "status":           efficiency_status,
+        "note":             efficiency_note,
+        "sensors_used":     [s for s in sensors_used if s],
+        "sensors_missing":  _missing_efficiency_sensors(flow_key, diff_press, power_kw),
+    }
+
+
+def _missing_efficiency_sensors(flow_key, diff_press, power_kw) -> list:
+    missing = []
+    if flow_key is None:
+        missing.append("flow_rate (m³/s, L/min, or m³/h)")
+    if diff_press is None:
+        missing.append("differential_pressure (bar, kPa, or Pa) or inlet+outlet pressure")
+    if power_kw is None:
+        missing.append("motor_power (kW) or current+voltage")
+    return missing

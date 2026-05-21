@@ -141,14 +141,141 @@ CLINICAL INTERPRETATION GUIDE:
 
 def _knowledge_pump_motor() -> str:
     return """ROTATING MACHINERY DOMAIN KNOWLEDGE (Pump-Motor Assembly):
+
+── DE/NDE ASYMMETRY (interpret this FIRST) ───────────────────────────────────
 - DE = Drive End (shaft side, connected to coupling). NDE = Non-Drive End (opposite side).
 - Motor DE and Pump DE should move TOGETHER when coupling is healthy.
-- ASYMMETRIC DE/NDE: Motor-DE drops sharply but Motor-NDE stays stable → drive-end fault (bearing wear, coupling slip, misalignment). Fault is physically at the shaft connection point.
-- Motor-DE DROP + Pump-DE RISE → classic coupling slip: motor spinning but not transferring energy to pump shaft. Check coupling condition immediately.
-- Motor-DE DROP + Pump-DE DROP together → load reduction or speed change (normal, not a fault).
-- Pump-DE and Pump-NDE diverging → impeller imbalance or pump-side bearing issue.
+- Motor-DE drops sharply, Motor-NDE stable → drive-end fault (bearing wear, coupling slip, misalignment). Fault is at the shaft connection point.
+- Motor-DE drops + Pump-DE RISES → classic coupling slip: motor spinning but not transferring torque to pump shaft. Inspect coupling immediately.
+- Motor-DE drops + Pump-DE drops together → load reduction or speed change — normal, not a fault.
+- Pump-DE and Pump-NDE diverging → impeller imbalance or pump-side bearing fault.
 - Temperature rising WITH velocity changes → friction increase, confirms mechanical wear.
-- Interpret DE/NDE asymmetry FIRST before any other conclusion."""
+
+── BEARING FAULT STAGES & SEVERITY (ISO 10816-3) ────────────────────────────
+Stage 1 — Early (incipient): High-frequency ultrasonic noise only. No change in velocity RMS.
+  → Action: increase monitoring frequency, no immediate intervention needed.
+Stage 2 — Developing: High-frequency harmonics appear in spectrum. Slight RMS increase.
+  Velocity RMS: 1.8–2.8 mm/s → Zone A (new machine acceptable). Monitor trend closely.
+Stage 3 — Advanced: Sub-harmonics and sidebands visible. Audible change in noise.
+  Velocity RMS: 2.8–4.5 mm/s → Zone B (alert threshold). Schedule maintenance.
+Stage 4 — Critical/Failure imminent: Broadband noise floor rising. Temperature increase.
+  Velocity RMS: > 4.5 mm/s → Zone C/D (danger — take out of service immediately).
+- ISO 10816-7 governs rotodynamic pumps specifically (shaft height, rigid vs flexible mount).
+- Set WARNING alarm at Zone B/C boundary (4.5 mm/s RMS). Set DANGER/TRIP at Zone C/D (7.1 mm/s RMS).
+- Change-based alarm: alert if velocity increases >25% above rolling baseline — catches faults earlier than absolute thresholds alone.
+- DE bearing faults: typically present as high-frequency sidebands around shaft frequency.
+- NDE bearing faults: often appear at 2× shaft frequency with modulation.
+
+── CAVITATION DETECTION & CAUSES ────────────────────────────────────────────
+Cavitation = vapour bubbles forming in low-pressure suction zone, then collapsing violently at impeller.
+Telemetry signatures:
+- Flow rate drops while pump is running and speed is unchanged → suction starvation.
+- Vibration increases — especially axial direction — with broadband high-frequency noise floor rising.
+- Vane pass frequency (VPF = RPM/60 × number of impeller vanes) amplitude spikes.
+- Motor current rises as pump works harder against reduced hydraulic output.
+- Suction pressure (if instrumented) drops below NPSH required.
+Causes to diagnose:
+- Suction head too low (tank level drop, suction valve partially closed).
+- Fluid temperature too high → vapour pressure rises → NPSH available decreases.
+- Flow rate too high (operating far right of pump curve, beyond BEP).
+- Suction pipe too long, small bore, or has too many fittings — increases suction losses.
+- Air entrainment in suction line.
+Progressive damage: pitting and erosion of impeller vanes, eventual impeller destruction.
+Cavitation sounds like gravel rattling or clicking inside the pump casing.
+
+── SEAL FAILURE PATTERNS ────────────────────────────────────────────────────
+Mechanical seal is most common cause of pump downtime. Failure is usually gradual.
+Early warning telemetry signs:
+- Temperature rising near seal area (seal chamber or bearing frame temp sensor) by >5°C above baseline.
+- Vibration amplitude increasing — mechanical seals are damaged by shaft vibration and misalignment.
+- Flow rate declining with speed unchanged → possible internal bypass through seal area.
+Failure progression:
+1. Thin lubrication film breaks down → face friction increases → temperature rises.
+2. Elastomer degradation (O-rings) → intermittent leakage begins.
+3. Face grooves and wear → steady drip becomes continuous leak.
+4. If dry-running occurs → seal faces fail within seconds.
+Root causes to check:
+- High vibration / shaft misalignment → uneven face wear (fix alignment before replacing seal).
+- Cavitation → impeller erosion debris contaminates seal faces.
+- Temperature excursion beyond elastomer limits → O-ring hardening and cracking.
+- Insufficient flush flow → solids accumulate on seal faces.
+Note: If seal temperature rises AND vibration rises together → likely misalignment-driven failure.
+      If seal temperature rises with stable vibration → likely flush/cooling issue or dry running.
+
+── IMPELLER WEAR & HYDRAULIC FAULTS ─────────────────────────────────────────
+- Impeller wear (erosion, corrosion, cavitation pitting) → head and flow rate both decline at same speed.
+- Wear ring clearance increase → internal recirculation increases → efficiency drops, flow drops.
+- Vane pass frequency (VPF = shaft RPM/60 × vane count) amplitude rising → impeller imbalance or damage.
+- Impeller imbalance → 1× RPM vibration elevated — symmetric across DE and NDE.
+- Broken/chipped vane → 1× RPM plus sub-harmonics. Vibration asymmetric.
+- Off-BEP operation (below 70% or above 120% of design flow):
+    Low flow: internal recirculation, suction vortices, subsynchronous vibration.
+    High flow: increased NPSH required, cavitation risk, bearing overload.
+- BEP (Best Efficiency Point): the flow rate at which hydraulic efficiency is maximum.
+  Operating >±20% from BEP significantly reduces bearing life and increases vibration.
+- Impeller trimming (diameter reduction) lowers H-Q curve and BEP flow proportionally.
+
+── LUBRICATION & MAINTENANCE INTERVALS ──────────────────────────────────────
+Grease-lubricated bearings (most common for pump motors up to 300kW):
+- Relubrication interval: typically 2,000–4,000 hours at rated speed and temperature.
+- Halve interval if: ambient >40°C, speed >3,000 RPM, wet/dirty environment.
+- Over-greasing is a leading cause of bearing failure — excess grease churns, overheats, loses viscosity.
+- Under-greasing: metal-to-metal contact, early spalling, high temperature.
+Oil-lubricated bearings (larger pumps, sleeve bearings):
+- Oil change: every 2,000 hours or annually (whichever first).
+- Check oil colour — dark/milky = water ingress or oxidation. Metallic particles = bearing wear.
+Telemetry-based maintenance triggers:
+- Bearing temperature rising >10°C above established baseline → relubricate or inspect.
+- Bearing temperature sustained >80°C (grease) or >70°C (oil) → ALERT — inspect immediately.
+- Bearing temperature >100°C → CRITICAL — shut down, risk of bearing seizure.
+- Vibration trending upward over 30+ days → schedule bearing inspection.
+Mechanical seal service life: typically 12–24 months in clean service. Halve in abrasive/chemical service.
+
+── VIBRATION FREQUENCY SIGNATURES ───────────────────────────────────────────
+Key frequencies to correlate with measured vibration spectrum:
+- 1× shaft RPM      → imbalance, bent shaft, misalignment (1× dominant)
+- 2× shaft RPM      → angular misalignment, looseness, resonance
+- 0.5× shaft RPM    → oil whirl (sleeve bearings), internal recirculation at low flow
+- VPF = RPM/60 × N → vane pass frequency (N = number of impeller vanes, typically 5–7)
+                      elevated VPF → impeller damage, cavitation, off-BEP operation
+- BPFI, BPFO        → bearing defect frequencies (inner race, outer race) — need bearing geometry
+- High frequency broadband noise floor rising → cavitation, bearing spalling, loose components
+- Subsynchronous (<1× RPM) → fluid instability, rotating stall at low flow
+- Motor electrical frequency (50 Hz or 60 Hz) harmonics → rotor bar issues, supply imbalance
+Interpretation rule: always compare spectrum to baseline. Absolute amplitude alone is misleading —
+a 3 mm/s machine that increased from 1 mm/s is more concerning than a 4 mm/s stable machine.
+
+── ELECTRICAL MOTOR FAULTS (CURRENT & WINDING) ──────────────────────────────
+Motor Current Signature Analysis (MCSA) — detectable from current sensor on motor supply:
+- Current rising with speed unchanged → bearing friction increasing, mechanical load increasing, or winding fault.
+- Current fluctuating rhythmically → load oscillation, coupling fault, or broken rotor bar (sidebands at ±slip frequency around supply frequency).
+- Phase current imbalance >2% → phase supply issue, winding imbalance, or partial short.
+- Current rising + temperature rising + velocity stable → winding insulation degradation (IR test recommended).
+- Current drops suddenly while speed maintained → unloading event (valve opened, pipe burst).
+Winding temperature limits (standard IEC):
+- Class B insulation: max 130°C (alarm >110°C, trip >125°C)
+- Class F insulation: max 155°C (alarm >130°C, trip >150°C)
+- Class H insulation: max 180°C (alarm >155°C, trip >175°C)
+Temperature rise rules:
+- Winding temp = ambient + temperature rise rating. At 40°C ambient, Class F motor alarms at 130°C.
+- Every 10°C above rated temperature halves insulation life (Arrhenius rule of thumb).
+Rotor bar faults: appear as sidebands at (f_supply ± 2 × slip × f_supply) in current spectrum.
+
+── PUMP CURVES & EFFICIENCY LOSS ────────────────────────────────────────────
+H-Q curve (Head vs Flow): head decreases as flow increases. Steeper curve = more stable operation.
+Efficiency curve peaks at BEP — target operation within 70–110% of BEP flow.
+Detecting efficiency loss from telemetry:
+- Power consumption (kW) rising with same flow and head → efficiency degrading (impeller wear, wear ring wear).
+- Flow rate dropping with head and speed unchanged → internal recirculation, wear ring clearance increased.
+- Head dropping with flow and speed unchanged → impeller erosion, gas ingestion, or recirculation.
+- Pump curve shift (head drops across all flows at same speed) → generalised impeller wear.
+- NPSH margin shrinking (suction pressure falling toward vapour pressure) → cavitation risk imminent.
+Efficiency loss cost: a 5% efficiency loss on a 75kW pump running 8,000 hr/year costs ~£1,500–£2,000/year in extra energy.
+Affinity laws (speed change effects):
+- Flow ∝ speed. Head ∝ speed². Power ∝ speed³.
+- Halving pump speed → power drops to 12.5% of original. VFD control is highly effective for variable-demand systems.
+Worn wear rings: most common cause of gradual performance loss without obvious vibration change.
+Check if head and flow are declining together at constant speed — strong indicator of wear ring clearance growth."""
 
 
 def _knowledge_motor_only() -> str:
