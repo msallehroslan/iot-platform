@@ -77,6 +77,11 @@ MEMORY_COOLDOWN_S        = 300      # min seconds between memory writes per devi
 VELOCITY_KEYS  = {"motor_de_velocity", "motor_nde_velocity", "pump_de_velocity", "pump_nde_velocity"}
 THERMAL_KEYS   = {"temperature"}
 
+# Proactive agent thresholds — trigger RECOMMEND flow automatically
+PROACTIVE_HEALTH_THRESHOLD  = 50.0   # health score below this → proactive alert
+PROACTIVE_DEGRADATION_RATE  = 8.0    # pts/hr drop rate → proactive alert
+PROACTIVE_COOLDOWN_S        = 1800   # 30 min between proactive alerts per device
+
 
 # ── Dirty entry ───────────────────────────────────────────────────────────────
 
@@ -108,6 +113,7 @@ class IntelligenceCoordinator:
         self._health_history: Dict[str, list]  = {}   # device_id → [(ts, score), ...]
         self._anomaly_persist:Dict[str, Dict[str, int]] = {}  # device_id → {key: count}
         self._last_memory_write: Dict[str, float] = {}  # device_id → monotonic ts
+        self._last_proactive:    Dict[str, float] = {}  # device_id → last proactive alert ts
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -249,6 +255,11 @@ class IntelligenceCoordinator:
                 await self._detect_and_record_changes(
                     db, device_id, tenant_id, snapshot,
                     anomaly, trends, entry.values, causal,
+                )
+
+                # Proactive agent — push RECOMMEND alert if thresholds breached
+                await self._maybe_proactive_alert(
+                    db, device_id, tenant_id, snapshot, device,
                 )
 
             finally:
@@ -403,6 +414,71 @@ class IntelligenceCoordinator:
             )
         except Exception as exc:
             logger.debug("intel_coordinator: memory write failed: %s", exc)
+
+    # ── Proactive agent alerts ───────────────────────────────────────────────
+
+    async def _maybe_proactive_alert(
+        self,
+        db,
+        device_id:  str,
+        tenant_id:  str,
+        snapshot:   dict,
+        device,
+    ) -> None:
+        """
+        Push a proactive RECOMMEND alert via WebSocket when:
+          - health score drops below PROACTIVE_HEALTH_THRESHOLD, OR
+          - degradation rate exceeds PROACTIVE_DEGRADATION_RATE pts/hr
+
+        Cooldown: at most one proactive alert per device per 30 minutes.
+        The alert tells the frontend to trigger a RECOMMEND chat flow.
+        """
+        now        = time.monotonic()
+        last_alert = self._last_proactive.get(device_id, 0.0)
+        if now - last_alert < PROACTIVE_COOLDOWN_S:
+            return
+
+        health      = snapshot.get("health_score", 100.0)
+        degradation = snapshot.get("degradation_rate", 0.0)
+        status      = snapshot.get("status", "HEALTHY")
+
+        # Only alert on meaningful degradation
+        health_breach = health < PROACTIVE_HEALTH_THRESHOLD
+        rate_breach   = degradation > PROACTIVE_DEGRADATION_RATE
+
+        if not (health_breach or rate_breach):
+            return
+
+        device_name = device.name if device else device_id[:8]
+        reason = []
+        if health_breach:
+            reason.append(f"health={health:.0f}")
+        if rate_breach:
+            reason.append(f"dropping {degradation:.1f}pts/hr")
+
+        alert_msg = (
+            f"{device_name} needs attention — {', '.join(reason)}. "
+            f"Run a full diagnosis and recommend actions."
+        )
+
+        try:
+            from app.core.websocket_manager import manager as _ws_manager
+            await _ws_manager.broadcast_json(str(device_id), {
+                "type":        "proactive_alert",
+                "device_id":   device_id,
+                "device_name": device_name,
+                "health":      health,
+                "status":      status,
+                "reason":      ", ".join(reason),
+                "suggest_prompt": alert_msg,
+            })
+            self._last_proactive[device_id] = now
+            logger.info(
+                "proactive_alert device=%s health=%.0f degradation=%.1f",
+                device_id[:8], health, degradation,
+            )
+        except Exception as exc:
+            logger.debug("proactive_alert broadcast failed: %s", exc)
 
     # ── Snapshot read API ─────────────────────────────────────────────────────
 
