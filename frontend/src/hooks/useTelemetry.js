@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { TelemetrySocket } from "../services/websocket.js";
-import { telemetryApi } from "../services/api.js";
+import { telemetryApi, getApiToken } from "../services/api.js";
 
 const MAX_HISTORY       = 50;
 const FLUSH_INTERVAL_MS = 250;
@@ -364,9 +364,10 @@ export function useDashboardPreload(dashboardId) {
     setError(null);
 
     import("../services/api.js").then(({ API_BASE }) => {
-      const token = localStorage.getItem("access_token") || "";
+      const token = getApiToken() || "";
       fetch(`${API_BASE}/user-dashboards/${dashboardId}/preload`, {
-        headers: { Authorization: `Bearer ${token}` },
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
         .then(r => r.ok ? r.json() : Promise.reject(r.status))
         .then(data => {

@@ -13,7 +13,7 @@ Dependencies:
   require_tenant_member   → TENANT_ADMIN or TENANT_USER
   require_device_access   → all roles, but CUSTOMER_USER filtered to their devices
 """
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -33,14 +33,15 @@ ROLE_CUSTOMER_USER = "CUSTOMER_USER"
 TENANT_ROLES = {ROLE_TENANT_ADMIN, ROLE_TENANT_USER}
 
 
-def _resolve_user(credentials: HTTPAuthorizationCredentials, db: Session) -> User:
-    if not credentials:
+def _resolve_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials], db: Session) -> User:
+    token = (credentials.credentials if credentials else None) or request.cookies.get("access_token")
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    payload = decode_token(credentials.credentials)
+    payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -58,17 +59,19 @@ def _resolve_user(credentials: HTTPAuthorizationCredentials, db: Session) -> Use
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> User:
-    return _resolve_user(credentials, db)
+    return _resolve_user(request, credentials, db)
 
 
 def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     db: Session = Depends(get_db),
 ) -> str:
-    return str(_resolve_user(credentials, db).id)
+    return str(_resolve_user(request, credentials, db).id)
 
 
 def require_admin(

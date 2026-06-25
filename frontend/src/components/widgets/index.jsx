@@ -4,7 +4,7 @@
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../services/api.js";
+import { telemetryApi, intelligenceApi, widgetApi, API_BASE, getApiToken } from "../../services/api.js";
 // useTelemSlice: subscribes to exactly ONE key — prevents unrelated renders
 import { useTelemSlice } from "../../hooks/useTelemetry.js";
 import PumpTwinWidget from "./PumpTwinWidget.jsx";
@@ -2130,11 +2130,10 @@ export function TrendIndicatorWidget({ config, deviceId, liveTelem, intelligence
   useEffect(() => {
     if (trendFromIntel || !deviceId || !key) return; // already have it
     setLoading(true);
-    const token = localStorage.getItem("access_token") || "";
-    let base = "/api/v1";
-    import("../../services/api.js").then(({ API_BASE }) => { base = API_BASE; }).catch(() => {});
-    fetch(`${base}/intelligence/trend/${deviceId}/${key}?minutes=30`, {
-      headers: { Authorization: `Bearer ${token}` },
+    const token = getApiToken() || "";
+    fetch(`${API_BASE}/intelligence/trend/${deviceId}/${key}?minutes=30`, {
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (d) setTrendFetched(d); })

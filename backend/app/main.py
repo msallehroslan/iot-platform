@@ -97,6 +97,10 @@ async def lifespan(app: FastAPI):
                 from datetime import datetime as _dt, timezone as _tz, timedelta
                 cutoff = _dt.now(_tz.utc) - timedelta(hours=2)
                 db.query(IngestMetric).filter(IngestMetric.ts < cutoff).delete(synchronize_session=False)
+                from app.models.models import RefreshToken, PasswordReset
+                now = _dt.now(_tz.utc)
+                db.query(RefreshToken).filter(RefreshToken.expires_at < now).delete(synchronize_session=False)
+                db.query(PasswordReset).filter(PasswordReset.expires_at < now).delete(synchronize_session=False)
                 db.commit()
             except Exception as exc:
                 logger.error("Telemetry purge failed: %s", exc)

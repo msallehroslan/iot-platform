@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS:   int = 7
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     BASE_URL: str = ""
+    # Set ENVIRONMENT=production to harden certain endpoints (seed-demo, etc.)
+    ENVIRONMENT: str = "development"
 
     # ── Phase 4: Redis ────────────────────────────────────────────────────────
     # Set REDIS_URL to enable:
@@ -28,6 +30,15 @@ class Settings(BaseSettings):
     DEFAULT_TELEMETRY_RATE:    int = 1000   # max ingest events/min per tenant
     TELEMETRY_RETENTION_DAYS:  int = 90
 
+    # ── Email (password reset) ────────────────────────────────────────────────
+    # Set SMTP_HOST to enable the /auth/forgot-password endpoint.
+    # Without this, the endpoint returns 501 to prevent silent data exposure.
+    SMTP_HOST:     Optional[str] = None
+    SMTP_PORT:     int           = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM:     str           = "noreply@example.com"
+
     # ── MQTT ──────────────────────────────────────────────────────────────────
     MQTT_ENABLED:     bool  = True
     MQTT_BROKER_HOST: str   = "broker.hivemq.com"
@@ -38,7 +49,10 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        origins = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        if self.ENVIRONMENT == "production" and "*" in origins:
+            raise ValueError("Wildcard CORS origin (*) is not allowed in production")
+        return origins
 
     @property
     def redis_enabled(self) -> bool:

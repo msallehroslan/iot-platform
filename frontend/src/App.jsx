@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi, API_BASE } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi, API_BASE, setApiToken, clearApiToken } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -2169,8 +2169,7 @@ function LoginPage({ onLogin }) {
         await authApi.register({ email, password: pw, first_name: fname, last_name: lname });
         d = await authApi.login(email, pw);
       }
-      localStorage.setItem("access_token", d.access_token);
-      if (d.refresh_token) localStorage.setItem("refresh_token", d.refresh_token);
+      setApiToken(d.access_token);
       localStorage.setItem("user", JSON.stringify(d.user));
       onLogin(d.user);
     } catch(e) { setError(e.message); }
@@ -2998,7 +2997,8 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
 
 export default function App() {
   const [user,       setUser]       = useState(() => { try { return JSON.parse(localStorage.getItem("user")); } catch { return null; } });
-  const [authed,     setAuthed]     = useState(() => !!localStorage.getItem("access_token"));
+  const [authed,     setAuthed]     = useState(false);
+  const [authLoading, setAuthLoading] = useState(() => !!localStorage.getItem("user"));
   const [page,       setPage]       = useState("overview");
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -3006,6 +3006,32 @@ export default function App() {
   const [toast,      setToast]      = useState(null);
   const [alarmCount, setAlarmCount] = useState(0);
   const [dashDevice, setDashDevice] = useState(null);  // device open in device dashboard
+
+  // Silent token restore on page reload — uses HTTP-only refresh_token cookie.
+  useEffect(() => {
+    if (!authLoading) return;
+    fetch(`${API_BASE}/auth/refresh`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        if (d?.access_token) {
+          setApiToken(d.access_token);
+          setAuthed(true);
+        } else {
+          localStorage.removeItem("user");
+          setUser(null);
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem("user");
+        setUser(null);
+      })
+      .finally(() => setAuthLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for map pin "Open Dashboard" clicks — dispatched by Leaflet popup
   useEffect(() => {
@@ -3050,9 +3076,9 @@ export default function App() {
 
   const handleLogout = useCallback(async () => {
     try {
-      const refreshToken = localStorage.getItem("refresh_token");
-      if (refreshToken) await authApi.logout(refreshToken);
+      await authApi.logout(null);
     } catch (_) {}
+    clearApiToken();
     localStorage.clear();
     setUser(null); setAuthed(false); setPage("overview");
   }, []);
@@ -3082,6 +3108,11 @@ export default function App() {
   // Stable toast dismiss
   const handleDismissToast = useCallback(() => setToast(null), []);
 
+  if (authLoading) return (
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", background: "#f8fafc" }}>
+      <div style={{ fontSize: 14, color: "#64748b" }}>Restoring session…</div>
+    </div>
+  );
   if (!authed) return <LoginPage onLogin={handleLogin} />;
 
   const pageTitle = (page === "device-dashboards" && dashDevice) ? dashDevice.name : PAGE_TITLES[page] || page;

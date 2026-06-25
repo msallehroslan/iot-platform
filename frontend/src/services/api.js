@@ -11,8 +11,15 @@ const BASE_URL =
 export const API_BASE = `${BASE_URL}/api/v1`;
 export const WS_BASE  = BASE_URL.replace(/^http/, "ws");
 
+// In-memory token — never written to localStorage, XSS-safe.
+// Populated from login response; restored via silent cookie-based refresh on reload.
+let _memToken = null;
+export function setApiToken(t)  { _memToken = t; }
+export function clearApiToken() { _memToken = null; }
+export function getApiToken()   { return _memToken; }
+
 function getToken() {
-  return localStorage.getItem("access_token");
+  return _memToken;
 }
 
 export async function apiFetch(path, opts = {}) {
@@ -20,9 +27,10 @@ export async function apiFetch(path, opts = {}) {
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...opts, headers, credentials: "include" });
 
   if (res.status === 401) {
+    clearApiToken();
     localStorage.clear();
     window.location.reload();
     return;
