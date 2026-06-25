@@ -53,7 +53,7 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const [title, setTitle] = useState(editWidget?.title || "");
   const [cfg,   setCfg]   = useState(() => {
     const base = {
-      key: availableKeys[0] || "temperature",
+      key: availableKeys[0] || "",
       label: "", unit: "", color: "#3b82f6",
       min: 0, max: 100, decimals: 1,
       threshold_high: "", keys: [], content: "",
@@ -177,7 +177,8 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
               {needsKey && (
                 <div>
                   <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Telemetry Key</label>
-                  <select style={{ ...inp, cursor: "pointer" }} value={cfg.key} onChange={e => set("key", e.target.value)}>
+                  <select style={{ ...inp, cursor: "pointer" }} value={cfg.key || ""} onChange={e => set("key", e.target.value)}>
+                    <option value="">— Select key —</option>
                     {availableKeys.map(k => <option key={k}>{k}</option>)}
                   </select>
                 </div>
