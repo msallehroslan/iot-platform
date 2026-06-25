@@ -106,8 +106,7 @@ def provision_device(body: ProvisionRequest, request: Request, db: Session = Dep
         if fail_row:
             fail_row.request_count += 1
         else:
-            from datetime import datetime as _dt2, timezone as _tz2
-            db.add(RateLimit(token=ip_token, request_count=1, window_start=_dt2.now(_tz2.utc)))
+            db.add(RateLimit(token=ip_token, request_count=1, window_start=_dt.now(_tz.utc)))
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid provisioning key")
 

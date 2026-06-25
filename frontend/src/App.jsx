@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import DashboardPage from "./pages/DashboardPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
-import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi, API_BASE, setApiToken, clearApiToken } from "./services/api.js";
+import { authApi, deviceApi, telemetryApi, alarmApi, statsApi, provisioningApi, userApi, customerApi, thresholdApi, rpcApi, widgetTemplateApi, metricsApi, apiKeysApi, systemApi, intelligenceApi, API_BASE, setApiToken, clearApiToken, getApiToken } from "./services/api.js";
 import { useDeviceTelemetry } from "./hooks/useTelemetry.js";
 import { TelemetrySocket } from "./services/websocket.js";
 
@@ -2399,7 +2399,8 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
       const [devRes, rulesRes] = await Promise.allSettled([
         deviceApi.list({ limit: 20 }),
         fetch(API_BASE + "/threshold-rules/", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` }
+          credentials: "include",
+          headers: { Authorization: `Bearer ${getApiToken() || ""}` }
         }).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
 
