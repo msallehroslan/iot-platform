@@ -70,6 +70,18 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   });
   const set = (k, v) => setCfg(c => ({ ...c, [k]: v }));
 
+  // When real keys finish loading and replace the fallback list, sync cfg.key
+  // so the select doesn't show blank (race: modal opened before keys API returned)
+  useEffect(() => {
+    if (!availableKeys.length) return;
+    setCfg(c => ({
+      ...c,
+      key:  c.key && availableKeys.includes(c.key) ? c.key : availableKeys[0],
+      keys: (c.keys || []).length ? c.keys.filter(k => availableKeys.includes(k)) : c.keys,
+    }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableKeys]);
+
   const needsKey      = ![
     "alarm_list","markdown","entity_table","html_card","pie_chart",
     "rpc_button","rpc_toggle","rpc_input","device_summary","map","multi_axis_chart",
