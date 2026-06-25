@@ -9,7 +9,7 @@ POST /auth/forgot-password — DB-backed reset token (single-use, 30min TTL)
 POST /auth/reset-password  — consume reset token, set new password
 POST /auth/seed-demo       — create demo account
 """
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
@@ -203,7 +203,7 @@ def login(credentials: LoginRequest, request: Request, response: Response, db: S
 
 
 @router.post("/refresh")
-def refresh_token(request: Request, response: Response, body: Optional[RefreshRequest] = None, db: Session = Depends(get_db)):
+def refresh_token(request: Request, response: Response, body: Optional[RefreshRequest] = Body(None), db: Session = Depends(get_db)):
     """
     Token rotation — accepts refresh token from body OR HTTP-only cookie.
       1. Validate JWT signature + type
@@ -253,7 +253,7 @@ def refresh_token(request: Request, response: Response, body: Optional[RefreshRe
 
 
 @router.post("/logout")
-def logout(request: Request, response: Response, body: Optional[LogoutRequest] = None, db: Session = Depends(get_db)):
+def logout(request: Request, response: Response, body: Optional[LogoutRequest] = Body(None), db: Session = Depends(get_db)):
     """Revoke the supplied refresh token (body or HTTP-only cookie). Clears auth cookies."""
     raw = (body.refresh_token if body else None) or request.cookies.get("refresh_token")
     if raw:
