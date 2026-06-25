@@ -21,7 +21,7 @@
  *     "ts": "...", "batched": true }
  */
 
-import { WS_BASE, telemetryApi } from "./api.js";
+import { WS_BASE, telemetryApi, getApiToken } from "./api.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PING_INTERVAL_MS    = 25_000;
@@ -196,7 +196,7 @@ function _connect(deviceId) {
   if (!state.subscribers.length) return;
   if (state.ws && state.ws.readyState <= WebSocket.OPEN) return;
 
-  const token = typeof localStorage !== "undefined" ? localStorage.getItem("access_token") : "";
+  const token = getApiToken() || "";
   const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
   const url = `${WS_BASE}/api/v1/ws/telemetry/${deviceId}${tokenParam}`;
 

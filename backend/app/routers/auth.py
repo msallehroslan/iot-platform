@@ -9,9 +9,10 @@ POST /auth/forgot-password — DB-backed reset token (single-use, 30min TTL)
 POST /auth/reset-password  — consume reset token, set new password
 POST /auth/seed-demo       — create demo account
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from typing import Optional
 import uuid
 import secrets
 import logging
@@ -46,11 +47,11 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 class LogoutRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(credentials: LoginRequest, request: Request, db: Session = Depends(get_db)):
+def login(credentials: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     from app.models.models import RateLimit
     import hashlib
 
@@ -179,13 +180,22 @@ def login(credentials: LoginRequest, request: Request, db: Session = Depends(get
 
     payload = {"sub": str(user.id), "email": user.email, "role": user.role}
     raw_refresh = create_refresh_token(payload)
+    access_token = create_access_token(payload)
 
     # Persist refresh token to DB
     _store_refresh_token(db, user.id, raw_refresh)
     db.commit()
 
+    is_secure = settings.ENVIRONMENT == "production"
+    response.set_cookie("access_token", access_token,
+        httponly=True, secure=is_secure, samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, path="/")
+    response.set_cookie("refresh_token", raw_refresh,
+        httponly=True, secure=is_secure, samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400, path="/api/v1/auth")
+
     return {
-        "access_token":  create_access_token(payload),
+        "access_token":  access_token,
         "refresh_token": raw_refresh,
         "token_type": "bearer",
         "user": user,
@@ -193,9 +203,9 @@ def login(credentials: LoginRequest, request: Request, db: Session = Depends(get
 
 
 @router.post("/refresh")
-def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
+def refresh_token(request: Request, response: Response, body: Optional[RefreshRequest] = None, db: Session = Depends(get_db)):
     """
-    Token rotation:
+    Token rotation — accepts refresh token from body OR HTTP-only cookie.
       1. Validate JWT signature + type
       2. Verify token exists in DB, not revoked, not expired
       3. Revoke old token
@@ -203,13 +213,17 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
       5. Store new refresh token in DB
     A reused (already-revoked) token triggers full session revocation.
     """
+    raw = (body.refresh_token if body else None) or request.cookies.get("refresh_token")
+    if not raw:
+        raise HTTPException(status_code=401, detail="Refresh token required")
+
     # Step 1: validate JWT signature
-    payload = decode_token(body.refresh_token)
+    payload = decode_token(raw)
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
     # Step 2+3: validate DB record + revoke old token
-    row = _validate_refresh_token(db, body.refresh_token)
+    row = _validate_refresh_token(db, raw)
     row.revoked = True
 
     # Step 4+5: issue new token pair
@@ -219,21 +233,34 @@ def refresh_token(body: RefreshRequest, db: Session = Depends(get_db)):
         "role":  payload.get("role", ""),
     }
     new_refresh = create_refresh_token(new_payload)
+    new_access   = create_access_token(new_payload)
     _store_refresh_token(db, row.user_id, new_refresh)
     db.commit()
 
+    is_secure = settings.ENVIRONMENT == "production"
+    response.set_cookie("access_token", new_access,
+        httponly=True, secure=is_secure, samesite="lax",
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, path="/")
+    response.set_cookie("refresh_token", new_refresh,
+        httponly=True, secure=is_secure, samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400, path="/api/v1/auth")
+
     return {
-        "access_token":  create_access_token(new_payload),
+        "access_token":  new_access,
         "refresh_token": new_refresh,
         "token_type": "bearer",
     }
 
 
 @router.post("/logout")
-def logout(body: LogoutRequest, db: Session = Depends(get_db)):
-    """Revoke the supplied refresh token. Silent success even if token not found."""
-    _revoke_refresh_token(db, body.refresh_token)
+def logout(request: Request, response: Response, body: Optional[LogoutRequest] = None, db: Session = Depends(get_db)):
+    """Revoke the supplied refresh token (body or HTTP-only cookie). Clears auth cookies."""
+    raw = (body.refresh_token if body else None) or request.cookies.get("refresh_token")
+    if raw:
+        _revoke_refresh_token(db, raw)
     db.commit()
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/api/v1/auth")
     return {"message": "Logged out successfully"}
 
 
@@ -241,9 +268,14 @@ def logout(body: LogoutRequest, db: Session = Depends(get_db)):
 def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
     Generate a DB-backed reset token (single-use, 30-minute TTL).
-    Survives server restarts. Any prior unused tokens for this email are
-    invalidated to prevent token accumulation.
+    Requires SMTP_HOST to be configured — returns 501 otherwise.
     """
+    if not settings.SMTP_HOST:
+        raise HTTPException(
+            status_code=501,
+            detail="Password reset is not available — email delivery is not configured on this server."
+        )
+
     user = db.query(User).filter(User.email == body.email).first()
     # Always return 200 — never leak whether email exists
     if user:
@@ -262,9 +294,24 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
             expires_at=expires_at,
         ))
         db.commit()
-        # Email integration not yet configured — token is only written to server logs.
-        # Wire up an SMTP/SendGrid client here before enabling password reset in production.
-        logger.warning("PASSWORD RESET TOKEN (email not sent) — user=%s token=%s", body.email, token)
+
+        # Send reset email via SMTP
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            reset_link = f"{settings.BASE_URL}/reset-password?token={token}" if settings.BASE_URL else f"token={token}"
+            msg = MIMEText(f"Click to reset your password:\n\n{reset_link}\n\nExpires in {_RESET_TOKEN_TTL_MINUTES} minutes.")
+            msg["Subject"] = "Password Reset Request"
+            msg["From"]    = settings.SMTP_FROM
+            msg["To"]      = body.email
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as srv:
+                srv.starttls()
+                if settings.SMTP_USERNAME:
+                    srv.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD or "")
+                srv.send_message(msg)
+        except Exception as exc:
+            logger.error("Failed to send password reset email to %s: %s", body.email, exc)
+            # Do not expose internal error — token is already committed
 
     return {"message": "If that email is registered, a reset link has been sent."}
 

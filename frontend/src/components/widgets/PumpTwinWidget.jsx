@@ -143,6 +143,16 @@ function diagnoseFaults(
   if (isBad(nde) && isBad(deP) && !isBad(deM) && !isBad(pp))
     faults.push({ component: "NDE + DE pump", message: "Motor NDE and pump bearing elevated — check shaft straightness and bearing preload.", severity: nde === "CRITICAL" || deP === "CRITICAL" ? "CRITICAL" : "WARNING" });
 
+  // ── NDE + two-point combinations ─────────────────────────────────────────
+  if (isBad(nde) && isBad(deM) && isBad(pp) && !isBad(deP))
+    faults.push({ component: "NDE + DE motor + PP", message: "Both motor ends and pump end elevated — severe rotor unbalance or resonance across the drivetrain. Stop pump for full inspection.", severity: "CRITICAL" });
+
+  if (isBad(nde) && isBad(deP) && isBad(pp) && !isBad(deM))
+    faults.push({ component: "NDE + DE pump + PP", message: "Motor NDE, pump bearing, and pump end all elevated — possible bent shaft or severe impeller imbalance. Stop pump immediately.", severity: "CRITICAL" });
+
+  if (isBad(nde) && isBad(deM) && isBad(deP) && !isBad(pp))
+    faults.push({ component: "NDE + DE motor + DE pump", message: "All three bearing points elevated — shaft-wide misalignment or foundation resonance. Perform alignment check before restarting.", severity: nde === "CRITICAL" || deM === "CRITICAL" || deP === "CRITICAL" ? "CRITICAL" : "WARNING" });
+
   // ── Combined patterns — shaft / alignment ────────────────────────────────
   if (isBad(deM) && isBad(deP) && !isBad(nde) && !isBad(pp))
     faults.push({ component: "DE motor + DE pump", message: "Both DE bearings elevated — shaft misalignment between motor and pump. Re-align coupling immediately.", severity: deM === "CRITICAL" || deP === "CRITICAL" ? "CRITICAL" : "WARNING" });
@@ -504,7 +514,7 @@ function Tab({ label, active, onClick, badgeCount }) {
   );
 }
 
-function HealthArc({ score, color, size = 80 }) {
+function HealthArc({ score, color, size = 80, label = "/100" }) {
   const r = 28, cx = size / 2, cy = size / 2 + 4;
   const sa = -210, ea = 30;
   const toRad = a => a * Math.PI / 180;
@@ -519,7 +529,7 @@ function HealthArc({ score, color, size = 80 }) {
       <path d={bg}   fill="none" stroke="#e2e8f0" strokeWidth="6" strokeLinecap="round" />
       {score != null && score > 0 && <path d={fill} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" />}
       <text x={cx} y={cy + 2}  textAnchor="middle" fontSize="13" fontWeight="700" fill={score != null ? color : "#94a3b8"}>{score != null ? Math.round(score) : "?"}</text>
-      <text x={cx} y={cy + 13} textAnchor="middle" fontSize="7"  fill="#94a3b8">/100</text>
+      <text x={cx} y={cy + 13} textAnchor="middle" fontSize="7"  fill="#94a3b8">{label}</text>
     </svg>
   );
 }
@@ -707,7 +717,7 @@ export default function PumpTwinWidget({
   const headerColor = statusColor(overallStatus);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "#fff", fontFamily: "system-ui,sans-serif" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", background: "transparent", fontFamily: "system-ui,sans-serif" }}>
 
       {/* Header */}
       <div style={{ padding: "10px 14px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "space-between", background: "linear-gradient(180deg,#f8fafc,#fff)", flexShrink: 0 }}>
@@ -898,7 +908,7 @@ export default function PumpTwinWidget({
         {activeTab === "efficiency" && (
           <div style={{ padding: "8px 10px", height: "100%", overflowY: "auto" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-              <HealthArc score={liveEff} color={efficiencyColor(liveEff)} size={80} />
+              <HealthArc score={liveEff} color={efficiencyColor(liveEff)} size={80} label="%" />
               <div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: efficiencyColor(liveEff), lineHeight: 1.1 }}>{liveEff != null ? `${liveEff.toFixed(1)}%` : "—"}</div>
                 <div style={{ fontSize: 10, color: "#64748b" }}>Thermodynamic efficiency</div>

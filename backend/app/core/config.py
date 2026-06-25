@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     DEFAULT_TELEMETRY_RATE:    int = 1000   # max ingest events/min per tenant
     TELEMETRY_RETENTION_DAYS:  int = 90
 
+    # ── Email (password reset) ────────────────────────────────────────────────
+    # Set SMTP_HOST to enable the /auth/forgot-password endpoint.
+    # Without this, the endpoint returns 501 to prevent silent data exposure.
+    SMTP_HOST:     Optional[str] = None
+    SMTP_PORT:     int           = 587
+    SMTP_USERNAME: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM:     str           = "noreply@example.com"
+
     # ── MQTT ──────────────────────────────────────────────────────────────────
     MQTT_ENABLED:     bool  = True
     MQTT_BROKER_HOST: str   = "broker.hivemq.com"

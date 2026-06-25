@@ -5,7 +5,7 @@ IMPORTANT: Static routes (/provisioning-key, /provision) must be defined
 BEFORE the dynamic route (/{device_id}) to prevent FastAPI from matching
 the literal string as a UUID path parameter.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
@@ -75,15 +75,40 @@ def get_provisioning_key(
 
 
 @router.post("/provision", response_model=ProvisionResponse, status_code=201)
-def provision_device(body: ProvisionRequest, db: Session = Depends(get_db)):
+def provision_device(body: ProvisionRequest, request: Request, db: Session = Depends(get_db)):
     """No auth — device self-registration via provision key."""
+    import hashlib as _hashlib
+    from datetime import datetime as _dt, timezone as _tz, timedelta
+    from app.models.models import RateLimit
+
+    client_ip = request.client.host if request.client else "unknown"
+    ip_token = f"provision_fail:{_hashlib.sha256(client_ip.encode()).hexdigest()[:32]}"
+    window_start = _dt.now(_tz.utc) - timedelta(minutes=15)
+    fail_row = db.query(RateLimit).filter(
+        RateLimit.token == ip_token,
+        RateLimit.window_start >= window_start,
+    ).first()
+    if fail_row and fail_row.request_count >= 10:
+        raise HTTPException(status_code=429, detail="Too many provisioning attempts. Try again in 15 minutes.")
+
     if not body.provision_key or not body.provision_key.strip():
+        if fail_row:
+            fail_row.request_count += 1
+        else:
+            db.add(RateLimit(token=ip_token, request_count=1, window_start=_dt.now(_tz.utc)))
+        db.commit()
         raise HTTPException(status_code=401, detail="Provision key is required")
     if not body.device_name or not body.device_name.strip():
         raise HTTPException(status_code=400, detail="device_name is required")
 
     tenant = db.query(Tenant).filter(Tenant.provisioning_key == body.provision_key.strip()).first()
     if not tenant:
+        if fail_row:
+            fail_row.request_count += 1
+        else:
+            from datetime import datetime as _dt2, timezone as _tz2
+            db.add(RateLimit(token=ip_token, request_count=1, window_start=_dt2.now(_tz2.utc)))
+        db.commit()
         raise HTTPException(status_code=401, detail="Invalid provisioning key")
 
     existing = db.query(Device).filter(
@@ -161,7 +186,13 @@ def update_device(
     current_user: User = Depends(require_admin),
 ):
     device = assert_device_access(_fetch_device(device_id, db), current_user)
-    for field, value in device_in.model_dump(exclude_unset=True).items():
+    updates = device_in.model_dump(exclude_unset=True)
+    if "customer_id" in updates and updates["customer_id"] is not None:
+        from app.models.models import Customer
+        customer = db.query(Customer).filter(Customer.id == updates["customer_id"]).first()
+        if not customer or customer.tenant_id != current_user.tenant_id:
+            raise HTTPException(status_code=403, detail="Customer does not belong to your tenant")
+    for field, value in updates.items():
         setattr(device, field, value)
     db.commit()
     db.refresh(device)

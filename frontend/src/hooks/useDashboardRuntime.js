@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { TelemetrySocket } from "../services/websocket.js";
-import { alarmApi, telemetryApi } from "../services/api.js";
+import { alarmApi, telemetryApi, getApiToken } from "../services/api.js";
 
 const FLUSH_INTERVAL_MS = 250;
 const MAX_HISTORY       = 60;
@@ -116,7 +116,7 @@ export function useDashboardRuntime(activeDash, user) {
     setPreloadError(null);
 
     const run = async () => {
-      const token = localStorage.getItem("access_token") || "";
+      const token = getApiToken() || "";
       let baseUrl = "/api/v1";
       try {
         const { API_BASE } = await import("../services/api.js");
@@ -127,7 +127,8 @@ export function useDashboardRuntime(activeDash, user) {
 
       try {
         const r = await fetch(preloadUrl, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (!r.ok) throw new Error(`preload ${r.status}`);
         const data = await r.json();
@@ -318,7 +319,7 @@ export function useDashboardRuntime(activeDash, user) {
     if (!widgetDeviceIds.length || !preloadDone) return;
 
     const refresh = async () => {
-      const token = localStorage.getItem("access_token") || "";
+      const token = getApiToken() || "";
       let base = "/api/v1";
       try {
         const { API_BASE } = await import("../services/api.js");
@@ -330,7 +331,8 @@ export function useDashboardRuntime(activeDash, user) {
         widgetDeviceIds.map(async devId => {
           try {
             const r = await fetch(`${base}/intelligence/unified/${devId}`, {
-              headers: { Authorization: `Bearer ${token}` },
+              credentials: "include",
+              headers: token ? { Authorization: `Bearer ${token}` } : {},
             });
             if (r.ok) updates[devId] = await r.json();
           } catch (_) {}
