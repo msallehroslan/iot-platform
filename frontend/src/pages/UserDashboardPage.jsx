@@ -508,30 +508,48 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
                   <div style={{ padding: "8px 12px", background: "#f0f9ff", borderRadius: 8, fontSize: 11, color: "#0369a1", lineHeight: 1.6 }}>
                     Map your sensor keys to each pump monitoring point. All fields optional — widget works with whatever sensors you have.
                   </div>
-                  {[
-                    { label: "NDE motor vibration",    key: "key_vib_nde",      placeholder: "e.g. motor_nde_velocity" },
-                    { label: "DE motor vibration",     key: "key_vib_de",       placeholder: "e.g. motor_de_velocity"  },
-                    { label: "DE pump vibration",      key: "key_vib_de_pump",  placeholder: "e.g. pump_de_velocity"   },
-                    { label: "PP pump vibration",      key: "key_vib_pp",       placeholder: "e.g. pump_nde_velocity"  },
-                    { label: "NDE motor temperature",  key: "key_temp_nde",     placeholder: "e.g. temp_nde"           },
-                    { label: "DE motor temperature",   key: "key_temp_de",      placeholder: "e.g. temp_de"            },
-                    { label: "DE pump temperature",    key: "key_temp_de_pump", placeholder: "e.g. temp_de_pump"       },
-                    { label: "Fluid inlet temp",       key: "key_temp_inlet",   placeholder: "e.g. temp_inlet"         },
-                    { label: "Fluid outlet temp",      key: "key_temp_outlet",  placeholder: "e.g. temp_outlet"        },
-                    { label: "Suction pressure",       key: "key_pressure_in",  placeholder: "e.g. pressure_in"        },
-                    { label: "Discharge pressure",     key: "key_pressure_out", placeholder: "e.g. pressure_out"       },
-                    { label: "Shaft speed (RPM)",      key: "key_speed",        placeholder: "e.g. shaft_rpm"          },
-                  ].map(({ label, key, placeholder }) => (
-                    <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
-                      <label style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{label}</label>
-                      <select style={{ ...inp, cursor: "pointer", fontSize: 12 }}
-                        value={cfg[key] || ""}
-                        onChange={e => set(key, e.target.value)}>
-                        <option value="">— not mapped —</option>
-                        {deviceKeys.map(k => <option key={k} value={k}>{k}</option>)}
-                      </select>
+                  {!selectedDeviceId ? (
+                    <div style={{ padding: "8px 12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: 12, color: "#92400e" }}>
+                      Select a device above to load its telemetry keys.
                     </div>
-                  ))}
+                  ) : keysLoading ? (
+                    <div style={{ ...inp, display: "flex", alignItems: "center", gap: 8, color: "#94a3b8" }}>
+                      <Spinner size={14} /><span style={{ fontSize: 12 }}>Loading keys…</span>
+                    </div>
+                  ) : keysError ? (
+                    <div style={{ padding: "8px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 12, color: "#dc2626" }}>
+                      {keysError}
+                    </div>
+                  ) : deviceKeys.length === 0 ? (
+                    <div style={{ padding: "8px 12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: 12, color: "#92400e" }}>
+                      No telemetry keys found for this device yet. Send data first, then re-open this modal.
+                    </div>
+                  ) : (
+                    [
+                      { label: "NDE motor vibration",    key: "key_vib_nde"      },
+                      { label: "DE motor vibration",     key: "key_vib_de"       },
+                      { label: "DE pump vibration",      key: "key_vib_de_pump"  },
+                      { label: "PP pump vibration",      key: "key_vib_pp"       },
+                      { label: "NDE motor temperature",  key: "key_temp_nde"     },
+                      { label: "DE motor temperature",   key: "key_temp_de"      },
+                      { label: "DE pump temperature",    key: "key_temp_de_pump" },
+                      { label: "Fluid inlet temp",       key: "key_temp_inlet"   },
+                      { label: "Fluid outlet temp",      key: "key_temp_outlet"  },
+                      { label: "Suction pressure",       key: "key_pressure_in"  },
+                      { label: "Discharge pressure",     key: "key_pressure_out" },
+                      { label: "Shaft speed (RPM)",      key: "key_speed"        },
+                    ].map(({ label, key }) => (
+                      <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
+                        <label style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{label}</label>
+                        <select style={{ ...inp, cursor: "pointer", fontSize: 12 }}
+                          value={cfg[key] || ""}
+                          onChange={e => set(key, e.target.value)}>
+                          <option value="">— not mapped —</option>
+                          {deviceKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                        </select>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
               {/* Unit + decimals */}
