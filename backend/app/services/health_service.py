@@ -157,6 +157,34 @@ def _predict_failure_hours(health_score: float, trend_direction: str = "stable")
     return round((health_score / 60.0) * 48.0, 1)
 
 
+def _anomaly_penalty(device_id: str, db: Session) -> float:
+    """
+    Penalty based on anomaly count in last 24h.
+    0 anomalies = 0 penalty
+    10-50       = -5
+    50-200      = -10
+    200-500     = -20
+    500+        = -30
+    """
+    from app.models.models import AnomalyScore
+    from datetime import datetime, timezone, timedelta
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    count = db.query(AnomalyScore).filter(
+        AnomalyScore.device_id == device_id,
+        AnomalyScore.is_anomaly == True,
+        AnomalyScore.ts >= since,
+    ).count()
+    if count >= 500:
+        return 30.0
+    if count >= 200:
+        return 20.0
+    if count >= 50:
+        return 10.0
+    if count >= 10:
+        return 5.0
+    return 0.0
+
+
 def score_device(db: Session, device: Device) -> DeviceHealthScore:
     """
     Compute and persist a health score for a device.
@@ -175,6 +203,9 @@ def score_device(db: Session, device: Device) -> DeviceHealthScore:
         stability * WEIGHT_STABILITY +
         freshness * WEIGHT_FRESHNESS
     )
+    # Apply anomaly penalty — high anomaly count reduces health score
+    penalty   = _anomaly_penalty(device_id, db)
+    composite = max(0.0, composite - penalty)
     composite = round(composite, 2)
 
     if composite >= 80:

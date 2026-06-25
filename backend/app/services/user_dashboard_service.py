@@ -32,6 +32,8 @@ VALID_WIDGET_TYPES = {
     "fleet_map", "trend_indicator",
     # Phase 9 — Intelligence widgets
     "anomaly_score", "baseline", "health_score",
+    # Pump Digital Twin
+    "pump_twin",
 }
 
 

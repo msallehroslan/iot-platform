@@ -16,6 +16,7 @@ Endpoints:
   PUT    /user-dashboards/{id}/widgets/{wid}       update widget
   DELETE /user-dashboards/{id}/widgets/{wid}       delete widget
   PUT    /user-dashboards/{id}/layout              bulk-save positions
+  GET    /user-dashboards/{id}/preload             batch load all widget data (BUG-02)
 """
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
@@ -117,7 +118,8 @@ def create_dashboard(
         db=db,
     )
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
-          action="user_dashboard.create", resource="user_dashboard", resource_id=str(result.get("id","")),
+          action="user_dashboard.create", resource="user_dashboard",
+          resource_id=str(result.get("id", "")),
           detail={"name": body.name}, commit=True)
     return result
 
@@ -166,10 +168,131 @@ def delete_dashboard(
 ):
     """Delete dashboard + all widgets. Blocks if it's the user's only dashboard."""
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
-          action="user_dashboard.delete", resource="user_dashboard", resource_id=str(dashboard_id))
+          action="user_dashboard.delete", resource="user_dashboard",
+          resource_id=str(dashboard_id))
     user_dashboard_service.delete_dashboard(
         dashboard_id=dashboard_id, user_id=user_id, db=db
     )
+
+
+# ── Preload endpoint — BUG-02 fix ─────────────────────────────────────────────
+# Frontend useDashboardRuntime.js calls this on every dashboard load.
+# Without it the hook gets 404, falls back to basic REST, and all widgets
+# load blank. This endpoint returns telemetry + history + alarms +
+# intelligence for every unique device on the dashboard in one request.
+
+@router.get("/{dashboard_id}/preload")
+def preload_dashboard(
+    dashboard_id: UUID,
+    db: Session = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Batch preload all widget data for a dashboard in one request.
+
+    Returns:
+        {
+            "devices": {
+                "<device_id>": {
+                    "telemetry":    { key: value, ... },
+                    "history":      { key: [{ts, value}, ...], ... },
+                    "alarms":       [...],
+                    "intelligence": { unified response }
+                }
+            }
+        }
+
+    Replaces N individual widget API calls on dashboard load.
+    Called by useDashboardRuntime.js hook before WebSocket connects.
+    """
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+
+    from app.services.data_service import (
+        get_latest_telemetry,
+        get_active_alarms,
+        get_unified_intelligence,
+        get_aggregated_telemetry,
+    )
+    from app.models.models import Device
+
+    # Fetch dashboard and verify ownership
+    dash = user_dashboard_service.get_dashboard(
+        dashboard_id=dashboard_id, user_id=user_id, db=db
+    )
+
+    # Collect unique device IDs from all widget configs
+    device_ids: set = set()
+    for widget in dash.get("widgets", []):
+        did = widget.get("config", {}).get("device_id")
+        if did:
+            device_ids.add(str(did))
+
+    if not device_ids:
+        return {"devices": {}}
+
+    # Verify devices belong to this tenant (security check)
+    allowed_ids = {
+        str(d.id)
+        for d in db.query(Device).filter(
+            Device.id.in_(list(device_ids)),
+            Device.tenant_id == current_user.tenant_id,
+        ).all()
+    }
+
+    result: dict = {}
+
+    for device_id in allowed_ids:
+        try:
+            # 1. Latest telemetry values
+            telem  = get_latest_telemetry(db, device_id)
+            values = telem.get("values", {})
+
+            # 2. Short history per numeric key — 60 raw points (1h window)
+            #    Feeds sparklines and initial chart render without waiting for WS
+            history: dict = {}
+            numeric_keys = [
+                k for k, v in values.items()
+                if isinstance(v, (int, float))
+            ]
+            for key in numeric_keys[:10]:   # cap at 10 keys for response speed
+                try:
+                    hist = get_aggregated_telemetry(
+                        db, device_id, key,
+                        hours=1, limit=60, resolution="raw",
+                    )
+                    pts = hist.get("points", [])
+                    if pts:
+                        history[key] = pts
+                except Exception:
+                    pass
+
+            # 3. Active alarms
+            alarms_data = get_active_alarms(db, device_id)
+
+            # 4. Unified intelligence — health, risk, anomalies, baseline status
+            device_obj = db.query(Device).filter(Device.id == device_id).first()
+            intel = get_unified_intelligence(db, device_id, device=device_obj)
+
+            result[device_id] = {
+                "telemetry":    values,
+                "history":      history,
+                "alarms":       alarms_data.get("alarms", []),
+                "intelligence": intel,
+            }
+
+        except Exception as exc:
+            # Non-fatal — return empty slot so other devices still load
+            _logger.warning("preload failed for device %s: %s", device_id, exc)
+            result[device_id] = {
+                "telemetry":    {},
+                "history":      {},
+                "alarms":       [],
+                "intelligence": None,
+            }
+
+    return {"devices": result}
 
 
 # ── Widget routes ─────────────────────────────────────────────────────────────

@@ -261,11 +261,26 @@ async def verify_actions(
         # Only RPC steps are verifiable via telemetry delta
         if step.tool == "send_rpc":
             params    = step.args.get("params", {})
-            # Try to resolve device_id from trace results
+            # Try to resolve device_id — three fallbacks in priority order:
+            # 1. rpc_result.device_id  (set by tool_send_rpc on success)
+            # 2. pre_state.device_id   (set by get_key_intelligence pre-read)
+            # 3. match device_name from step args against devices in trace
             device_id = (
                 trace.results.get("rpc_result", {}).get("device_id")
                 or trace.results.get("pre_state", {}).get("device_id")
             )
+            if not device_id:
+                device_name = step.args.get("device_name", "").lower()
+                devices = trace.results.get("devices", {}).get("devices", [])
+                matched = next(
+                    (d for d in devices if d.get("name", "").lower() == device_name),
+                    None,
+                ) or next(
+                    (d for d in devices if device_name in d.get("name", "").lower()),
+                    None,
+                )
+                if matched:
+                    device_id = matched.get("id")
             if device_id and params:
                 result = await verify_rpc(db, device_id, params, trace)
             else:

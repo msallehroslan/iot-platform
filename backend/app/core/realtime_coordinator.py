@@ -21,7 +21,7 @@ DELTA PAYLOAD FORMAT (new):
   {
     "type":      "telemetry",
     "device_id": "<uuid>",
-    "delta":     { "temperature": 42.1, "motor_de_velocity": 5.23 },  ← only changed keys
+    "delta":     { "temperature": 42.1, "motor_de_velocity": 5.23 },  <- only changed keys
     "ts":        "<iso>",
     "batched":   true
   }
@@ -246,7 +246,7 @@ class RealtimeCoordinator:
         Broadcast DELTA payloads — only keys that changed since last broadcast.
 
         Benefits:
-          - Reduces WS message size by 60–80% for steady-state telemetry
+          - Reduces WS message size by 60-80% for steady-state telemetry
           - Frontend still gets full state on connect (via preload)
           - History buffers already append-only so no data loss
         """
@@ -282,8 +282,8 @@ class RealtimeCoordinator:
                 await ws_manager.broadcast_json(device_id, {
                     "type":      "telemetry",
                     "device_id": device_id,
-                    "delta":     delta,     # ← new field name
-                    "values":    delta,     # ← backward-compat alias for old frontend
+                    "delta":     delta,     # new field name
+                    "values":    delta,     # backward-compat alias for old frontend
                     "ts":        snapshot_ts.get(device_id, datetime.now(timezone.utc).isoformat()),
                     "batched":   True,
                 })
@@ -307,7 +307,7 @@ class RealtimeCoordinator:
         except Exception as exc:
             logger.debug("coordinator: cache service unavailable: %s", exc)
 
-    # ── Intelligence events (patched: snapshot-first, slow-loop notify) ────────
+    # ── Intelligence events ───────────────────────────────────────────────────
 
     async def _fire_intelligence_events(
         self,
@@ -343,15 +343,14 @@ class RealtimeCoordinator:
         if not tenant_id:
             return
         try:
-            # ── Redis snapshot read (fast path) ─────────────────────────────
             anomaly_summary = None
             try:
                 from app.services.cache_service import cache as _cache
-                if _cache.enabled:
+                if _cache.enabled and _cache._client:
                     import json
-                    cached = await _cache.get(f"anomaly:{device_id}")
-                    if cached:
-                        data = json.loads(cached) if isinstance(cached, str) else cached
+                    raw = await _cache._client.get(f"iot:anomaly:{device_id}:24")
+                    if raw:
+                        data = json.loads(raw) if isinstance(raw, str) else raw
                         if data.get("anomaly_count", 0) > 0:
                             anomaly_summary = data
             except Exception:
@@ -360,11 +359,8 @@ class RealtimeCoordinator:
             if not anomaly_summary:
                 return  # No anomaly confirmed — skip memory write
 
-            anom_key = anomaly_summary.get("most_anomalous_key", "unknown")
+            anom_key   = anomaly_summary.get("most_anomalous_key", "unknown")
             anom_count = anomaly_summary.get("anomaly_count", 0)
-
-            from app.services.taat_memory_service import save_memory
-            from app.core.database import get_db_sync
 
             content = (
                 f"Anomaly detected: {anom_count} key(s) anomalous on device {device_id[:8]}. "
@@ -372,29 +368,13 @@ class RealtimeCoordinator:
                 f"Telemetry snapshot: { {k: round(v, 2) if isinstance(v, float) else v for k, v in list(values.items())[:5]} }"
             )
 
-            # Fire-and-forget DB write via thread pool
-            import asyncio
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, _write_memory_sync, tenant_id, content)
 
         except Exception as exc:
             logger.debug("coordinator: intelligence_event failed: %s", exc)
 
-
-def _write_memory_sync(tenant_id: str, content: str) -> None:
-    """Synchronous memory write — runs in executor to avoid blocking event loop."""
-    try:
-        from app.core.database import SessionLocal
-        from app.services.taat_memory_service import save_memory
-        db = SessionLocal()
-        try:
-            save_memory(db, tenant_id=tenant_id, memory_type="incident", content=content)
-            db.commit()
-        finally:
-            db.close()
-    except Exception as exc:
-        logger.debug("coordinator: _write_memory_sync failed: %s", exc)
-
+    # ── Observability ─────────────────────────────────────────────────────────
 
     def stats(self) -> dict:
         """Return current coordinator stats for /status endpoint."""
@@ -406,6 +386,29 @@ def _write_memory_sync(tenant_id: str, content: str) -> None:
             "welford_accumulators": len(self._stats),
             "flush_interval_ms":    FLUSH_INTERVAL_MS,
         }
+
+
+# ── Module-level helper (outside class) ──────────────────────────────────────
+
+def _write_memory_sync(tenant_id: str, content: str) -> None:
+    """Synchronous memory write — runs in executor to avoid blocking event loop."""
+    try:
+        from app.core.database import SessionLocal
+        from app.services.taat_memory_service import save_memory
+        from uuid import UUID as _UUID
+        db = SessionLocal()
+        try:
+            save_memory(
+                db,
+                tenant_id   = _UUID(tenant_id),
+                memory_type = "incident",
+                content     = content,
+            )
+            db.commit()
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.debug("coordinator: _write_memory_sync failed: %s", exc)
 
 
 # ── Module-level singleton ────────────────────────────────────────────────────

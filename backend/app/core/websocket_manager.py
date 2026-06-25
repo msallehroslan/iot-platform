@@ -129,31 +129,60 @@ class RedisManager:
         """
         Subscribes to a pattern channel and pushes received messages
         to local WebSocket clients. Runs for the lifetime of the process.
+
+        Reconnect logic: if the Redis connection drops, waits with
+        exponential backoff (1s → 2s → 4s → … capped at 30s) then
+        re-subscribes. Stops only when the manager is shut down.
         """
-        pubsub = self._sub.pubsub()
-        await pubsub.psubscribe(f"{self.CHANNEL_PREFIX}*")
-        logger.info("RedisManager: listening on %s*", self.CHANNEL_PREFIX)
-        async for message in pubsub.listen():
-            if message["type"] != "pmessage":
-                continue
+        backoff = 1.0
+        while True:
             try:
-                # Channel name is "device:{device_id}"
-                channel  = message["channel"]
-                device_id = channel[len(self.CHANNEL_PREFIX):]
-                sockets  = self._connections.get(device_id, set())
-                if not sockets:
-                    continue
-                msg  = message["data"]
-                dead = []
-                for ws in list(sockets):
+                # Re-create sub client on each reconnect attempt so we get
+                # a fresh connection rather than reusing a broken socket.
+                import redis.asyncio as aioredis
+                self._sub = aioredis.from_url(
+                    self._redis_url, decode_responses=True
+                )
+                pubsub = self._sub.pubsub()
+                await pubsub.psubscribe(f"{self.CHANNEL_PREFIX}*")
+                logger.info("RedisManager: listening on %s*", self.CHANNEL_PREFIX)
+                backoff = 1.0  # reset backoff on successful connect
+
+                async for message in pubsub.listen():
+                    if message["type"] != "pmessage":
+                        continue
                     try:
-                        await ws.send_text(msg)
-                    except Exception:
-                        dead.append(ws)
-                for ws in dead:
-                    sockets.discard(ws)
+                        channel   = message["channel"]
+                        device_id = channel[len(self.CHANNEL_PREFIX):]
+                        sockets   = self._connections.get(device_id, set())
+                        if not sockets:
+                            continue
+                        msg  = message["data"]
+                        dead = []
+                        for ws in list(sockets):
+                            try:
+                                await ws.send_text(msg)
+                            except Exception:
+                                dead.append(ws)
+                        for ws in dead:
+                            sockets.discard(ws)
+                    except Exception as exc:
+                        logger.warning("RedisManager listener error: %s", exc)
+
+            except asyncio.CancelledError:
+                # Shutdown requested — exit cleanly
+                logger.info("RedisManager listener cancelled")
+                return
             except Exception as exc:
-                logger.warning("RedisManager listener error: %s", exc)
+                logger.warning(
+                    "RedisManager connection lost: %s — reconnecting in %.0fs",
+                    exc, backoff,
+                )
+                try:
+                    await asyncio.sleep(backoff)
+                except asyncio.CancelledError:
+                    return
+                backoff = min(backoff * 2, 30.0)
 
     def connect(self, device_id: str, ws: WebSocket) -> None:
         device_id = str(device_id)

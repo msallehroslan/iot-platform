@@ -94,6 +94,9 @@ export function useDashboardRuntime(activeDash, user) {
   const pendingTelemRef   = useRef({});
   const pendingHistoryRef = useRef({});
   const preloadedDashRef  = useRef(null);
+  // Remember last known non-empty telem per device
+  // Prevents value resetting to 0 on WS reconnect or re-render
+  const lastTelemRef = useRef({});
 
   const widgetDeviceIds = activeDash?.widgets
     ? [...new Set(
@@ -152,6 +155,13 @@ export function useDashboardRuntime(activeDash, user) {
             newIntell[devId] = devData.intelligence;
         });
 
+        // Update lastTelemRef before setting state
+        Object.entries(newTelem).forEach(([devId, vals]) => {
+          lastTelemRef.current[devId] = {
+            ...(lastTelemRef.current[devId] || {}),
+            ...vals,
+          };
+        });
         setLiveTelem(prev   => ({ ...prev, ...newTelem   }));
         setHistoryData(prev => ({ ...prev, ...newHistory }));
         setAlarmsData(prev  => ({ ...prev, ...newAlarms  }));
@@ -223,10 +233,34 @@ export function useDashboardRuntime(activeDash, user) {
       pendingHistoryRef.current = {};
 
       if (hasTelem) {
+        // Update lastTelemRef with latest non-zero values
+        Object.entries(pt).forEach(([devId, vals]) => {
+          const filtered = {};
+          Object.entries(vals).forEach(([k, v]) => {
+            // Only remember non-zero/non-null values
+            if (v !== null && v !== undefined && v !== 0) {
+              filtered[k] = v;
+            } else if (v === 0 && lastTelemRef.current[devId]?.[k] === undefined) {
+              // Accept 0 only if we've never seen this key before
+              filtered[k] = v;
+            }
+          });
+          if (Object.keys(filtered).length) {
+            lastTelemRef.current[devId] = {
+              ...(lastTelemRef.current[devId] || {}),
+              ...filtered,
+            };
+          }
+        });
         setLiveTelem(prev => {
           const next = { ...prev };
           Object.entries(pt).forEach(([devId, vals]) => {
-            next[devId] = { ...(prev[devId] || {}), ...vals };
+            // Merge with last known values — never lose a value on reconnect
+            next[devId] = {
+              ...(lastTelemRef.current[devId] || {}),
+              ...(prev[devId] || {}),
+              ...vals,
+            };
           });
           return next;
         });
@@ -275,7 +309,10 @@ export function useDashboardRuntime(activeDash, user) {
     };
   }, [widgetDeviceIds.join(",")]);
 
-  // ── Intelligence refresh (60s cadence) ────────────────────────────────────
+  // ── Intelligence refresh (immediate on load + 60s cadence) ─────────────────
+  // BUG-13 fix: Without this, health_score / anomaly_score / taat_insight widgets
+  // show blank for up to 60s on first load if preload returned no intelligence.
+  // Fix: fire refresh() immediately when preloadDone becomes true, then repeat every 60s.
   const intellTimerRef = useRef(null);
   useEffect(() => {
     if (!widgetDeviceIds.length || !preloadDone) return;
@@ -304,6 +341,14 @@ export function useDashboardRuntime(activeDash, user) {
       }
     };
 
+    // BUG-13: Fire immediately on load so intelligence widgets don't wait 60s.
+    // Check if any device is missing intelligence data before fetching.
+    const missingIntel = widgetDeviceIds.some(id => !intellData[id]);
+    if (missingIntel) {
+      refresh();
+    }
+
+    // Then refresh every 60s to keep intelligence current
     intellTimerRef.current = setInterval(refresh, 60_000);
     return () => clearInterval(intellTimerRef.current);
   }, [widgetDeviceIds.join(","), preloadDone]);
@@ -333,7 +378,13 @@ async function _fallbackFetch(deviceIds, setLiveTelem, setHistoryData, setAlarms
           else if (typeof r.value === "string" && r.value !== "") values[r.key] = r.value;
         });
         if (Object.keys(values).length) {
-          setLiveTelem(prev => ({ ...prev, [deviceId]: { ...(prev[deviceId] || {}), ...values } }));
+          setLiveTelem(prev => ({
+            ...prev,
+            [deviceId]: {
+              ...(prev[deviceId] || {}),
+              ...values,
+            }
+          }));
         }
       }
     } catch (_) {}

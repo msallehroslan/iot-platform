@@ -256,6 +256,21 @@ async def tool_write_memory(
         return _error("write_memory", str(e))
 
 
+
+async def tool_get_telemetry_history(
+    db: Session, current_user,
+    device_id: str, key: str,
+    hours: float = 48, resolution: str = "1h", **_
+) -> ToolResult:
+    if not device_id or not key:
+        return _error("get_telemetry_history", "device_id and key required")
+    try:
+        from app.services.taat_tools import tool_get_telemetry_history as _fn
+        return _result("get_telemetry_history", _fn(db, device_id, key, hours=hours, resolution=resolution))
+    except Exception as e:
+        return _error("get_telemetry_history", str(e))
+
+
 async def tool_get_pump_analysis(
     db: Session, current_user,
     device_id: str, **_
@@ -288,6 +303,7 @@ REGISTRY: Dict[str, Callable] = {
     "get_memory":            tool_get_memory,
     "write_memory":          tool_write_memory,
     "get_pump_analysis":     tool_get_pump_analysis,
+    "get_telemetry_history": tool_get_telemetry_history,
 }
 
 

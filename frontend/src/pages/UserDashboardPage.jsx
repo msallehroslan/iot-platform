@@ -131,6 +131,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
   const needsKey      = ![
     "alarm_list","markdown","entity_table","html_card","pie_chart",
     "rpc_button","rpc_toggle","rpc_input","device_summary","map","multi_axis_chart",
+    "pump_twin",
   ].includes(type);
   const isStatusLight = type === "status_light";
   const needsMultiKey  = ["pie_chart","multi_axis_chart"].includes(type);
@@ -139,6 +140,7 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
   const isRpcToggle    = type === "rpc_toggle";
   const isRpcInput     = type === "rpc_input";
   const isMap          = type === "map";
+  const isPumpTwin       = type === "pump_twin";
   const needsDevice   = !["markdown"].includes(type);  // everything except pure markdown needs a device
 
   // ── Validation ────────────────────────────────────────────────────────────
@@ -501,6 +503,37 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
                 </div>
               )}
 
+              {isPumpTwin && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ padding: "8px 12px", background: "#f0f9ff", borderRadius: 8, fontSize: 11, color: "#0369a1", lineHeight: 1.6 }}>
+                    Map your sensor keys to each pump monitoring point. All fields optional — widget works with whatever sensors you have.
+                  </div>
+                  {[
+                    { label: "NDE motor vibration",    key: "key_vib_nde",      placeholder: "e.g. motor_nde_velocity" },
+                    { label: "DE motor vibration",     key: "key_vib_de",       placeholder: "e.g. motor_de_velocity"  },
+                    { label: "DE pump vibration",      key: "key_vib_de_pump",  placeholder: "e.g. pump_de_velocity"   },
+                    { label: "PP pump vibration",      key: "key_vib_pp",       placeholder: "e.g. pump_nde_velocity"  },
+                    { label: "NDE motor temperature",  key: "key_temp_nde",     placeholder: "e.g. temp_nde"           },
+                    { label: "DE motor temperature",   key: "key_temp_de",      placeholder: "e.g. temp_de"            },
+                    { label: "DE pump temperature",    key: "key_temp_de_pump", placeholder: "e.g. temp_de_pump"       },
+                    { label: "Fluid inlet temp",       key: "key_temp_inlet",   placeholder: "e.g. temp_inlet"         },
+                    { label: "Fluid outlet temp",      key: "key_temp_outlet",  placeholder: "e.g. temp_outlet"        },
+                    { label: "Suction pressure",       key: "key_pressure_in",  placeholder: "e.g. pressure_in"        },
+                    { label: "Discharge pressure",     key: "key_pressure_out", placeholder: "e.g. pressure_out"       },
+                    { label: "Shaft speed (RPM)",      key: "key_speed",        placeholder: "e.g. shaft_rpm"          },
+                  ].map(({ label, key, placeholder }) => (
+                    <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
+                      <label style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{label}</label>
+                      <select style={{ ...inp, cursor: "pointer", fontSize: 12 }}
+                        value={cfg[key] || ""}
+                        onChange={e => set(key, e.target.value)}>
+                        <option value="">— not mapped —</option>
+                        {deviceKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Unit + decimals */}
               {["value_card","gauge","timeseries_table"].includes(type) && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

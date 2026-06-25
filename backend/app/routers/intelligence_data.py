@@ -13,7 +13,7 @@ router_data = APIRouter(prefix="/intelligence", tags=["Intelligence"])
 def get_anomalies(
     device_id: UUID,
     key: Optional[str] = None,
-    hours: int = 24,
+    hours: float = 24,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -287,7 +287,7 @@ async def explain_alarm(
         raise HTTPException(404, "Alarm not found")
 
     device = _assert_device(alarm.device_id, current_user, db)
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
 
     # Telemetry around alarm time (±10 min)
     t0 = alarm.start_ts or alarm.created_at
@@ -332,8 +332,7 @@ async def explain_alarm(
         "baseline":         baseline,
     }
 
-    if not api_key:
-        return {"alarm_id": str(alarm_id), "explanation": "Add GROQ_API_KEY for AI explanation.", "context": context}
+    # api_key not needed for Ollama — always proceed
 
     prompt = f"""Explain why this IoT alarm fired based on the data below.
 
@@ -349,8 +348,8 @@ Provide:
 Be concise and technical. Base everything on the actual data."""
 
     try:
-        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.2, model=GROQ_MODEL_DEEP)
-        return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": f"groq/{GROQ_MODEL_DEEP}"}
+        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.2)
+        return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": "ollama/qwen3:8b"}
     except Exception as exc:
         return {"alarm_id": str(alarm_id), "explanation": f"AI unavailable: {exc}", "context": context}
 
@@ -368,7 +367,7 @@ async def compare_device(
     Uses telemetry aggregates and alarm counts.
     """
     device = _assert_device(device_id, current_user, db)
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
 
     now  = datetime.now(timezone.utc)
     w0_start = now - timedelta(days=7)
@@ -415,8 +414,7 @@ async def compare_device(
         "last_week": last_week,
     }
 
-    if not api_key:
-        return {"device_id": str(device_id), "comparison": context, "insight": "Add GROQ_API_KEY for AI insight."}
+    # api_key not needed for Ollama — always proceed
 
     prompt = f"""Compare this IoT device's behaviour this week vs last week.
 
@@ -431,8 +429,8 @@ Provide:
 Be concise and data-driven."""
 
     try:
-        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=500, temperature=0.2, model=GROQ_MODEL_FAST)
-        return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": f"groq/{GROQ_MODEL_FAST}"}
+        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.2)
+        return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": "ollama/qwen3:8b"}
     except Exception as exc:
         return {"device_id": str(device_id), "comparison": context, "insight": f"AI unavailable: {exc}"}
 
@@ -448,7 +446,7 @@ async def daily_report(
     Generate a daily health report for all devices in the tenant.
     Summarises alarms, trends, health scores, and top issues.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
     since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
     devices = _scoped_devices(current_user, db).all()
@@ -461,9 +459,10 @@ async def daily_report(
             Alarm.created_at >= since_24h,
         ).count()
 
+        from app.models.models import AlarmStatus as _AS
         active_alarms = db.query(Alarm).filter(
             Alarm.device_id == device.id,
-            Alarm.status.in_(["ACTIVE_UNACK", "ACTIVE_ACK"]),
+            Alarm.status.in_([_AS.ACTIVE_UNACK, _AS.ACTIVE_ACK]),
         ).count()
 
         health = get_latest_health(db, str(device.id))
@@ -497,8 +496,7 @@ async def daily_report(
         "devices":           report_data,
     }
 
-    if not api_key:
-        return {"report": summary, "narrative": "Add GROQ_API_KEY for AI narrative."}
+    # api_key not needed for Ollama — always proceed
 
     prompt = f"""Generate a concise daily IoT fleet health report.
 
@@ -513,8 +511,8 @@ Write a professional 3-paragraph executive summary covering:
 Be direct and actionable. Use exact device names and numbers."""
 
     try:
-        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3, model=GROQ_MODEL_DEEP)
-        return {"report": summary, "narrative": narrative, "engine": f"groq/{GROQ_MODEL_DEEP}"}
+        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.3)
+        return {"report": summary, "narrative": narrative, "engine": "ollama/qwen3:8b"}
     except Exception as exc:
         return {"report": summary, "narrative": f"AI unavailable: {exc}"}
 
@@ -629,7 +627,7 @@ def get_unified_device_intelligence(
 def get_widget_telemetry(
     device_id: UUID,
     key: str,
-    hours: int = 24,
+    hours: float = 24,
     limit: int = 200,
     resolution: str = "raw",
     db: Session = Depends(get_db),

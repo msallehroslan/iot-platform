@@ -165,6 +165,79 @@ def tool_get_key_intelligence(
     return get_key_intelligence(db, device_id, key, device=device)
 
 
+
+def tool_get_telemetry_history(
+    db: Session,
+    device_id: str,
+    key: str,
+    hours: float = 48,
+    resolution: str = "1h",
+) -> dict:
+    """
+    Fetch aggregated telemetry history for a key over a time window.
+    Used for today-vs-yesterday comparisons and trend analysis.
+    Default: 48h at 1h resolution — covers today + yesterday.
+    """
+    from app.services.data_service import get_aggregated_telemetry
+    from datetime import datetime, timezone, timedelta
+
+    data = get_aggregated_telemetry(db, device_id, key, hours=hours, limit=500, resolution=resolution)
+    points = data.get("points", [])
+
+    if not points:
+        return {"device_id": device_id, "key": key, "today": [], "yesterday": [], "comparison": "no data"}
+
+    # Split into today and yesterday buckets
+    now   = datetime.now(timezone.utc)
+    today_start     = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    yesterday_start = today_start - timedelta(days=1)
+
+    today_pts     = []
+    yesterday_pts = []
+
+    for p in points:
+        try:
+            ts = datetime.fromisoformat(p["ts"].replace("Z", "+00:00"))
+            if ts >= today_start:
+                today_pts.append(p)
+            elif ts >= yesterday_start:
+                yesterday_pts.append(p)
+        except Exception:
+            continue
+
+    # Compute daily averages for comparison
+    def _avg(pts):
+        vals = [p["value"] for p in pts if p.get("value") is not None]
+        return round(sum(vals) / len(vals), 3) if vals else None
+
+    today_avg     = _avg(today_pts)
+    yesterday_avg = _avg(yesterday_pts)
+
+    if today_avg is not None and yesterday_avg is not None:
+        delta     = round(today_avg - yesterday_avg, 3)
+        delta_pct = round((delta / yesterday_avg) * 100, 1) if yesterday_avg != 0 else None
+        comparison = f"today avg {today_avg} vs yesterday avg {yesterday_avg} (delta: {delta:+.3f}, {delta_pct:+.1f}%)" if delta_pct is not None else f"today avg {today_avg} vs yesterday avg {yesterday_avg}"
+    elif today_avg is not None:
+        comparison = f"today avg {today_avg} — no yesterday data yet"
+    elif yesterday_avg is not None:
+        comparison = f"yesterday avg {yesterday_avg} — no data yet today"
+    else:
+        comparison = "insufficient data for comparison"
+
+    return {
+        "device_id":     device_id,
+        "key":           key,
+        "hours":         hours,
+        "resolution":    resolution,
+        "today":         today_pts,
+        "yesterday":     yesterday_pts,
+        "today_avg":     today_avg,
+        "yesterday_avg": yesterday_avg,
+        "comparison":    comparison,
+        "all_points":    points,
+    }
+
+
 def tool_get_rpc_history(db: Session, device_id: str, limit: int = 10) -> dict:
     """Return recent RPC command history for a device."""
     from app.models.models import RpcCommand

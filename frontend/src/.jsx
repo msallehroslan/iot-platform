@@ -7,7 +7,6 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { telemetryApi, intelligenceApi, widgetApi, API_BASE } from "../../services/api.js";
 // useTelemSlice: subscribes to exactly ONE key — prevents unrelated renders
 import { useTelemSlice } from "../../hooks/useTelemetry.js";
-import PumpTwinWidget from "./PumpTwinWidget.jsx";
 // NaN-safe chart math — prevents "M0.0,NaN" SVG crashes
 import {
   safeNum, safeRange, sanitizePoints, sanitizeFlat,
@@ -209,9 +208,9 @@ export function LineChartSVG({ data = [], color = "#3b82f6" }) {
         const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
         return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
       })}
-      {data
+      {pts
         .map((p, idx) => ({ p, idx }))
-        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .filter(({ idx }) => idx % Math.max(1, Math.floor(pts.length / 5)) === 0 || idx === pts.length - 1)
         .map(({ p, idx }) => (
           <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -297,7 +296,7 @@ export function LineChartSVGBanded({ data = [], color = "#3b82f6" }) {
       })}
       {data
         .map((p, idx) => ({ p, idx }))
-        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .filter(({ idx }) => validMask[idx] && (idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1))
         .map(({ p, idx }) => (
           <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -374,9 +373,9 @@ export function BarChartSVG({ data = [], color = "#3b82f6" }) {
         const y = pad.t + h * t, val = (mx - rng * t).toFixed(1);
         return <g key={t}><line x1={pad.l} y1={y} x2={pad.l + w} y2={y} stroke="#f1f5f9" strokeWidth="1" /><text x={pad.l - 4} y={y + 3} fontSize="8" fill="#94a3b8" textAnchor="end" fontFamily="monospace">{val}</text></g>;
       })}
-      {data
+      {pts
         .map((p, idx) => ({ p, idx }))
-        .filter(({ idx }) => idx % Math.max(1, Math.floor(data.length / 5)) === 0 || idx === data.length - 1)
+        .filter(({ idx }) => idx % Math.max(1, Math.floor(pts.length / 5)) === 0 || idx === pts.length - 1)
         .map(({ p, idx }) => (
           <text key={idx} x={px(idx)} y={pad.t + h + 15} fontSize="7" fill="#cbd5e1" textAnchor="middle" fontFamily="monospace">
             {new Date(p.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -443,9 +442,49 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const raw   = liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
   const isN   = !isNaN(num);
-  const alert = config.threshold_high && isN && num > config.threshold_high;
-  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value).filter(v => Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
+  // Remember last known value — prevents "—" on WS gap
+  const lastValRef = useRef(null);
+  if (isN) lastValRef.current = num;
+  const displayNum  = isN ? num : lastValRef.current;
+  const displayIsN  = displayNum !== null && Number.isFinite(displayNum);
+  const alert = config.threshold_high && displayIsN && displayNum > config.threshold_high;
   const [window, setWindow] = useState("1h");
+  const [fetchedAgg, setFetchedAgg] = useState(null);
+  const [aggLoading, setAggLoading] = useState(false);
+
+  // Window config — same as LineChartWidget
+  const WINDOW_HOURS = {
+    "15m": 0.25, "30m": 0.5, "1h": 1, "6h": 6, "24h": 24,
+  };
+
+  // Fetch aggregated stats when window changes
+  useEffect(() => {
+    if (!devId || !config.key) return;
+    setAggLoading(true);
+    widgetApi.lineChart(devId, config.key, {
+      hours: WINDOW_HOURS[window] || 1,
+      limit: 300,
+      resolution: "raw",
+    }).then(res => {
+      const pts = (res?.points || []).filter(p =>
+        Number.isFinite(typeof p.value === "number" ? p.value : parseFloat(p.value))
+      );
+      if (pts.length) {
+        const vals = pts.map(p => typeof p.value === "number" ? p.value : parseFloat(p.value));
+        const sum = vals.reduce((a, b) => a + b, 0);
+        setFetchedAgg({
+          avg: Math.round((sum / vals.length) * 100) / 100,
+          min: Math.round(Math.min(...vals) * 100) / 100,
+          max: Math.round(Math.max(...vals) * 100) / 100,
+        });
+      } else {
+        setFetchedAgg(null);
+      }
+    }).catch(() => setFetchedAgg(null))
+    .finally(() => setAggLoading(false));
+  }, [devId, config.key, window]);
+
+  const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value).filter(v => Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
   // (for device-scoped dashboard, or if preload intelligence wasn't available).
@@ -465,14 +504,15 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
     intel?.anomaly?.most_anomalous_key === config.key
   );
   const intentColor = badge ? badge.color : alert ? "#ef4444" : (config.color || "#1e293b");
+  // Use displayNum for badge calculation too
+  const _badgeNum = displayIsN ? displayNum : num;
   // Recommended action from KeyIntelligence (shown in tooltip / detail)
   const recommendedAction = keyIntel?.recommended_action || null;
 
-  // Compute agg from historyData prop — no API call needed.
-  // historyData is hydrated by dashboard preload + WS updates.
+  // Use fetched agg (window-aware) or fall back to historyData prop
   const aggData = historyData?.[config.key] || [];
-  const agg = (() => {
-    const vals = aggData.map(p => p.value).filter(v => v !== null && !isNaN(v));
+  const aggFromHistory = (() => {
+    const vals = aggData.map(p => p.value).filter(v => v !== null && Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
     if (!vals.length) return { avg: null, min: null, max: null };
     const sum = vals.reduce((a, b) => a + b, 0);
     return {
@@ -481,6 +521,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
       max: Math.round(Math.max(...vals) * 100) / 100,
     };
   })();
+  const agg = fetchedAgg || aggFromHistory;
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
   const WINDOWS = ["15m","30m","1h","6h","24h"];
@@ -488,15 +529,19 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 4 }}>
       {/* Window pills */}
-      <div style={{ display: "flex", gap: 3, justifyContent: "center", flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 3, justifyContent: "center", flexShrink: 0, alignItems: "center" }}>
         {WINDOWS.map(w => (
           <button key={w} onClick={() => setWindow(w)} style={{
             padding: "1px 6px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
             border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
             background: window === w ? "#2F8CFF" : "#F4F8FF",
             color: window === w ? "white" : "#6B7F9F",
+            opacity: aggLoading && window === w ? 0.6 : 1,
           }}>{w}</button>
         ))}
+        {aggLoading && (
+          <div style={{ width: 8, height: 8, border: "1.5px solid #2F8CFF", borderTopColor: "transparent", borderRadius: "50%", animation: "gnx-spin 0.8s linear infinite", flexShrink: 0 }} />
+        )}
       </div>
 
       {/* Current value */}
@@ -512,7 +557,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
             fontSize: 42, fontWeight: 800, lineHeight: 1, fontFamily: "ui-monospace,monospace",
             color: intentColor, transition: "color .3s",
           }}>
-            {isN ? num.toFixed(config.decimals ?? 1) : (raw ?? "—")}
+            {displayIsN ? displayNum.toFixed(config.decimals ?? 1) : "—"}
           </span>
           {config.unit && <span style={{ fontSize: 15, color: "#94a3b8", fontWeight: 500, paddingBottom: 5 }}>{config.unit}</span>}
         </div>
@@ -555,13 +600,16 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
         )}
       </div>
 
-      {/* AVG / MIN / MAX */}
+      {/* AVG / MIN / MAX — window-aware */}
       <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
         {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
           <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
-            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3",
+            opacity: aggLoading ? 0.5 : 1, transition: "opacity 0.2s" }}>
             <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>
+              {aggLoading ? "…" : fmt(val)}
+            </span>
           </div>
         ))}
       </div>
@@ -598,6 +646,7 @@ export function LineChartWidget({ config, historyData, deviceId }) {
   const [chartData, setChartData] = useState([]);
   const [stats, setStats]         = useState({ avg: null, min: null, max: null, count: 0 });
   const [loading, setLoading]     = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   // Live WebSocket points appended to raw view only
   const livePoints = historyData?.[key] || [];
@@ -613,6 +662,7 @@ export function LineChartWidget({ config, historyData, deviceId }) {
     };
 
     setLoading(true);
+    setFetchError(null);
 
     widgetApi
       .lineChart(devId, key, {
@@ -638,7 +688,11 @@ export function LineChartWidget({ config, historyData, deviceId }) {
           setStats({ avg: null, min: null, max: null, count: 0 });
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        setFetchError(`Failed to load ${resolution} data. Try a shorter window.`);
+        setChartData([]);
+        setStats({ avg: null, min: null, max: null, count: 0 });
+      })
       .finally(() => setLoading(false));
   }, [devId, key, window]);
 
@@ -710,7 +764,13 @@ export function LineChartWidget({ config, historyData, deviceId }) {
 
       {/* Chart — range band for bucketed data, plain line for raw */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        {resolution !== "raw" && displayData.some(p => p.min !== undefined)
+        {fetchError ? (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, background: "#fff8f0", borderRadius: 8, border: "1px solid #fed7aa" }}>
+            <svg style={{ width: 20, height: 20, color: "#f97316" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <p style={{ fontSize: 10, color: "#9a3412", textAlign: "center", margin: 0 }}>{fetchError}</p>
+            <button onClick={() => { setFetchError(null); setWindow("1h"); }} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 20, border: "1px solid #f97316", background: "white", color: "#f97316", cursor: "pointer" }}>Reset to 1h</button>
+          </div>
+        ) : resolution !== "raw" && displayData.some(p => p.min !== undefined)
           ? <LineChartSVGBanded data={displayData} color={config.color || "#3b82f6"} />
           : <LineChartSVG data={displayData} color={config.color || "#3b82f6"} />
         }
@@ -733,9 +793,14 @@ export function LineChartWidget({ config, historyData, deviceId }) {
 export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
   const raw   = liveTelem?.[config.key];
   const num   = typeof raw === "number" ? raw : parseFloat(raw);
+  // Remember last known value — needle stays at last position on WS gap
+  const lastGaugeRef = useRef(null);
+  if (!isNaN(num)) lastGaugeRef.current = num;
+  const displayNum = !isNaN(num) ? num : lastGaugeRef.current;
   const devId = deviceId || config.device_id;
-  const [window, setWindow] = useState("24h");
-  const [agg, setAgg]       = useState({ min: null, max: null, avg: null });
+  const [window, setWindow]   = useState("24h");
+  const [agg, setAgg]         = useState({ min: null, max: null, avg: null });
+  const [aggLoading, setAggLoading] = useState(false);
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
   // (for device-scoped dashboard, or if preload intelligence wasn't available).
@@ -761,6 +826,7 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
       "7d": 168,
     };
 
+    setAggLoading(true);
     widgetApi
       .lineChart(devId, config.key, {
         hours: WINDOW_HOURS[window] || 24,
@@ -782,7 +848,10 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
           });
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setAgg({ min: null, max: null, avg: null });
+      })
+      .finally(() => setAggLoading(false));
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(1);
@@ -805,7 +874,7 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
       {/* Gauge dial — colour driven by intent */}
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <GaugeSVG
-          value={isNaN(num) ? (config.min ?? 0) : num}
+          value={displayNum !== null ? displayNum : (config.min ?? 0)}
           min={config.min ?? 0}
           max={config.max ?? 100}
           color={gaugeColor}
@@ -832,13 +901,16 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
         </div>
       )}
 
-      {/* AVG / MIN / MAX */}
+      {/* AVG / MIN / MAX — window-aware */}
       <div style={{ display: "flex", gap: 4, width: "100%", flexShrink: 0 }}>
         {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
           <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
-            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
+            display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3",
+            opacity: aggLoading ? 0.5 : 1, transition: "opacity 0.2s" }}>
             <span style={{ fontSize: 7, fontWeight: 700, color: "#6B7F9F", letterSpacing: ".06em" }}>{label}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>{fmt(val)}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color, fontFamily: "monospace" }}>
+              {aggLoading ? "…" : fmt(val)}
+            </span>
           </div>
         ))}
       </div>
@@ -935,6 +1007,7 @@ export function BarChartWidget({ config, historyData, deviceId }) {
   const [chartData, setChartData] = useState([]);
   const [stats, setStats]         = useState({ avg: null, min: null, max: null, count: 0 });
   const [loading, setLoading]     = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   const livePoints = historyData?.[key] || [];
 
@@ -947,6 +1020,7 @@ export function BarChartWidget({ config, historyData, deviceId }) {
     };
 
     setLoading(true);
+    setFetchError(null);
 
     widgetApi
       .barChart(devId, key, {
@@ -972,7 +1046,11 @@ export function BarChartWidget({ config, historyData, deviceId }) {
           setStats({ avg: null, min: null, max: null, count: 0 });
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        setFetchError(`Failed to load ${resolution} data. Try a shorter window.`);
+        setChartData([]);
+        setStats({ avg: null, min: null, max: null, count: 0 });
+      })
       .finally(() => setLoading(false));
   }, [devId, key, window]);
 
@@ -1023,7 +1101,15 @@ export function BarChartWidget({ config, historyData, deviceId }) {
 
       {/* Chart */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        <BarChartSVG data={displayData} color={config.color || "#3b82f6"} />
+        {fetchError ? (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, padding: 12, background: "#fff8f0", borderRadius: 8, border: "1px solid #fed7aa" }}>
+            <svg style={{ width: 20, height: 20, color: "#f97316" }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <p style={{ fontSize: 10, color: "#9a3412", textAlign: "center", margin: 0 }}>{fetchError}</p>
+            <button onClick={() => { setFetchError(null); setWindow("1h"); }} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 20, border: "1px solid #f97316", background: "white", color: "#f97316", cursor: "pointer" }}>Reset to 1h</button>
+          </div>
+        ) : (
+          <BarChartSVG data={displayData} color={config.color || "#3b82f6"} />
+        )}
       </div>
 
       {/* Footer */}
@@ -1067,15 +1153,37 @@ export function AlarmListWidget({ alarms = [] }) {
   );
 }
 
-export function TimeseriesTable({ config, historyData, deviceId }) {
+export function TimeseriesTable({ config, historyData, deviceId, liveTelem }) {
   const devId = deviceId || config.device_id;
-  const [window, setWindow] = useState("1h");
-  const [points, setPoints] = useState([]);
-  const [agg, setAgg]       = useState({ avg: null, min: null, max: null, count: 0 });
-  const [loading, setLoading] = useState(false);
+  const [window, setWindow]         = useState("1h");
+  const [points, setPoints]         = useState([]);
+  const [agg, setAgg]               = useState({ avg: null, min: null, max: null, count: 0 });
+  const [loading, setLoading]       = useState(false);
+  const [fetchError, setFetchError]   = useState(null);
+  const [selectedKey, setSelectedKey] = useState(config.key || "");
+  const [availableKeys, setAvailableKeys] = useState(config.key ? [config.key] : []);
+
+  // Fetch available telemetry keys for this device
+  useEffect(() => {
+    if (!devId) return;
+    telemetryApi.keys(devId)
+      .then(res => {
+        const keys = (res?.keys || []).filter(k => k);
+        if (keys.length) {
+          setAvailableKeys(keys);
+          // Only auto-select if no key configured or configured key not in list
+          if (!selectedKey || !keys.includes(selectedKey)) {
+            setSelectedKey(config.key || keys[0]);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [devId]);
+
+  const activeKey = selectedKey || config.key || "";
 
   useEffect(() => {
-    if (!devId || !config.key) return;
+    if (!devId || !activeKey) return;
 
     const WINDOW_HOURS = {
       "15m": 0.25,
@@ -1089,7 +1197,7 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
     setLoading(true);
 
     widgetApi
-      .timeseriesTable(devId, config.key, {
+      .timeseriesTable(devId, activeKey, {
         hours,
         limit: 100,
       })
@@ -1099,7 +1207,7 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
 
         const vals = pts
           .map(p => p.value)
-          .filter(v => v !== null && !isNaN(v));
+          .filter(v => v !== null && Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
 
         if (vals.length) {
           const sum = vals.reduce((a, b) => a + b, 0);
@@ -1114,30 +1222,54 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
           setAgg({ avg: null, min: null, max: null, count: 0 });
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        setFetchError("Failed to load data. Try a shorter window.");
+        setPoints([]);
+        setAgg({ avg: null, min: null, max: null, count: 0 });
+      })
       .finally(() => setLoading(false));
-  }, [devId, config.key, window]);
+  }, [devId, activeKey, window]);
 
   // Fall back to historyData prop during initial load
   const history = points.length > 0
     ? [...points].reverse().slice(0, 100)
-    : [...(historyData?.[config.key] || [])].reverse().slice(0, 25);
+    : [...(historyData?.[activeKey] || [])].reverse().slice(0, 25);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 2);
   const WINDOWS = ["15m","30m","1h","6h","24h"];
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 6 }}>
-      {/* Window pills */}
-      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-        {WINDOWS.map(w => (
-          <button key={w} onClick={() => setWindow(w)} style={{
-            padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
-            border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
-            background: window === w ? "#2F8CFF" : "#F4F8FF",
-            color: window === w ? "white" : "#6B7F9F",
-          }}>{w}</button>
-        ))}
+      {/* Key selector + Window pills row */}
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexShrink: 0, flexWrap: "wrap" }}>
+        {/* Key dropdown */}
+        {availableKeys.length > 0 && (
+          <select
+            value={selectedKey}
+            onChange={e => { setSelectedKey(e.target.value); setPoints([]); }}
+            style={{
+              fontSize: 9, padding: "2px 6px", borderRadius: 6,
+              border: "1px solid #D8E3F3", background: "#EAF2FF",
+              color: "#334866", cursor: "pointer", fontWeight: 600,
+              maxWidth: 120, flexShrink: 0,
+            }}
+          >
+            {availableKeys.map(k => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+        )}
+        {/* Window pills */}
+        <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+          {WINDOWS.map(w => (
+            <button key={w} onClick={() => setWindow(w)} style={{
+              padding: "1px 7px", borderRadius: 20, fontSize: 8, fontWeight: 600, cursor: "pointer",
+              border: "1px solid", borderColor: window === w ? "#2F8CFF" : "#D8E3F3",
+              background: window === w ? "#2F8CFF" : "#F4F8FF",
+              color: window === w ? "white" : "#6B7F9F",
+            }}>{w}</button>
+          ))}
+        </div>
       </div>
       {/* Table */}
       <div style={{ flex: 1, overflowY: "auto" }}>
@@ -1145,7 +1277,7 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
           <thead style={{ position: "sticky", top: 0, background: "white" }}>
             <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
               <th style={{ textAlign: "left", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>Time</th>
-              <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>{config.key}</th>
+              <th style={{ textAlign: "right", padding: "4px 0", fontWeight: 600, color: "#94a3b8", textTransform: "uppercase", letterSpacing: ".06em" }}>{activeKey}</th>
             </tr>
           </thead>
           <tbody>
@@ -1153,11 +1285,14 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
               <tr key={i} style={{ borderBottom: "1px solid #f8fafc" }}>
                 <td style={{ padding: "3px 0", color: "#94a3b8", fontFamily: "monospace" }}>{new Date(p.ts).toLocaleTimeString()}</td>
                 <td style={{ padding: "3px 0", textAlign: "right", color: "#1e293b", fontFamily: "monospace", fontWeight: 600 }}>
-                  {typeof p.value === "number" ? p.value.toFixed(config.decimals ?? 2) : String(p.value)}{config.unit}
+                  {!isNaN(parseFloat(p.value)) ? parseFloat(p.value).toFixed(config.decimals ?? 2) : String(p.value ?? "—")}{config.unit || ""}
                 </td>
               </tr>
             ))}
-            {!history.length && (
+            {fetchError && (
+              <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#f97316" }}>⚠ {fetchError}</td></tr>
+            )}
+            {!history.length && !fetchError && (
               <tr><td colSpan={2} style={{ padding: "16px 0", textAlign: "center", color: "#94a3b8" }}>No history yet</td></tr>
             )}
           </tbody>
@@ -1184,6 +1319,13 @@ export function PieChartWidget({ config, liveTelem }) {
     : Object.keys(liveTelem || {}).filter(k => !isNaN(parseFloat(liveTelem[k]))).slice(0, 8);
   const keys = fallbackKeys;
   const data = keys.map(k => ({ key: k, value: Math.abs(parseFloat(liveTelem[k])) || 0 }));
+  const hasValues = data.some(d => d.value > 0);
+  if (!hasValues) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 8, color: "#94a3b8" }}>
+      <svg style={{ width: 22, height: 22 }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/></svg>
+      <p style={{ fontSize: 11 }}>All values are zero</p>
+    </div>
+  );
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, height: "100%" }}>
       <PieChartSVG data={data} />
@@ -1217,7 +1359,7 @@ export function MarkdownWidget({ config }) {
 }
 
 export function EntityTable({ liveTelem }) {
-  const entries = Object.entries(liveTelem || {});
+  const entries = Object.entries(liveTelem || {}).sort(([a], [b]) => a.localeCompare(b));
   return (
     <div style={{ height: "100%", overflowY: "auto" }}>
       <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
@@ -1270,7 +1412,8 @@ export function AnomalyWidget({ config, deviceId, intelligence }) {
     if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.anomalyScore(deviceId, config.key || "", 24)
-        .then(d => setFetched(d)).catch(() => {});
+        .then(d => setFetched(d))
+        .catch(() => setFetched({ anomaly_count: 0, status: "error", error: true }));
     });
   }, [deviceId, config.key, !!intelligence]);
   const anomalyData = intelligence?.anomaly || fetched || null;
@@ -1361,7 +1504,8 @@ export function BaselineWidget({ config, deviceId, intelligence }) {
     if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.baseline(deviceId, config.key || "")
-        .then(d => setFetched(d)).catch(() => {});
+        .then(d => setFetched(d))
+        .catch(() => setFetched({ status: "error", keys: {} }));
     });
   }, [deviceId, config.key, !!intelligence]);
   const baselineData = intelligence?.baseline || fetched || null;
@@ -1407,7 +1551,7 @@ export function BaselineWidget({ config, deviceId, intelligence }) {
       </div>
       {Object.entries(displayKeys).map(([k, stats]) => {
         const mean = stats?.mean || 0;
-        const std = stats?.std || 0;
+        const std = stats?.stddev || stats?.std || 0;
         const upper = (mean + 3 * std).toFixed(1);
         const lower = (mean - 3 * std).toFixed(1);
         return (
@@ -1435,7 +1579,8 @@ export function HealthScoreWidget({ config, deviceId, intelligence }) {
     if (intelligence || !deviceId) return;
     import("../../services/api.js").then(({ widgetApi }) => {
       widgetApi.healthScore(deviceId)
-        .then(d => setFetched(d)).catch(() => {});
+        .then(d => setFetched(d))
+        .catch(() => setFetched({ health_score: null, health_label: "UNAVAILABLE", error: true }));
     });
   }, [deviceId, !!intelligence]);
   const healthRaw = intelligence?.health || fetched || null;
@@ -1546,7 +1691,6 @@ export const WIDGET_REGISTRY = [
   { id: "anomaly_score",     label: "Anomaly Score",     icon: "M13 10V3L4 14h7v7l9-11h-7z",                                           desc: "Z-score anomaly detection",       category: "intelligence" },
   { id: "baseline",          label: "Baseline / Thresholds", icon: "M3 3v18h18M7 12l4-4 4 4 4-4",                                    desc: "Adaptive threshold suggestions",  category: "intelligence" },
   { id: "health_score",      label: "Health Score",      icon: "M22 12h-4l-3 9L9 3l-3 9H2",                                           desc: "Device health 0-100 gauge",       category: "intelligence" },
-  { id: "pump_twin",         label: "Pump Twin",          icon: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM8 12h8M12 8v8",              desc: "3D pump — NDE/DE/PP health + efficiency", category: "intelligence" },
   // ── Content widgets ──────────────────────────────────────────────────────
   { id: "markdown",          label: "Text / Markdown",   icon: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7",          desc: "Free-text notes",                  category: "content" },
   { id: "html_card",         label: "HTML Card",         icon: "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",         desc: "Custom HTML with \${key} values",  category: "content" },
@@ -1740,7 +1884,6 @@ export const WIDGET_COMPONENT_MAP = {
   anomaly_score:     AnomalyWidget,
   baseline:          BaselineWidget,
   health_score:      HealthScoreWidget,
-  pump_twin:         PumpTwinWidget,
   // ── Content ────────────────────────────────────────────────────────────────
   markdown:          MarkdownWidget,
   html_card:         HtmlCard,
@@ -2130,16 +2273,12 @@ export function TrendIndicatorWidget({ config, deviceId, liveTelem, intelligence
   useEffect(() => {
     if (trendFromIntel || !deviceId || !key) return; // already have it
     setLoading(true);
-    const token = localStorage.getItem("access_token") || "";
-    let base = "/api/v1";
-    import("../../services/api.js").then(({ API_BASE }) => { base = API_BASE; }).catch(() => {});
-    fetch(`${base}/intelligence/trend/${deviceId}/${key}?minutes=30`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setTrendFetched(d); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    import("../../services/api.js").then(({ intelligenceApi }) => {
+      intelligenceApi.trend(deviceId, key, 30)
+        .then(d => { if (d) setTrendFetched(d); })
+        .catch(() => setTrendFetched({ trend: "UNKNOWN", confidence: 0, change_pct: 0, error: true }))
+        .finally(() => setLoading(false));
+    }).catch(() => setLoading(false));
   }, [deviceId, key, !!trendFromIntel]);
 
   const trend = trendFromIntel
@@ -2614,7 +2753,7 @@ export function TaatInsightWidget({ config, deviceId, intelligence }) {
     setLoading(true);
     _fetchIntelCached(devId)
       .then(res => setData(res))
-      .catch(() => {})
+      .catch(() => setData({ status: "UNKNOWN", risk: "LOW", reason: "Could not load intelligence data.", recommendation: null, error: true }))
       .finally(() => setLoading(false));
   }, [devId, key, intelligence]);
 

@@ -493,15 +493,16 @@ export default function DashboardPage({ device, onBack, user }) {
     }
   }, []);
 
-  // ── 3. Telemetry keys + bulk history ─────────────────────────────────────
-  // PHASE 2 FIX: single bulk request replaces N serial history calls
-  // Before: 10 keys → 11 requests. After: 10 keys → 3 requests total.
+  // ── 3. Telemetry keys + bulk history + intelligence ──────────────────────
+  // Same pattern as UserDashboardPage / useDashboardRuntime:
+  //   - Parallel fetch: keys + latest + alarms + intelligence
+  //   - Intelligence refresh every 60s, always update (no stale comparison)
+  //   - No fast-refresh timer needed — initial load covers enriched_keys
   useEffect(() => {
     if (!device?.id) return;
 
-    async function loadTelemetry() {
+    async function loadAll() {
       try {
-        // Parallel: keys + latest + alarms + intelligence
         const [ks, latest, deviceAlarms, intel] = await Promise.all([
           getTelemetryKeys(device.id),
           getLatestTelemetry(device.id),
@@ -515,10 +516,8 @@ export default function DashboardPage({ device, onBack, user }) {
 
         if (!ks.length) return;
 
-        // Single bulk request for all keys
         const bulk = await telemetryApi.bulkHistory(device.id, ks, 50);
         if (bulk?.data) {
-          // Sanitize bulk history - drop non-finite values before storing
           const cleanBulk = {};
           Object.entries(bulk.data).forEach(([k, pts]) => {
             if (!Array.isArray(pts)) return;
@@ -537,21 +536,17 @@ export default function DashboardPage({ device, onBack, user }) {
       }
     }
 
-    loadTelemetry();
+    loadAll();
 
-    // Refresh intelligence every 60s — keeps anomaly/health widgets current
+    // Refresh intelligence every 60s — same cadence as useDashboardRuntime
+    // Always update state (no stale comparison) so enriched_keys stay fresh
     const intelTimer = setInterval(async () => {
       try {
         const intel = await intelligenceApi.unified(device.id);
-        // Only update state if something actually changed — prevents unnecessary renders
-        if (intel) setIntelligence(prev => {
-          if (!prev) return intel;
-          const prevStr = JSON.stringify(prev.health_score) + JSON.stringify(prev.anomaly?.anomaly_count);
-          const nextStr = JSON.stringify(intel.health_score) + JSON.stringify(intel.anomaly?.anomaly_count);
-          return prevStr === nextStr ? prev : intel;
-        });
+        if (intel) setIntelligence(intel);
       } catch (_) {}
     }, 60_000);
+
     return () => clearInterval(intelTimer);
   }, [device?.id]);
 

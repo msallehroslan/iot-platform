@@ -14,7 +14,11 @@ Output contract:
     "reason":       str,
     "action_taken": str | None,
     "verified":     bool,
-    "confidence":   float   # 0.0 – 1.0
+    "confidence":   float,   # 0.0 – 1.0
+    "plan_intent":  str,
+    "steps_run":    int,
+    "all_success":  bool,
+    "plan_risk":    str,
 }
 """
 from __future__ import annotations
@@ -25,123 +29,136 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+# ── Primary entry point ───────────────────────────────────────────────────────
+
 def build_decision(
-    execution_results: dict,
-    verification_results: Optional[dict] = None,
-    intent: str = "QUESTION",
+    intent:       str,
+    plan:         "Plan",
+    trace:        "ExecutionTrace",
+    verification: dict,
 ) -> dict:
     """
-    Merge execution + verification into a structured decision.
+    Build a structured decision from a completed plan execution.
 
-    execution_results:   trace.results dict from executor
-    verification_results: VerificationResult.__dict__ or None
-    intent:              classified intent string
+    Args:
+        intent:       classified intent string (e.g. "DEVICE_CONTROL")
+        plan:         Plan object from taat_agent_planner
+        trace:        ExecutionTrace from taat_executor
+        verification: result dict from taat_verification.verify_actions()
+
+    Returns:
+        Decision dict consumed by the LLM system prompt and frontend chips.
     """
-    status     = "UNKNOWN"
-    risk       = "LOW"
-    reason     = ""
-    action_taken = None
-    verified   = False
-    confidence = 0.5
+    results = trace.results if hasattr(trace, "results") else {}
+    ver     = verification or {}
 
-    # ── 1. Read key intelligence if available ─────────────────────────────────
-    ki = execution_results.get("key_intel") or {}
+    base = _build_decision_from_results(intent, results, ver)
+
+    # Overlay plan metadata
+    base["plan_intent"] = intent
+    base["steps_run"]   = len(trace.steps) if hasattr(trace, "steps") else 0
+    base["all_success"] = trace.all_success if hasattr(trace, "all_success") else True
+    base["plan_risk"]   = plan.risk if hasattr(plan, "risk") else base.get("risk", "LOW")
+
+    # If the plan declared HIGH risk, honour it regardless of data signals
+    if base["plan_risk"] == "HIGH":
+        base["risk"] = "HIGH"
+
+    # Write decision_summary back onto trace for observability
+    if hasattr(trace, "decision_summary"):
+        trace.decision_summary = summarize_decision(base)
+
+    return base
+
+
+# ── Core decision logic ───────────────────────────────────────────────────────
+
+def _build_decision_from_results(intent: str, results: dict, verification: dict) -> dict:
+    """
+    Deterministically build status/risk/reason from execution results
+    and verification outcome. Called by build_decision() and build_failure_decision().
+    """
+    status       = "UNKNOWN"
+    risk         = "LOW"
+    reason       = ""
+    action_taken = None
+    verified     = verification.get("verified", False)
+    confidence   = 0.5
+
+    # ── 1. Key intelligence ───────────────────────────────────────────────────
+    ki = results.get("key_intel") or {}
     if ki:
         status     = _map_status(ki.get("status", "UNKNOWN"))
         risk       = _map_risk(ki.get("risk", "LOW"))
         reason     = ki.get("reason", "")
         confidence = _confidence_from_ki(ki)
 
-    # ── 2. Read health if no key intel ────────────────────────────────────────
-    elif "health" in execution_results:
-        h = execution_results["health"]
+    # ── 2. Health score ───────────────────────────────────────────────────────
+    elif "health" in results:
+        h     = results["health"]
         score = h.get("health_score") or h.get("score")
         label = h.get("health_label", "HEALTHY")
         status, risk = _health_to_status_risk(score, label)
-        reason = f"Health score: {score:.0f} ({label})" if score is not None else label
+        reason     = f"Health score: {score:.0f} ({label})" if score is not None else label
         confidence = 0.7
 
-    # ── 3. Read alarms if available ───────────────────────────────────────────
-    alarms = execution_results.get("alarms", {})
-    alarm_count = alarms.get("count", 0)
-    if alarm_count > 0 and status in ("UNKNOWN", "NORMAL"):
-        highest = alarms.get("highest_severity", "WARNING")
-        status  = "CRITICAL" if highest in ("CRITICAL", "MAJOR") else "WARNING"
-        risk    = "HIGH"     if highest in ("CRITICAL", "MAJOR") else "MEDIUM"
-        reason  = f"{alarm_count} active alarm(s), highest: {highest}"
+    # ── 3. Active alarms ──────────────────────────────────────────────────────
+    alarms = results.get("alarms", {})
+    if alarms.get("count", 0) > 0 and status in ("UNKNOWN", "NORMAL"):
+        highest    = alarms.get("highest_severity", "WARNING")
+        status     = "CRITICAL" if highest in ("CRITICAL", "MAJOR") else "WARNING"
+        risk       = "HIGH"     if highest in ("CRITICAL", "MAJOR") else "MEDIUM"
+        reason     = f"{alarms['count']} active alarm(s), highest: {highest}"
         confidence = 0.85
 
-    # ── 4. RPC action result ──────────────────────────────────────────────────
-    rpc = execution_results.get("rpc_result") or {}
+    # ── 4. RPC result ─────────────────────────────────────────────────────────
+    rpc = results.get("rpc_result") or {}
     if rpc:
-        if rpc.get("success"):
-            dev  = rpc.get("device_name", "device")
-            prms = rpc.get("params", {})
-            action_taken = f"Sent command to {dev}: {prms}"
-        else:
-            action_taken = f"Command failed: {rpc.get('reason', 'unknown error')}"
+        dev  = rpc.get("device_name", "device")
+        prms = rpc.get("params", {})
+        action_taken = (
+            f"Sent command to {dev}: {prms}"
+            if rpc.get("success")
+            else f"Command failed: {rpc.get('reason', 'unknown')}"
+        )
 
-    # ── 5. Rule action result ──────────────────────────────────────────────────
-    rule = execution_results.get("rule_result") or {}
+    # ── 5. Rule result ────────────────────────────────────────────────────────
+    rule = results.get("rule_result") or {}
     if rule and not action_taken:
-        if rule.get("success") or rule.get("rule_id") or rule.get("deleted"):
-            op   = "Created" if rule.get("rule_id") else "Deleted"
-            key  = rule.get("key", "")
-            thr  = rule.get("threshold", "")
-            action_taken = f"{op} rule: {key} {thr}".strip()
+        op           = "Created" if rule.get("rule_id") else "Deleted"
+        action_taken = f"{op} rule: {rule.get('key', '')} {rule.get('threshold', '')}".strip()
 
-    # ── 6. Alarm action result ─────────────────────────────────────────────────
-    alarm_action = execution_results.get("alarm_result") or {}
+    # ── 6. Alarm action result ────────────────────────────────────────────────
+    alarm_action = results.get("alarm_result") or {}
     if alarm_action and not action_taken:
-        count  = alarm_action.get("count", 0)
-        op     = alarm_action.get("action", "actioned")
-        action_taken = f"{op.capitalize()} {count} alarm(s)"
+        action_taken = (
+            f"{alarm_action.get('action', 'actioned').capitalize()} "
+            f"{alarm_action.get('count', 0)} alarm(s)"
+        )
 
-    # ── 7. Verification overlay — truthful state mapping ────────────────────────
-    if verification_results:
-        ver_state  = verification_results.get("overall",
-                     verification_results.get("verification_state", "UNVERIFIED"))
-        ver_msg    = verification_results.get("message", "")
+    # ── 7. Verification overlay ───────────────────────────────────────────────
+    ver_msg = verification.get("message", "")
+    if verified:
+        confidence   = min(confidence + 0.15, 1.0)
+        if action_taken:
+            action_taken = f"{action_taken} — confirmed ✅"
+    elif verification.get("overall") not in (None, "skipped"):
+        confidence = max(confidence - 0.1, 0.1)
+        risk       = _escalate_risk(risk)
+        if action_taken and ver_msg:
+            action_taken = f"{action_taken} — {ver_msg}"
 
-        if ver_state == "SUCCESS":
-            verified   = True
-            confidence = min(confidence + 0.20, 1.0)
-            if action_taken:
-                action_taken = f"{action_taken} — confirmed ✅"
-
-        elif ver_state == "PARTIAL_SUCCESS":
-            # RPC sent but not telemetry-confirmed — do NOT claim success
-            verified   = False
-            confidence = min(confidence, 0.55)
-            if action_taken:
-                action_taken = f"{action_taken} — RPC sent, awaiting device confirmation"
-
-        elif ver_state == "UNVERIFIED":
-            # No telemetry available — cannot claim success
-            verified   = False
-            confidence = min(confidence, 0.40)
-            if action_taken:
-                action_taken = f"{action_taken} — unverified (no telemetry response)"
-
-        elif ver_state == "FAILED":
-            verified   = False
-            confidence = max(confidence - 0.2, 0.1)
-            risk       = _escalate_risk(risk)
-            if action_taken and ver_msg:
-                action_taken = f"{action_taken} — FAILED: {ver_msg}"
-
-    # ── 8. Fallback defaults ──────────────────────────────────────────────────
+    # ── 8. Fallback ───────────────────────────────────────────────────────────
     if not reason:
-        telem = execution_results.get("telemetry", {})
-        val_count = len(telem.get("values", {}))
+        val_count = len(results.get("telemetry", {}).get("values", {}))
         if val_count:
-            reason = f"Device reporting {val_count} telemetry key(s)"
-            status = "NORMAL"
-            risk   = "LOW"
+            reason     = f"Device reporting {val_count} telemetry key(s)"
+            status     = "NORMAL"
+            risk       = "LOW"
             confidence = 0.6
         else:
-            reason = "No data available"
-            status = "UNKNOWN"
+            reason     = "No data available"
+            status     = "UNKNOWN"
             confidence = 0.3
 
     return {
@@ -192,122 +209,12 @@ def _health_to_status_risk(score, label: str):
     return "CRITICAL", "HIGH"
 
 
-def build_decision(
-    intent:       str,
-    plan:         "Plan",
-    trace:        "ExecutionTrace",
-    verification: dict,
-) -> dict:
-    """
-    New signature — takes full context objects.
-    Wraps the original build_decision logic, adding plan + trace awareness.
-    """
-    # Pull structured data from trace
-    results = trace.results if hasattr(trace, "results") else {}
-    ver     = verification  or {}
-
-    base = _build_decision_from_results(intent, results, ver)
-
-    # Overlay plan metadata
-    base["plan_intent"] = intent
-    base["steps_run"]   = len(trace.steps) if hasattr(trace, "steps") else 0
-    base["all_success"] = trace.all_success if hasattr(trace, "all_success") else True
-    base["plan_risk"]   = plan.risk if hasattr(plan, "risk") else base.get("risk", "LOW")
-
-    # Risk escalation: if plan declared HIGH, honour it
-    if base["plan_risk"] == "HIGH":
-        base["risk"] = "HIGH"
-
-    # Write decision_summary back onto trace for observability (Task 2)
-    if hasattr(trace, "decision_summary"):
-        trace.decision_summary = summarize_decision(base)
-
-    return base
-
-
-def _build_decision_from_results(intent: str, results: dict, verification: dict) -> dict:
-    """Core logic — same as original build_decision but extracted for reuse."""
-    status     = "UNKNOWN"
-    risk       = "LOW"
-    reason     = ""
-    action_taken = None
-    verified   = verification.get("verified", False)
-    confidence = 0.5
-
-    ki = results.get("key_intel") or {}
-    if ki:
-        status     = _map_status(ki.get("status", "UNKNOWN"))
-        risk       = _map_risk(ki.get("risk", "LOW"))
-        reason     = ki.get("reason", "")
-        confidence = _confidence_from_ki(ki)
-    elif "health" in results:
-        h = results["health"]
-        score = h.get("health_score") or h.get("score")
-        label = h.get("health_label", "HEALTHY")
-        status, risk = _health_to_status_risk(score, label)
-        reason = f"Health score: {score:.0f} ({label})" if score is not None else label
-        confidence = 0.7
-
-    alarms = results.get("alarms", {})
-    if alarms.get("count", 0) > 0 and status in ("UNKNOWN", "NORMAL"):
-        highest = alarms.get("highest_severity", "WARNING")
-        status  = "CRITICAL" if highest in ("CRITICAL", "MAJOR") else "WARNING"
-        risk    = "HIGH"     if highest in ("CRITICAL", "MAJOR") else "MEDIUM"
-        reason  = f"{alarms['count']} active alarm(s), highest: {highest}"
-        confidence = 0.85
-
-    rpc = results.get("rpc_result") or {}
-    if rpc:
-        dev  = rpc.get("device_name", "device")
-        prms = rpc.get("params", {})
-        action_taken = f"Sent command to {dev}: {prms}" if rpc.get("success") else                        f"Command failed: {rpc.get('reason', 'unknown')}"
-
-    rule = results.get("rule_result") or {}
-    if rule and not action_taken:
-        op = "Created" if rule.get("rule_id") else "Deleted"
-        action_taken = f"{op} rule: {rule.get('key', '')} {rule.get('threshold', '')}".strip()
-
-    alarm_action = results.get("alarm_result") or {}
-    if alarm_action and not action_taken:
-        action_taken = f"{alarm_action.get('action','actioned').capitalize()} {alarm_action.get('count',0)} alarm(s)"
-
-    ver_msg = verification.get("message", "")
-    if verified:
-        confidence = min(confidence + 0.15, 1.0)
-        if action_taken:
-            action_taken = f"{action_taken} — confirmed ✅"
-    elif not verification.get("overall") in (None, "skipped"):
-        confidence = max(confidence - 0.1, 0.1)
-        risk = _escalate_risk(risk)
-        if action_taken and ver_msg:
-            action_taken = f"{action_taken} — {ver_msg}"
-
-    if not reason:
-        val_count = len(results.get("telemetry", {}).get("values", {}))
-        if val_count:
-            reason = f"Device reporting {val_count} telemetry key(s)"
-            status, risk = "NORMAL", "LOW"
-            confidence   = 0.6
-        else:
-            reason     = "No data available"
-            status     = "UNKNOWN"
-            confidence = 0.3
-
-    return {
-        "status":       status,
-        "risk":         risk,
-        "reason":       reason,
-        "action_taken": action_taken,
-        "verified":     verified,
-        "confidence":   round(confidence, 2),
-    }
-
+# ── Observability helpers ─────────────────────────────────────────────────────
 
 def summarize_decision(decision: dict) -> str:
     """
-    One-line summary for injection into the Groq system prompt.
+    One-line summary injected into the Groq system prompt.
     The LLM narrates this — it never determines status itself.
-    Includes verification_state so LLM never claims false certainty.
     """
     ver_state = decision.get("verification_state", "UNVERIFIED")
     parts = [
@@ -327,20 +234,23 @@ def build_failure_decision(trace: "ExecutionTrace") -> dict:
     Called when trace.errors is non-empty.
     Returns a structured failure decision without hallucinating success.
     """
-    errors     = getattr(trace, "errors", [])
-    steps_run  = len(getattr(trace, "steps", []))
-    failed     = [s for s in getattr(trace, "steps", []) if not s.success]
+    errors       = getattr(trace, "errors", [])
+    steps_run    = len(getattr(trace, "steps", []))
+    failed       = [s for s in getattr(trace, "steps", []) if not s.success]
     failed_tools = [s.tool for s in failed]
 
     reason = f"{len(errors)} step(s) failed: {'; '.join(errors[:3])}"
     if len(errors) > 3:
-        reason += f" (+{len(errors)-3} more)"
+        reason += f" (+{len(errors) - 3} more)"
 
     return {
         "status":       "UNKNOWN",
         "risk":         "MEDIUM",
         "reason":       reason,
-        "action_taken": f"Execution failed on: {', '.join(failed_tools)}" if failed_tools else "Execution failed",
+        "action_taken": (
+            f"Execution failed on: {', '.join(failed_tools)}"
+            if failed_tools else "Execution failed"
+        ),
         "verified":     False,
         "confidence":   0.1,
         "failure":      True,

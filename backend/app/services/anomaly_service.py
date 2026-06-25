@@ -1,7 +1,7 @@
 """
 app/services/anomaly_service.py — Anomaly Detection
 
-Uses Z-score against a rolling 2-hour baseline to flag anomalous readings.
+Uses Z-score against a rolling baseline to flag anomalous readings.
 Called from telemetry_service on every numeric ingest.
 
 Behaviour:
@@ -25,11 +25,12 @@ from app.models.models import TelemetryData, AnomalyScore, DeviceBaseline
 logger = logging.getLogger(__name__)
 
 # Minimum data points needed before scoring
-MIN_SAMPLES       = 20
+MIN_SAMPLES       = 100
 # Z-score threshold — 3.0 = 99.7% confidence
 ANOMALY_THRESHOLD = 3.0
 # Rolling window for live Z-score (minutes)
-ROLLING_WINDOW_MIN = 120
+# 1440 = 24 hours — gives stable mean/stddev across full day
+ROLLING_WINDOW_MIN = 1440
 
 
 def _rolling_stats(values: list[float]) -> tuple[float, float]:
@@ -69,7 +70,7 @@ def score_telemetry_point(
                 TelemetryData.ts < ts,
             )
             .order_by(TelemetryData.ts.desc())
-            .limit(200)
+            .limit(500)
             .all()
         )
 
@@ -83,6 +84,14 @@ def score_telemetry_point(
 
         if stddev < 1e-9:
             # All values identical — Z-score undefined, skip
+            return None
+
+        # Guard: stddev too small means window not yet representative
+        # Minimum stddev relative to mean — prevents false positives on startup
+        # e.g. vibration mean=0.3, min_stddev=0.3*0.01=0.003
+        # Only score if stddev is at least 1% of mean OR absolute 0.01
+        min_stddev = max(abs(mean) * 0.01, 0.01)
+        if stddev < min_stddev:
             return None
 
         z_score   = (value - mean) / stddev

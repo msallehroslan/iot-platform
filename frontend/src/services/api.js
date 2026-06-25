@@ -6,7 +6,7 @@
 
 const BASE_URL =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ||
-  "http://localhost:8000";
+  "https://api.ioteratechnologies.com";
 
 export const API_BASE = `${BASE_URL}/api/v1`;
 export const WS_BASE  = BASE_URL.replace(/^http/, "ws");

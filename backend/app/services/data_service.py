@@ -582,6 +582,16 @@ def get_unified_intelligence(
 
     confidence = "high" if (has_baseline and has_health) else "medium" if has_health else "low"
 
+    # Pump Digital Twin — fetch efficiency from twin server (non-fatal)
+    efficiency = None
+    try:
+        import httpx
+        resp = httpx.get("http://localhost:8001/intelligence", timeout=2.0)
+        if resp.status_code == 200:
+            efficiency = resp.json().get("efficiency")
+    except Exception:
+        pass
+
     return {
         "device_id":      device_id,
         "device_name":    device_name,
@@ -591,12 +601,13 @@ def get_unified_intelligence(
         "recommendation": recommendation,
         "confidence":     confidence,
 
-        "telemetry": telemetry,
-        "alarms":    alarms,
-        "baseline":  baseline,
-        "anomaly":   anomaly,
-        "health":    health,
-        "trends":    trends,
+        "telemetry":  telemetry,
+        "alarms":     alarms,
+        "baseline":   baseline,
+        "anomaly":    anomaly,
+        "health":     health,
+        "trends":     trends,
+        "efficiency": efficiency,
 
         "context_flags": {
             "has_baseline":  has_baseline,

@@ -3,6 +3,8 @@ app/main.py — FastAPI application entry point.
 FIX 7:  MQTT broker configured via env vars (no public broker default warning)
 FIX 11: APScheduler runs telemetry retention purge daily
 FIX 13: /health does a real DB ping, returns 503 if Postgres is down
+BUG-03: Removed duplicate intelligence router registration
+BUG-10: slow_loop background task now started in lifespan
 """
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +18,19 @@ from app.core.config import settings
 from app.core.auth_deps import get_current_user_id
 from app.core.database import engine, Base, get_db
 from app.models import models
-from app.routers import intelligence, intelligence_data
+
+# ── BUG-03: Only import intelligence_data router ──────────────────────────────
+# intelligence.py registers: /chat, /rca, /trend, /summary
+# intelligence_data.py registers: /anomalies, /baseline, /health, /alarm-action,
+#   /schedule-rpc, /alarm-explain, /compare, /report/daily, /usage, /unified
+# intelligence_rca.py registers: /trend, /rca, /summary (same as intelligence.py)
+#
+# DECISION: intelligence.py is the canonical router for /chat + /rca + /trend.
+#           intelligence_data.py is canonical for all data/intelligence endpoints.
+#           intelligence_rca.py is NOT registered — its routes are in intelligence.py.
+#           This eliminates all duplicate route registrations.
+from app.routers import intelligence
+from app.routers import intelligence_data
 from app.routers import (
     auth, devices, telemetry, alarms, customers,
     dashboard, dashboards, ws, user_dashboards,
@@ -46,7 +60,6 @@ def create_tables_with_retry(retries: int = 5, delay: int = 3) -> None:
 async def lifespan(app: FastAPI):
     create_tables_with_retry()
 
-    # Phase 4: Redis manager startup (no-op if REDIS_URL not set)
     # Phase 11: start Redis cache service
     await _cache_service.setup(settings.REDIS_URL)
 
@@ -58,18 +71,28 @@ async def lifespan(app: FastAPI):
     from app.services.mqtt_client import mqtt_client
     mqtt_client.start(loop=asyncio.get_running_loop())
 
-    # FIX 11: daily telemetry retention purge + ingest_metrics cleanup
+    # BUG-10: Start slow loop intelligence engine
+    # SlowLoopEngine runs every 5s — computes degradation velocity,
+    # anomaly persistence, failure probability, and ranked recommendations.
+    # Without this, slow_intel is always empty in TAAT context.
+    try:
+        from app.services.slow_loop_intelligence import slow_loop
+        await slow_loop.start()
+        logger.info("SlowLoopEngine started")
+    except Exception as exc:
+        logger.warning("SlowLoopEngine failed to start (non-fatal): %s", exc)
+
     from app.services.telemetry_service import purge_old_telemetry
     from app.core.database import SessionLocal
     import asyncio as _asyncio
 
+    # Daily telemetry retention purge + ingest_metrics cleanup
     async def _daily_purge():
         while True:
             await _asyncio.sleep(86400)  # 24h
             db = SessionLocal()
             try:
                 purge_old_telemetry(db)
-                # Purge ingest_metrics older than 2 hours (only need last 1 min window)
                 from app.models.models import IngestMetric
                 from datetime import datetime as _dt, timezone as _tz, timedelta
                 cutoff = _dt.now(_tz.utc) - timedelta(hours=2)
@@ -80,18 +103,17 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # FIX 8: offline detection — check every 2 minutes, not every 60s
+    # Offline detection — check every 2 minutes
     from app.models.models import Device, DeviceStatus
     from datetime import datetime, timezone, timedelta
     from sqlalchemy import update as sa_update
 
     async def _offline_check():
         while True:
-            await _asyncio.sleep(120)  # every 2 min — less pool pressure
+            await _asyncio.sleep(120)
             db = SessionLocal()
             try:
                 cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
-                # Single UPDATE instead of SELECT + loop
                 result = db.execute(
                     sa_update(Device)
                     .where(Device.status == DeviceStatus.ACTIVE)
@@ -110,10 +132,10 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # Phase 7: Nightly baseline update
+    # Nightly baseline update
     async def _nightly_baseline():
         while True:
-            await _asyncio.sleep(86400)  # every 24h
+            await _asyncio.sleep(86400)
             db = SessionLocal()
             try:
                 from app.services.baseline_service import update_all_baselines
@@ -124,10 +146,10 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # Phase 7: Hourly health scoring
+    # Hourly health scoring
     async def _hourly_health():
         while True:
-            await _asyncio.sleep(3600)  # every 1h
+            await _asyncio.sleep(3600)
             db = SessionLocal()
             try:
                 from app.services.health_service import score_all_devices
@@ -138,14 +160,12 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
-    # Phase 11: Scheduled RPC dispatcher — checks due commands every 5s.
-    # It runs immediately on startup, then sleeps, so due commands do not wait 30s.
+    # Scheduled RPC dispatcher — checks due commands every 5s
     async def _scheduled_rpc_dispatcher():
         while True:
             db = SessionLocal()
             try:
                 from app.services.scheduled_rpc_service import dispatch_due_commands
-                logger.info("Scheduled RPC dispatcher tick")
                 n = await dispatch_due_commands(db)
                 if n:
                     logger.info("Scheduled RPC dispatcher fired %d command(s)", n)
@@ -165,17 +185,24 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Shutdown
     purge_task.cancel()
     offline_task.cancel()
     baseline_task.cancel()
     health_task.cancel()
     sched_rpc_task.cancel()
 
-    # Phase 4: Redis manager shutdown
+    # BUG-10: Stop slow loop engine
+    try:
+        from app.services.slow_loop_intelligence import slow_loop
+        await slow_loop.stop()
+        logger.info("SlowLoopEngine stopped")
+    except Exception:
+        pass
+
     if hasattr(_ws_manager, "shutdown"):
         await _ws_manager.shutdown()
     mqtt_client.stop()
-    # Phase 11: cache teardown
     await _cache_service.teardown()
 
 
@@ -189,7 +216,7 @@ app = FastAPI(
 )
 
 
-# ── CORS middleware — must be before request tracing ─────────────────────────
+# ── CORS middleware ───────────────────────────────────────────────────────────
 import time, uuid as _uuid
 
 app.add_middleware(
@@ -217,27 +244,33 @@ async def request_tracing_middleware(request, call_next):
     return response
 
 
+# ── Router registration ───────────────────────────────────────────────────────
+# BUG-03: intelligence_rca router is NOT registered here.
+#         Its routes (/trend, /rca, /summary) are served by intelligence.router.
+#         intelligence_data.router_data serves all other intelligence endpoints.
+#         No duplicate routes.
 
-app.include_router(auth.router,              prefix="/api/v1")
-app.include_router(devices.router,           prefix="/api/v1")
-app.include_router(telemetry.router,         prefix="/api/v1")
-app.include_router(alarms.router,            prefix="/api/v1")
-app.include_router(customers.router,         prefix="/api/v1")
-app.include_router(dashboard.router,         prefix="/api/v1")
-app.include_router(dashboards.router,        prefix="/api/v1")
-app.include_router(ws.router,                prefix="/api/v1")
-app.include_router(user_dashboards.router,   prefix="/api/v1")
-app.include_router(threshold_rules.router,   prefix="/api/v1")
-app.include_router(rpc.router,               prefix="/api/v1")
-app.include_router(widget_templates.router,  prefix="/api/v1")
-app.include_router(metrics.router,           prefix="/api/v1")
-app.include_router(api_keys.router,          prefix="/api/v1")
-app.include_router(observability.router,     prefix="/api/v1")
-app.include_router(intelligence.router,      prefix="/api/v1")
-app.include_router(intelligence_data.router_data, prefix="/api/v1")
-app.include_router(widgets.router,           prefix="/api/v1")
+app.include_router(auth.router,                       prefix="/api/v1")
+app.include_router(devices.router,                    prefix="/api/v1")
+app.include_router(telemetry.router,                  prefix="/api/v1")
+app.include_router(alarms.router,                     prefix="/api/v1")
+app.include_router(customers.router,                  prefix="/api/v1")
+app.include_router(dashboard.router,                  prefix="/api/v1")
+app.include_router(dashboards.router,                 prefix="/api/v1")
+app.include_router(ws.router,                         prefix="/api/v1")
+app.include_router(user_dashboards.router,            prefix="/api/v1")
+app.include_router(threshold_rules.router,            prefix="/api/v1")
+app.include_router(rpc.router,                        prefix="/api/v1")
+app.include_router(widget_templates.router,           prefix="/api/v1")
+app.include_router(metrics.router,                    prefix="/api/v1")
+app.include_router(api_keys.router,                   prefix="/api/v1")
+app.include_router(observability.router,              prefix="/api/v1")
+app.include_router(intelligence.router,               prefix="/api/v1")
+app.include_router(intelligence_data.router_data,     prefix="/api/v1")
+app.include_router(widgets.router,                    prefix="/api/v1")
 
 
+# ── System endpoints ──────────────────────────────────────────────────────────
 
 @app.get("/", tags=["System"])
 def root():
@@ -246,7 +279,7 @@ def root():
 
 @app.get("/health", tags=["System"])
 def health():
-    """FIX 13: real DB ping — returns 503 if Postgres is unreachable."""
+    """Real DB ping — returns 503 if Postgres is unreachable."""
     from sqlalchemy import text
     from app.core.database import SessionLocal
     db = SessionLocal()
@@ -277,4 +310,7 @@ def status(user_id: str = Depends(get_current_user_id)):
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     logger.exception("Unhandled exception: %s", exc)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error", "type": type(exc).__name__})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error", "type": type(exc).__name__}
+    )

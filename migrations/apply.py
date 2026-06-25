@@ -720,7 +720,6 @@ MIGRATIONS += [
 
 
 
-
 MIGRATIONS += [
     {
         "id":   "030_anomaly_scores",
@@ -821,31 +820,6 @@ MIGRATIONS += [
             CREATE INDEX IF NOT EXISTS ix_rpc_commands_scheduled
                 ON rpc_commands(scheduled_for)
                 WHERE status = 'SCHEDULED';
-        """,
-    },
-]
-
-MIGRATIONS += [
-    {
-        "id":   "035_pump_efficiency",
-        "desc": "Pump Digital Twin: efficiency history + RUL tracking table",
-        "sql":  """
-            CREATE TABLE IF NOT EXISTS pump_efficiency (
-                id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                device_id        UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-                ts               TIMESTAMPTZ NOT NULL DEFAULT now(),
-                efficiency       FLOAT,
-                delta_t          FLOAT,
-                head_m           FLOAT,
-                t_inlet          FLOAT,
-                t_outlet         FLOAT,
-                rul_days         FLOAT,
-                rul_confidence   VARCHAR(20),
-                degradation_rate FLOAT,
-                created_at       TIMESTAMPTZ DEFAULT now()
-            );
-            CREATE INDEX IF NOT EXISTS ix_pump_efficiency_device_ts
-                ON pump_efficiency(device_id, ts DESC);
         """,
     },
 ]

@@ -207,6 +207,8 @@ VALID_WIDGET_TYPES = {
     "anomaly_score", "baseline", "health_score",
     # TAAT v2
     "taat_insight",
+    # Pump Digital Twin
+    "pump_twin",
 }
 
 

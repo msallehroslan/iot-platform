@@ -213,6 +213,7 @@ function OverviewPage({ refreshKey, onToast }) {
   const fetchSummaries = (activeDevs) => {
     if (!activeDevs.length) return;
     lastSummaryRef.current = Date.now();
+    setSummaryLoading(true);
     Promise.allSettled(activeDevs.map(d=>intelligenceApi.summary(d.id).then(r=>({id:d.id,data:r}))))
       .then(results=>{
         const updates={};
@@ -220,7 +221,8 @@ function OverviewPage({ refreshKey, onToast }) {
         if(Object.keys(updates).length>0){
           setSummaries(prev=>({...prev,...updates}));
         }
-      });
+      })
+      .finally(()=>setSummaryLoading(false));
   };
 
   // Effect 1: run immediately when devices first load (hasFetched guard prevents re-runs)
@@ -313,7 +315,7 @@ function OverviewPage({ refreshKey, onToast }) {
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {active.slice(0,6).map(d=>{
               const s=summaries[d.id];
-              const health=s?.health||"UNKNOWN";
+              const health=s?.health||s?.health_label||"UNKNOWN";
               const hc=HEALTH_COLOR[health]||"#94a3b8";
               const hbg=HEALTH_BG[health]||"#f8fafc";
               const trends=s?.trends||{};
@@ -331,7 +333,7 @@ function OverviewPage({ refreshKey, onToast }) {
                   {/* Trend pills */}
                   {Object.keys(trends).length>0&&(
                     <div className="flex flex-wrap gap-1 mb-3">
-                      {Object.entries(trends).filter(([key])=>!["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal"].includes(key.toLowerCase())).slice(0,4).map(([key,trend])=>(
+                      {Object.entries(trends).filter(([key])=>!["latitude","longitude","lat","lng","lon","gps_lat","gps_lng","altitude","rssi","snr","battery","signal","led_state","pump_status","command_ack","last_command"].includes(key.toLowerCase())).slice(0,4).map(([key,trend])=>(
                         <span key={key} className="text-[9px] px-1.5 py-0.5 rounded-md font-medium" style={{background:"#F4F8FF",color:"#334866"}}>
                           {TREND_ICON[trend]||"?"} {key}
                         </span>
@@ -346,7 +348,8 @@ function OverviewPage({ refreshKey, onToast }) {
                       {insights.slice(0,2).map((ins,i)=>(
                         <p key={i} className="text-[10px] text-[#6B7F9F] leading-relaxed">{ins}</p>
                       ))}
-                      {!s&&<p className="text-[10px] text-[#94a3b8]">Waiting for analysis…</p>}
+                      {!s&&!summaryLoading&&<p className="text-[10px] text-[#94a3b8]">No data yet — send telemetry to this device first.</p>}
+                      {!s&&summaryLoading&&<p className="text-[10px] text-[#94a3b8]">Analysing…</p>}
                     </div>
                   )}
                   {/* Alarms badge */}

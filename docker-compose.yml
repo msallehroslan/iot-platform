@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    env_file: .env
+    volumes:
+      - /mnt/database/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - /mnt/database/redis:/data
+    command: redis-server --appendonly yes
+
+  backend:
+    build: ./backend
+    container_name: backend
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: https://api.ioteratechnologies.com
+    container_name: frontend
+    restart: always
+    ports:
+      - "3000:80"
+    volumes:
+      - /mnt/apps/iot-platform/certbot/www:/var/www/certbot:ro
+    depends_on:
+      - backend

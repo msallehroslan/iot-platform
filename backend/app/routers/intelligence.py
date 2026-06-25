@@ -253,50 +253,24 @@ Analyze this data and provide:
 Be concise, technical, and actionable. Avoid generic advice. Base everything on the actual data provided.
 Format your response with clear sections using the numbered headers above."""
 
-    # ── Call Claude API ───────────────────────────────────────────────────────
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        # Return structured analysis without LLM if no key configured
-        return {
-            "device_id": str(device_id),
-            "device_name": device.name,
-            "analysis": _rule_based_analysis(context),
-            "context": context,
-            "engine": "rule-based (set GROQ_API_KEY for AI)",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
+    # ── Call Ollama ───────────────────────────────────────────────────────────
+    api_key = "ollama"  # Ollama does not need an API key
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL_DEEP,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,
-                    "temperature": 0.3,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            analysis = data["choices"][0]["message"]["content"]
-
+        analysis = await _call_groq(
+            api_key, [{"role": "user", "content": prompt}],
+            max_tokens=4096, temperature=0.3,
+        )
         return {
             "device_id":    str(device_id),
             "device_name":  device.name,
             "analysis":     analysis,
             "context":      context,
-            "engine":       f"groq/{GROQ_MODEL_DEEP}",
+            "engine":       "ollama/qwen3:8b",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-
     except Exception as exc:
         logger.error("rca.llm_failed device=%s error=%s", device_id, exc)
-        # Fallback to rule-based analysis
         return {
             "device_id":    str(device_id),
             "device_name":  device.name,
@@ -335,10 +309,16 @@ async def device_summary(
     # Trends
     trends = get_all_key_trends(db, str(device_id), minutes=30)
 
-    # Build quick summary
-    rising  = [k for k, v in trends.items() if v["trend"] == "RISING"]
-    falling = [k for k, v in trends.items() if v["trend"] == "FALLING"]
-    spikes  = [k for k, v in trends.items() if v["trend"] in ("SPIKE", "DROP")]
+    # Build quick summary — exclude non-sensor keys
+    NON_SENSOR = {
+        "latitude","longitude","lat","lng","lon","gps_lat","gps_lng",
+        "altitude","rssi","snr","battery","signal",
+        "led_state","pump_status","command_ack","last_command",
+    }
+    sensor_trends = {k: v for k, v in trends.items() if k.lower() not in NON_SENSOR}
+    rising  = [k for k, v in sensor_trends.items() if v["trend"] == "RISING"]
+    falling = [k for k, v in sensor_trends.items() if v["trend"] == "FALLING"]
+    spikes  = [k for k, v in sensor_trends.items() if v["trend"] in ("SPIKE", "DROP")]
 
     health = "HEALTHY"
     insights = []
@@ -373,7 +353,7 @@ async def device_summary(
         "health":       health,
         "insights":     insights,
         "active_alarms": len(active_alarms),
-        "trends":       {k: v["trend"] for k, v in trends.items()},
+        "trends":       {k: v["trend"] for k, v in sensor_trends.items()},
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -442,40 +422,46 @@ class ChatRequest(BaseModel):
     pending_confirm: Optional[dict] = None  # pending RPC awaiting confirmation
 
 
-async def _call_groq(api_key: str, messages: list, max_tokens: int = 512, temperature: float = 0.4, model: str = None) -> str:
-    """Helper: call Groq and return text reply. Retries on 429/5xx with exponential backoff."""
-    import asyncio as _asyncio
-    use_model = model or GROQ_MODEL_FAST
-    delays = [1.0, 3.0]  # wait 1s then 3s before final attempt
-    last_exc = None
-    for attempt, delay in enumerate([0.0] + delays):
-        if delay:
-            await _asyncio.sleep(delay)
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={"model": use_model, "max_tokens": max_tokens,
-                          "messages": messages, "temperature": temperature},
-                )
-                if resp.status_code in (429, 500, 502, 503) and attempt < len(delays):
-                    logger.warning("_call_groq attempt %d status=%d — retrying", attempt + 1, resp.status_code)
-                    last_exc = httpx.HTTPStatusError(f"HTTP {resp.status_code}", request=resp.request, response=resp)
-                    continue
-                resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as exc:
-            last_exc = exc
-            if exc.response.status_code not in (429, 500, 502, 503) or attempt >= len(delays):
-                raise
-            logger.warning("_call_groq attempt %d status=%d — retrying", attempt + 1, exc.response.status_code)
-        except httpx.TimeoutException as exc:
-            last_exc = exc
-            if attempt >= len(delays):
-                raise
-            logger.warning("_call_groq attempt %d timeout — retrying", attempt + 1)
-    raise last_exc
+OLLAMA_URL   = "http://192.168.1.22:11434/api/generate"
+OLLAMA_MODEL = "qwen3:8b"
+
+async def _call_groq(api_key: str, messages: list, max_tokens: int = 4096, temperature: float = 0.4, model: str = None) -> str:
+    """Call Ollama Qwen3:8b — drop-in replacement for Groq."""
+    # Convert OpenAI-style messages to a single prompt string
+    prompt_parts = []
+    for m in messages:
+        role    = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "system":
+            prompt_parts.append("[SYSTEM]\n" + content)
+        elif role == "assistant":
+            prompt_parts.append("[ASSISTANT]\n" + content)
+        else:
+            prompt_parts.append("[USER]\n" + content)
+    prompt = "\n\n".join(prompt_parts)
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                OLLAMA_URL,
+                json={
+                    "model":       OLLAMA_MODEL,
+                    "prompt":      prompt,
+                    "stream":      False,
+                    "temperature": temperature,
+                    "options":     {"num_predict": max_tokens},
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Strip <think>...</think> tags from Qwen3 reasoning output
+            import re as _re
+            text = data.get("response", "")
+            text = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL).strip()
+            return text
+    except Exception as exc:
+        logger.error("_call_ollama failed: %s", exc)
+        raise
 
 
 # ── Groq model strategy ──────────────────────────────────────────────────────
@@ -670,7 +656,7 @@ Rules:
 - If intent is unclear or not a control command, respond with: null"""
 
     try:
-        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=150, temperature=0.1)
+        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=4096, temperature=0.1)
         result = result.strip()
         if result.lower() == "null" or not result.startswith("{"):
             return None
@@ -782,7 +768,7 @@ Examples:
 - If unclear → null"""
 
     try:
-        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=200, temperature=0.1)
+        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=4096, temperature=0.1)
         result = result.strip()
         if result.lower() == "null" or not result.startswith("{"):
             return None
@@ -1096,7 +1082,7 @@ Examples:
 - If unclear → null"""
 
     try:
-        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=200, temperature=0.1)
+        result = await _call_groq(api_key, [{"role": "user", "content": parse_prompt}], max_tokens=4096, temperature=0.1)
         result = result.strip()
         if result.lower() == "null" or not result.startswith("{"):
             return None
@@ -1299,7 +1285,7 @@ async def ai_chat(
         record_action_outcome, record_incident, get_relevant_memories, format_for_prompt
     )
 
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
 
     # ── Gather tenant + devices ───────────────────────────────────────────────
     from app.models.models import Tenant as _TenantModel
@@ -1326,21 +1312,7 @@ async def ai_chat(
         (m.content for m in reversed(body.messages) if m.role == "user"), ""
     )
 
-    # ── Rule-based fallback (no API key) ─────────────────────────────────────
-    if not api_key:
-        from app.services.taat_tools import tool_get_active_alarms
-        alarm_count = sum(
-            tool_get_active_alarms(db, d["id"]).get("count", 0)
-            for d in devices[:5]
-        )
-        return {
-            "reply": (
-                f"**{len(devices)} device(s)** connected. "
-                f"**{alarm_count} active alarm(s)**. "
-                "Add GROQ_API_KEY to Render to enable full AI capabilities."
-            ),
-            "engine": "rule-based",
-        }
+    # ── No API key guard needed — using Ollama ───────────────────────────────
 
     # ── Rate limit ────────────────────────────────────────────────────────────
     rate_info = _check_groq_rate_limit(db, str(current_user.id), getattr(current_user, "email", ""))
@@ -1364,6 +1336,11 @@ async def ai_chat(
 
     # ── Step 2: Build context ─────────────────────────────────────────────────
     device_id_str = str(body.device_id) if body.device_id else None
+    if not device_id_str and devices:
+        device_id_str = devices[0]["id"]
+    # Auto-detect device_id if not provided — use single device or first device
+    if not device_id_str and devices:
+        device_id_str = devices[0]["id"] if len(devices) >= 1 else None
     try:
         ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
         try:
@@ -1714,6 +1691,7 @@ async def ai_chat(
         ctx          = ctx,
         current_user = current_user,
         confirm_mode = confirm_mode,
+        message      = last_user_msg,
     )
 
     # ── Step 10: Build Groq messages ──────────────────────────────────────────
@@ -1786,12 +1764,32 @@ async def ai_chat(
             ),
         })
 
+    # Inject daily comparison as hard system message so LLM cannot ignore it
+    if ctx.get("daily_comparison"):
+        dc = ctx["daily_comparison"]
+        all_cmp = dc.get("all_comparisons") or []
+        if all_cmp:
+            cmp_text = "\n".join(all_cmp)
+        elif dc.get("comparison") and dc.get("comparison") not in ("no data", ""):
+            cmp_text = dc.get("comparison", "")
+        else:
+            cmp_text = ""
+        if cmp_text:
+            chat_messages.append({
+                "role": "system",
+                "content": (
+                    f"[REAL SENSOR DATA - USE THESE EXACT NUMBERS IN YOUR REPLY]\n"
+                    f"{cmp_text}\n"
+                    f"Do NOT say 'no data' or use 0.00. Use the numbers above."
+                )
+            })
+
     for msg in body.messages:
         chat_messages.append({"role": msg.role, "content": msg.content})
 
     # ── Step 11: Groq reply ───────────────────────────────────────────────────
     try:
-        reply = await _call_groq(api_key, chat_messages, max_tokens=700, temperature=0.4)
+        reply = await _call_groq(api_key, chat_messages, max_tokens=4096, temperature=0.4)
 
         return {
             "reply":            reply,
@@ -1821,104 +1819,6 @@ async def ai_chat(
 
 
 
-# ── (duplicate /chat removed — ai_chat above is the canonical endpoint) ───────
-
-async def _chat_unused(
-    body: dict,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """
-    AI Chatbot endpoint.
-    Accepts: {messages: [{role, content}], context: {devices, alarms}}
-    Returns: {reply: str, engine: str}
-    """
-    messages  = body.get("messages", [])
-    user_msg  = messages[-1]["content"] if messages else ""
-
-    # ── Gather platform context ───────────────────────────────────────────────
-    from app.models.models import LatestTelemetry
-    devices = db.query(Device).filter(
-        Device.tenant_id == current_user.tenant_id
-    ).limit(20).all()
-
-    active_alarms = db.query(Alarm).filter(
-        Alarm.device_id.in_([d.id for d in devices]),
-        Alarm.status.in_(["ACTIVE_UNACK", "ACTIVE_ACK"]),
-    ).limit(20).all()
-
-    # Latest telemetry per device
-    telemetry_ctx = {}
-    for device in devices[:5]:
-        rows = db.query(LatestTelemetry).filter(
-            LatestTelemetry.device_id == device.id
-        ).limit(10).all()
-        if rows:
-            telemetry_ctx[device.name] = {
-                r.key: float(r.value_num) if r.value_num is not None else r.value_str
-                for r in rows
-            }
-
-    system_prompt = f"""You are an IoT platform intelligence assistant for TriAxis Nexus.
-You have access to the following real-time platform data:
-
-DEVICES ({len(devices)} total):
-{chr(10).join(f"- {d.name} ({d.device_type}) — {d.status.value if hasattr(d.status,'value') else d.status}" for d in devices)}
-
-ACTIVE ALARMS ({len(active_alarms)} total):
-{chr(10).join(f"- {a.alarm_type} on device {a.device_id} — {a.severity.value if hasattr(a.severity,'value') else a.severity}" for a in active_alarms[:10]) or "None"}
-
-LATEST TELEMETRY:
-{chr(10).join(f"- {dev}: {vals}" for dev, vals in telemetry_ctx.items()) or "No data"}
-
-DEVICE KEYS (actual controllable/readable keys per device):
-{chr(10).join(f"- {name}: {json.dumps(keys)}" for name, keys in (_get_device_keys(db, device_list) if devices else {}).items()) or "No keys known yet — send telemetry first"}
-
-Answer questions about devices, alarms, telemetry, and platform health.
-You can execute RPC commands, acknowledge alarms, and manage rules — but ONLY confirm actions that appear in a [SYSTEM: already executed] message. Never fabricate or assume an action was taken. If no action was executed, say so honestly.
-Be concise, technical, and helpful. If asked about something not in your context, say so clearly.
-Format responses clearly — use bullet points for lists, be direct."""
-
-    # Build message history for Groq
-    groq_messages = [{"role": "system", "content": system_prompt}]
-    for m in messages[-10:]:  # last 10 messages for context
-        groq_messages.append({"role": m["role"], "content": m["content"]})
-
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        return {
-            "reply": "AI chatbot requires GROQ_API_KEY. Add it to your Render environment variables (free at console.groq.com).",
-            "engine": "none",
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL_FAST,
-                    "messages": groq_messages,
-                    "max_tokens": 512,
-                    "temperature": 0.4,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            reply = data["choices"][0]["message"]["content"]
-
-        return {"reply": reply, "engine": f"groq/{GROQ_MODEL_FAST}"}
-
-    except Exception as exc:
-        logger.error("chat.failed error=%s", exc)
-        return {
-            "reply": f"Sorry, I encountered an error: {str(exc)}",
-            "engine": "error",
-        }
-
 
 # ── Phase 7: Anomaly Detection ────────────────────────────────────────────────
 
@@ -1926,7 +1826,7 @@ Format responses clearly — use bullet points for lists, be direct."""
 def get_anomalies(
     device_id: UUID,
     key: Optional[str] = None,
-    hours: int = 24,
+    hours: float = 24,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -2200,7 +2100,7 @@ async def explain_alarm(
         raise HTTPException(404, "Alarm not found")
 
     device = _assert_device(alarm.device_id, current_user, db)
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
 
     # Telemetry around alarm time (±10 min)
     t0 = alarm.start_ts or alarm.created_at
@@ -2245,8 +2145,7 @@ async def explain_alarm(
         "baseline":         baseline,
     }
 
-    if not api_key:
-        return {"alarm_id": str(alarm_id), "explanation": "Add GROQ_API_KEY for AI explanation.", "context": context}
+    # api_key not needed for Ollama — always proceed
 
     prompt = f"""Explain why this IoT alarm fired based on the data below.
 
@@ -2262,7 +2161,7 @@ Provide:
 Be concise and technical. Base everything on the actual data."""
 
     try:
-        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.2, model=GROQ_MODEL_DEEP)
+        explanation = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.2, model=GROQ_MODEL_DEEP)
         return {"alarm_id": str(alarm_id), "explanation": explanation, "context": context, "engine": f"groq/{GROQ_MODEL_DEEP}"}
     except Exception as exc:
         return {"alarm_id": str(alarm_id), "explanation": f"AI unavailable: {exc}", "context": context}
@@ -2281,7 +2180,7 @@ async def compare_device(
     Uses telemetry aggregates and alarm counts.
     """
     device = _assert_device(device_id, current_user, db)
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
 
     now  = datetime.now(timezone.utc)
     w0_start = now - timedelta(days=7)
@@ -2328,8 +2227,7 @@ async def compare_device(
         "last_week": last_week,
     }
 
-    if not api_key:
-        return {"device_id": str(device_id), "comparison": context, "insight": "Add GROQ_API_KEY for AI insight."}
+    # api_key not needed for Ollama — always proceed
 
     prompt = f"""Compare this IoT device's behaviour this week vs last week.
 
@@ -2344,7 +2242,7 @@ Provide:
 Be concise and data-driven."""
 
     try:
-        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=500, temperature=0.2, model=GROQ_MODEL_FAST)
+        insight = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.2, model=GROQ_MODEL_FAST)
         return {"device_id": str(device_id), "comparison": context, "insight": insight, "engine": f"groq/{GROQ_MODEL_FAST}"}
     except Exception as exc:
         return {"device_id": str(device_id), "comparison": context, "insight": f"AI unavailable: {exc}"}
@@ -2361,7 +2259,7 @@ async def daily_report(
     Generate a daily health report for all devices in the tenant.
     Summarises alarms, trends, health scores, and top issues.
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = "ollama"  # Ollama does not need an API key
     since_24h = datetime.now(timezone.utc) - timedelta(hours=24)
 
     devices = _scoped_devices(current_user, db).all()
@@ -2424,8 +2322,7 @@ async def daily_report(
         "devices":            report_data,
     }
 
-    if not api_key:
-        return {"report": summary, "narrative": "Add GROQ_API_KEY for AI narrative."}
+    # api_key not needed for Ollama — always proceed
 
     # Inject recent agent memory into report
     memory_context = ""
@@ -2496,7 +2393,7 @@ RULES:
 - Be concise and direct"""
 
     try:
-        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=600, temperature=0.3, model=GROQ_MODEL_DEEP)
+        narrative = await _call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=4096, temperature=0.3, model=GROQ_MODEL_DEEP)
         return {"report": summary, "narrative": narrative, "engine": f"groq/{GROQ_MODEL_DEEP}"}
     except Exception as exc:
         return {"report": summary, "narrative": f"AI unavailable: {exc}"}
@@ -2594,9 +2491,23 @@ def get_unified_device_intelligence(
     # ── Base: device-level summary ────────────────────────────────────────────
     result = get_unified_intelligence(db, device_id_str, device=device)
 
-    # ── Mode 2b: add enriched_keys array if ?keys= requested ─────────────────
+    # ── Mode 2b: add enriched_keys array ────────────────────────────────────
+    # ?keys=k1,k2  → enrich only those keys (widget passes its mapped keys)
+    # no ?keys=    → enrich all keys, max 15, skip non-numeric keys
     if keys:
-        key_list = [k.strip() for k in keys.split(",") if k.strip()]
+        key_list = [k.strip() for k in keys.split(",") if k.strip()][:15]
+    else:
+        # Use already-fetched telemetry from result — zero extra DB call
+        telem_values = result.get("telemetry", {}).get("values", {})
+        # Only numeric keys are meaningful for enrichment
+        key_list = [
+            k for k, v in telem_values.items()
+            if isinstance(v, (int, float)) and k not in (
+                "latitude", "longitude", "led_state", "command_ack"
+            )
+        ][:15]
+
+    if key_list:
         enriched = []
         for k in key_list:
             try:
@@ -2604,6 +2515,8 @@ def get_unified_device_intelligence(
             except Exception:
                 pass
         result["enriched_keys"] = enriched
+    else:
+        result["enriched_keys"] = []
 
     return result
 
@@ -2612,7 +2525,7 @@ def get_unified_device_intelligence(
 def get_widget_telemetry(
     device_id: UUID,
     key: str,
-    hours: int = 24,
+    hours: float = 24,
     limit: int = 200,
     resolution: str = "raw",
     db: Session = Depends(get_db),

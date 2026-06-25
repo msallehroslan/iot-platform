@@ -6,6 +6,51 @@ from app.routers.intelligence_shared import *
 
 router_rca = APIRouter(prefix="/intelligence", tags=["Intelligence"])
 
+
+def _rule_based_analysis(context: dict) -> str:
+    """Simple rule-based analysis when LLM is not available."""
+    lines = []
+    alarms = context.get("alarms_last_24h", [])
+    trends = context.get("current_trends", {})
+
+    active = [a for a in alarms if "ACTIVE" in a.get("status", "")]
+    if active:
+        lines.append(f"**1. Health Status** — WARNING: {len(active)} active alarm(s)")
+    else:
+        lines.append("**1. Health Status** — HEALTHY: No active alarms")
+
+    lines.append("\n**2. Root Cause Analysis**")
+    if alarms:
+        for a in alarms[:3]:
+            details = a.get("details", {})
+            lines.append(f"- {a['type']}: {details.get('message', 'threshold breached')}")
+    else:
+        lines.append("- No alarms in last 24 hours")
+
+    lines.append("\n**3. Trend Insights**")
+    for key, t in trends.items():
+        trend = t.get("trend", "UNKNOWN")
+        change = t.get("change_pct", 0)
+        lines.append(f"- {key}: {trend} ({change:+.1f}% over window)")
+
+    lines.append("\n**4. Risk Assessment**")
+    rising_critical = [k for k, v in trends.items()
+                      if v.get("trend") == "RISING" and abs(v.get("change_pct", 0)) > 20]
+    if rising_critical:
+        lines.append(f"- {', '.join(rising_critical)} rising rapidly — monitor closely")
+    else:
+        lines.append("- No immediate risk detected from current trends")
+
+    lines.append("\n**5. Recommended Actions**")
+    if active:
+        lines.append("1. Acknowledge and investigate active alarms")
+    if rising_critical:
+        lines.append(f"2. Check {rising_critical[0]} source — rapid increase detected")
+    lines.append("3. Monitor device telemetry for continued anomalies")
+
+    return "\n".join(lines)
+
+
 # ── Trend Detection ───────────────────────────────────────────────────────────
 
 @router_rca.get("/trend/{device_id}/{key}")
@@ -167,50 +212,22 @@ Analyze this data and provide:
 Be concise, technical, and actionable. Avoid generic advice. Base everything on the actual data provided.
 Format your response with clear sections using the numbered headers above."""
 
-    # ── Call Claude API ───────────────────────────────────────────────────────
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        # Return structured analysis without LLM if no key configured
-        return {
-            "device_id": str(device_id),
-            "device_name": device.name,
-            "analysis": _rule_based_analysis(context),
-            "context": context,
-            "engine": "rule-based (set GROQ_API_KEY for AI)",
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
+    # ── Call Ollama via _call_groq ────────────────────────────────────────────
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL_DEEP,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 1024,
-                    "temperature": 0.3,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            analysis = data["choices"][0]["message"]["content"]
-
+        analysis = await _call_groq(
+            "ollama", [{"role": "user", "content": prompt}],
+            max_tokens=4096, temperature=0.3,
+        )
         return {
             "device_id":    str(device_id),
             "device_name":  device.name,
             "analysis":     analysis,
             "context":      context,
-            "engine":       f"groq/{GROQ_MODEL_DEEP}",
+            "engine":       "ollama/qwen3:8b",
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-
     except Exception as exc:
         logger.error("rca.llm_failed device=%s error=%s", device_id, exc)
-        # Fallback to rule-based analysis
         return {
             "device_id":    str(device_id),
             "device_name":  device.name,
@@ -241,7 +258,7 @@ async def device_summary(
         db.query(Alarm)
         .filter(
             Alarm.device_id == device_id,
-            Alarm.status.in_(["ACTIVE_UNACK", "ACTIVE_ACK"]),
+            Alarm.status.in_(["ACTIVE_UNACK", "ACTIVE_ACK"]),  # works with string enum
         )
         .all()
     )
@@ -290,4 +307,3 @@ async def device_summary(
         "trends":       {k: v["trend"] for k, v in trends.items()},
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
-

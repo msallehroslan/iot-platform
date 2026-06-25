@@ -49,7 +49,10 @@ export function safeRange(arr, minSpread = 1) {
   // Add 10% padding top and bottom so sudden spikes/drops don't dominate the axis
   const spread = mx - mn;
   const pad = spread * 0.10;
-  return { mn: mn - pad, mx: mx + pad, rng: (mx + pad) - (mn - pad) };
+  // Don't go below 0 for positive-only data (e.g. bird count, temperature in C above 0)
+  const paddedMn = mn >= 0 ? Math.max(0, mn - pad) : mn - pad;
+  const paddedMx = mx + pad;
+  return { mn: paddedMn, mx: paddedMx, rng: paddedMx - paddedMn };
 }
 
 export function sanitizePoints(pts) {
@@ -57,6 +60,9 @@ export function sanitizePoints(pts) {
   const out = [];
   for (const p of pts) {
     if (!p || !p.ts) continue;
+    // Guard: invalid ts would produce NaN coords in time-based charts
+    const t = typeof p.ts === "number" ? p.ts : new Date(p.ts).getTime();
+    if (!Number.isFinite(t)) continue;
     const n = typeof p.value === "number" ? p.value : parseFloat(p.value);
     if (Number.isFinite(n)) out.push({ ts: p.ts, value: n });
   }
@@ -89,6 +95,8 @@ export function makePxTime(minTs, maxTs, pad, w) {
   const denom = Math.max(1, maxTs - minTs);
   return function px(ts) {
     const t = typeof ts === "number" ? ts : new Date(ts).getTime();
+    // Guard: invalid date string → NaN → fall back to left edge
+    if (!Number.isFinite(t)) return pad.l;
     const x = pad.l + ((t - minTs) / denom) * w;
     return Number.isFinite(x) ? x : pad.l;
   };
@@ -110,11 +118,11 @@ export function buildAreaPath(linePath, x0, xN, baseY) {
   return `${linePath} L${xN.toFixed(1)},${baseY.toFixed(1)} L${x0.toFixed(1)},${baseY.toFixed(1)} Z`;
 }
 
-export function buildArcPath(cx, cy, R, a1Deg, a2Deg) {
+export function buildArcPath(cx, cy, R, a1Deg, a2Deg, sweep = 1) {
   const r2d = (d) => (d * Math.PI) / 180;
   const x1 = cx + R * Math.cos(r2d(a1Deg)), y1 = cy + R * Math.sin(r2d(a1Deg));
   const x2 = cx + R * Math.cos(r2d(a2Deg)), y2 = cy + R * Math.sin(r2d(a2Deg));
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return "";
   const lg = Math.abs(a2Deg - a1Deg) > 180 ? 1 : 0;
-  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg} 1 ${x2.toFixed(1)},${y2.toFixed(1)}`;
+  return `M${x1.toFixed(1)},${y1.toFixed(1)} A${R},${R} 0 ${lg} ${sweep} ${x2.toFixed(1)},${y2.toFixed(1)}`;
 }

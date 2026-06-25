@@ -271,7 +271,7 @@ def record_incident(
     save_memory(db, tenant_id, "incident", content, user_id=user_id)
 
 
-def record_action_outcome(
+def record_action_outcome_simple(
     db: Session,
     tenant_id: UUID,
     action_type: str,
@@ -281,7 +281,11 @@ def record_action_outcome(
     detail: str = "",
     user_id: Optional[UUID] = None,
 ) -> None:
-    """Record the outcome of an executed action for future TAAT context."""
+    """
+    Record the outcome of an executed action for future TAAT context.
+    Use this when you have raw action_type/device_name/params fields.
+    For Plan+decision objects use record_action_outcome() instead.
+    """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     # Part 1: use truthful status — never store SUCCESS when unverified
     if success and detail and "confirmed" in detail.lower():

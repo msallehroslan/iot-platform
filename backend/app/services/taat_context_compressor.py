@@ -177,19 +177,23 @@ def _compress_telemetry(telem: dict) -> dict:
 
 def _compress_health(health: dict) -> dict:
     """
-    Keep: health_score, health_label, rul_estimate.
-    Drop: raw sub-scores, breakdown arrays.
+    Keep: health_score, health_label, components breakdown, maintenance status.
+    Drop: raw timestamps, verbose sub-arrays.
 
-    BAD:  {health_score: 72, health_label: "FAIR", motor_score: 68, bearing_score: 75, ...12 more keys}
-    GOOD: {health_score: 72, health_label: "FAIR", rul_estimate: "~18 days"}
+    BUG-07 fix: components and maintenance_due are needed by build_system_prompt
+    to render the health component breakdown in the TAAT prompt.
     """
     if not health:
         return health
     return {
-        "health_score":  health.get("health_score"),
-        "health_label":  health.get("health_label", "UNKNOWN"),
-        "rul_estimate":  health.get("rul_estimate") or health.get("rul_days"),
-        "degrading":     health.get("degrading", False),
+        "health_score":          health.get("health_score"),
+        "health_label":          health.get("health_label", "UNKNOWN"),
+        "rul_estimate":          health.get("rul_estimate") or health.get("rul_days"),
+        "degrading":             health.get("degrading", False),
+        "maintenance_due":       health.get("maintenance_due", False),
+        "maintenance_reason":    health.get("maintenance_reason"),
+        "predicted_failure_hrs": health.get("predicted_failure_hrs"),
+        "components":            health.get("components", {}),
     }
 
 
@@ -230,9 +234,10 @@ def _compress_anomalies(anomalies: dict) -> dict:
                     top_keys.append(label)
 
     return {
-        "anomaly_count":     count,
+        "anomaly_count":      count,
         "most_anomalous_key": most_anom,
-        "top_anomalous":     top_keys[:3],
+        "top_anomalous":      top_keys[:3],
+        "recent_anomalies":   anomalies.get("recent_anomalies", [])[:3],
     }
 
 

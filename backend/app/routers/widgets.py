@@ -129,7 +129,7 @@ def _value_card_data(db, device_id, device, key: str = "", **_):
 
 def _line_chart_data(
     db, device_id, device,
-    key: str = "", hours: int = 24, limit: int = 200,
+    key: str = "", hours: float = 24, limit: int = 200,
     resolution: str = "raw", **_
 ):
     return {
@@ -143,7 +143,7 @@ def _line_chart_data(
 
 def _bar_chart_data(
     db, device_id, device,
-    key: str = "", hours: int = 24, limit: int = 200,
+    key: str = "", hours: float = 24, limit: int = 200,
     resolution: str = "raw", **_
 ):
     result = get_aggregated_telemetry(
@@ -235,7 +235,7 @@ def _health_score_data(db, device_id, device, **_):
     }
 
 
-def _anomaly_score_data(db, device_id, device, key: str = "", hours: int = 24, **_):
+def _anomaly_score_data(db, device_id, device, key: str = "", hours: float = 24, **_):
     anomaly = get_anomaly_summary(db, device_id, hours=hours)
     result = {
         "widget_type": "anomaly_score",
@@ -265,7 +265,7 @@ def _baseline_data(db, device_id, device, key: str = "", **_):
 
 def _multi_axis_chart_data(
     db, device_id, device,
-    keys: str = "", hours: int = 24, limit: int = 200,
+    keys: str = "", hours: float = 24, limit: int = 200,
     resolution: str = "raw", **_
 ):
     """Multi-axis: fetch history for multiple comma-separated keys."""
@@ -299,7 +299,7 @@ def _multi_axis_chart_data(
 
 def _timeseries_table_data(
     db, device_id, device,
-    key: str = "", hours: int = 1, limit: int = 50, **_
+    key: str = "", hours: float = 1, limit: int = 50, **_
 ):
     result = get_aggregated_telemetry(
         db, device_id, key,
@@ -393,7 +393,7 @@ def get_widget_data(
     type:       str           = Query(..., description="Widget type — gauge, value_card, line_chart, …"),
     key:        str           = Query("",  description="Primary telemetry key"),
     keys:       str           = Query("",  description="Comma-separated keys (multi_axis_chart, pie_chart)"),
-    hours:      int           = Query(24,  description="History window in hours"),
+    hours:      float         = Query(24,  description="History window in hours"),
     limit:      int           = Query(200, description="Max data points"),
     resolution: str           = Query("raw", description="raw | 5min | 1h | 1d"),
     minutes:    int           = Query(30,  description="Trend window in minutes"),
@@ -471,7 +471,7 @@ def widget_value_card(
 def widget_line_chart(
     device_id:  UUID,
     key:        str = Query(""),
-    hours:      int = Query(24),
+    hours:      float = Query(24),
     limit:      int = Query(200),
     resolution: str = Query("raw"),
     db:         Session = Depends(get_db),
@@ -485,7 +485,7 @@ def widget_line_chart(
 def widget_bar_chart(
     device_id:  UUID,
     key:        str = Query(""),
-    hours:      int = Query(24),
+    hours:      float = Query(24),
     limit:      int = Query(200),
     resolution: str = Query("raw"),
     db:         Session = Depends(get_db),
@@ -499,7 +499,7 @@ def widget_bar_chart(
 def widget_multi_axis(
     device_id:  UUID,
     keys:       str = Query(""),
-    hours:      int = Query(24),
+    hours:      float = Query(24),
     limit:      int = Query(200),
     resolution: str = Query("raw"),
     db:         Session = Depends(get_db),
@@ -566,7 +566,7 @@ def widget_health_score(
 def widget_anomaly_score(
     device_id: UUID,
     key:   str = Query(""),
-    hours: int = Query(24),
+    hours: float = Query(24),
     db:    Session = Depends(get_db),
     current_user   = Depends(get_current_user),
 ):
@@ -589,7 +589,7 @@ def widget_baseline(
 def widget_timeseries_table(
     device_id: UUID,
     key:   str = Query(""),
-    hours: int = Query(1),
+    hours: float = Query(1),
     limit: int = Query(50),
     db:    Session = Depends(get_db),
     current_user   = Depends(get_current_user),

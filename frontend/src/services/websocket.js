@@ -238,8 +238,8 @@ function _connect(deviceId) {
   ws.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data);
-      if (msg.type === "telemetry" && msg.values) {
-        Object.assign(state.pendingValues, msg.values);
+      if (msg.type === "telemetry" && (msg.values || msg.delta)) {
+        Object.assign(state.pendingValues, msg.values || msg.delta);
         if (!state.pendingTs || (msg.ts && msg.ts > state.pendingTs)) {
           state.pendingTs = msg.ts || state.pendingTs;
         }

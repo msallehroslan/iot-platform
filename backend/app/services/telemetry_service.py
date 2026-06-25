@@ -448,6 +448,36 @@ async def ingest_telemetry(
             try: db.rollback()
             except: pass
 
+    # Pump Digital Twin — forward reading to twin server (non-fatal)
+    if numeric_values:
+        try:
+            import httpx
+            info = device.additional_info or {}
+            twin_payload = {
+                "timestamp":     ts.isoformat(),
+                "T_in":          values.get(info.get("key_temp_inlet",   ""), None),
+                "T_out":         values.get(info.get("key_temp_outlet",  ""), None),
+                "P_in":          values.get(info.get("key_pressure_in",  ""), None),
+                "P_out":         values.get(info.get("key_pressure_out", ""), None),
+                "flow_rate":     values.get(info.get("key_flow",         ""), None),
+                "motor_power":   values.get(info.get("key_motor_power",  ""), None),
+                "rpm":           values.get(info.get("key_speed",        ""), None),
+                "vib_nde":       values.get(info.get("key_vib_nde",      ""), None),
+                "temp_nde":      values.get(info.get("key_temp_nde",     ""), None),
+                "vib_de_motor":  values.get(info.get("key_vib_de",       ""), None),
+                "temp_de_motor": values.get(info.get("key_temp_de",      ""), None),
+                "vib_de_pump":   values.get(info.get("key_vib_de_pump",  ""), None),
+                "temp_de_pump":  values.get(info.get("key_temp_de_pump", ""), None),
+                "vib_pp":        values.get(info.get("key_vib_pp",       ""), None),
+            }
+            # Remove None values — only send keys that exist in this reading
+            twin_payload = {k: v for k, v in twin_payload.items() if v is not None}
+            if len(twin_payload) > 1:  # more than just timestamp
+                async with httpx.AsyncClient(timeout=2.0) as client:
+                    await client.post("http://localhost:8001/ingest", json=twin_payload)
+        except Exception as exc:
+            logger.debug("twin server ingest skipped: %s", exc)
+
     # Phase 11: Invalidate Redis cache for this device (non-fatal)
     try:
         from app.services.cache_service import cache as _cache

@@ -433,8 +433,6 @@ class RpcCommandCreate(BaseModel):
             raise ValueError("method must not be empty")
         if len(v) > 128:
             raise ValueError("method must be <= 128 characters")
-        # "set" is the standard industry method for key-value updates.
-        # params should be a dict of {key: value} pairs e.g. {"led1": true, "led2": false}
         return v.strip()
 
     @model_validator(mode="after")
@@ -543,16 +541,14 @@ WIDGET_CONFIG_SCHEMAS: Dict[str, Dict] = {
         "optional": ["device_id"],
     },
     "html_card": {
-        "required": ["content"],
-        "optional": ["decimals", "device_id"],
+        "required": [],
+        "optional": ["content", "decimals", "device_id"],
     },
     "rpc_button": {
         "required": ["method"],
         "optional": ["label", "params", "color", "device_id"],
     },
     "rpc_toggle": {
-        # Standard mode: requires "key" (monitor) and "param_key" (control, defaults to key)
-        # Legacy mode: method_on + method_off still accepted but no longer required
         "required": ["key"],
         "optional": ["param_key", "label", "color", "device_id", "method_on", "method_off"],
     },
@@ -567,6 +563,19 @@ WIDGET_CONFIG_SCHEMAS: Dict[str, Dict] = {
     "device_summary": {
         "required": [],
         "optional": ["keys", "device_id"],
+    },
+    # Pump Digital Twin
+    "pump_twin": {
+        "required": [],
+        "optional": [
+            "key_temp_nde", "key_vib_nde",
+            "key_temp_de", "key_vib_de",
+            "key_temp_de_pump", "key_vib_de_pump",
+            "key_vib_pp", "key_temp_inlet",
+            "key_temp_outlet", "key_pressure_in",
+            "key_pressure_out", "key_speed",
+            "head_m", "fluid_cp", "device_id",
+        ],
     },
 }
 
