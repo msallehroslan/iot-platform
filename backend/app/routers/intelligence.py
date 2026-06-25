@@ -1183,8 +1183,10 @@ async def _execute_rule_from_chat(
             if "threshold" in intent:  rule.threshold  = float(intent["threshold"])
             if "condition" in intent:  rule.condition  = intent["condition"]
             if "severity"  in intent:
-                try:    rule.severity = AS[intent["severity"].upper()]
-                except: pass
+                try:
+                    rule.severity = AS[intent["severity"].upper()]
+                except (KeyError, ValueError) as exc:
+                    logger.warning("Invalid severity value from chat intent: %r — %s", intent.get("severity"), exc)
             if "alarm_type" in intent: rule.alarm_type = intent["alarm_type"]
             if "key" in intent:        rule.key        = intent["key"]
 

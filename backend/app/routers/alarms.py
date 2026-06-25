@@ -134,7 +134,21 @@ def get_alarm(
 ):
     alarm = _get_alarm_owned(alarm_id, current_user, db)
     return AlarmWithDevice(
-        **{**alarm.__dict__, "device_name": alarm.device.name if alarm.device else None}
+        id=alarm.id,
+        device_id=alarm.device_id,
+        alarm_type=alarm.alarm_type,
+        severity=alarm.severity,
+        status=alarm.status,
+        details=alarm.details,
+        propagate=alarm.propagate,
+        start_ts=alarm.start_ts,
+        end_ts=alarm.end_ts,
+        ack_ts=alarm.ack_ts,
+        clear_ts=alarm.clear_ts,
+        ack_by=alarm.ack_by,
+        cleared_by=alarm.cleared_by,
+        created_at=alarm.created_at,
+        device_name=alarm.device.name if alarm.device else None,
     )
 
 

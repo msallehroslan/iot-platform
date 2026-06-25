@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS:   int = 7
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
     BASE_URL: str = ""
+    # Set ENVIRONMENT=production to harden certain endpoints (seed-demo, etc.)
+    ENVIRONMENT: str = "development"
 
     # ── Phase 4: Redis ────────────────────────────────────────────────────────
     # Set REDIS_URL to enable:
@@ -38,7 +40,10 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        origins = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        if self.ENVIRONMENT == "production" and "*" in origins:
+            raise ValueError("Wildcard CORS origin (*) is not allowed in production")
+        return origins
 
     @property
     def redis_enabled(self) -> bool:

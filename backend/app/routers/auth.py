@@ -152,7 +152,7 @@ def login(credentials: LoginRequest, request: Request, db: Session = Depends(get
 
     # Rate limit: 5 failed login attempts per IP per 15 minutes
     client_ip = request.client.host if request.client else "unknown"
-    ip_token = f"login_fail:{hashlib.md5(client_ip.encode()).hexdigest()[:16]}"
+    ip_token = f"login_fail:{hashlib.sha256(client_ip.encode()).hexdigest()[:32]}"
     window_start = datetime.now(timezone.utc) - timedelta(minutes=15)
     fail_row = db.query(RateLimit).filter(
         RateLimit.token == ip_token,
@@ -262,8 +262,9 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
             expires_at=expires_at,
         ))
         db.commit()
-        # TODO: send email with reset link containing token
-        logger.info("Password reset token for %s: %s", body.email, token)
+        # Email integration not yet configured — token is only written to server logs.
+        # Wire up an SMTP/SendGrid client here before enabling password reset in production.
+        logger.warning("PASSWORD RESET TOKEN (email not sent) — user=%s token=%s", body.email, token)
 
     return {"message": "If that email is registered, a reset link has been sent."}
 
@@ -300,6 +301,8 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
 
 @router.post("/seed-demo")
 def seed_demo(db: Session = Depends(get_db)):
+    if settings.ENVIRONMENT == "production":
+        raise HTTPException(status_code=403, detail="Seed endpoint disabled in production")
     existing = db.query(User).filter(User.email == "demo@triaxisai.com").first()
     if existing:
         return {"message": "Demo user already exists", "email": "demo@triaxisai.com"}

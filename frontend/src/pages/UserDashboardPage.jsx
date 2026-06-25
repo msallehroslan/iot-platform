@@ -159,6 +159,9 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
     (!isRpcButton || cfg.method?.trim()) &&
     (!isRpcToggle || cfg.key) &&
     (!isRpcInput  || cfg.method?.trim())
+  ) && (
+    // Gauge min must be less than max
+    type !== "gauge" || (cfg.min ?? 0) < (cfg.max ?? 100)
   );
 
   // ── Save handler ──────────────────────────────────────────────────────────
@@ -568,16 +571,23 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
 
               {/* Min / max (gauge) */}
               {type === "gauge" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Min</label>
-                    <input type="number" style={inp} value={cfg.min ?? 0} onChange={e => set("min", parseFloat(e.target.value))}/>
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Min</label>
+                      <input type="number" style={inp} value={cfg.min ?? 0} onChange={e => set("min", parseFloat(e.target.value))}/>
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Max</label>
+                      <input type="number" style={inp} value={cfg.max ?? 100} onChange={e => set("max", parseFloat(e.target.value))}/>
+                    </div>
                   </div>
-                  <div>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 6 }}>Max</label>
-                    <input type="number" style={inp} value={cfg.max ?? 100} onChange={e => set("max", parseFloat(e.target.value))}/>
-                  </div>
-                </div>
+                  {(cfg.min ?? 0) >= (cfg.max ?? 100) && (
+                    <div style={{ padding: "6px 10px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 7, fontSize: 11, color: "#dc2626" }}>
+                      Min must be less than Max
+                    </div>
+                  )}
+                </>
               )}
 
               {/* Alert threshold (value_card) */}
