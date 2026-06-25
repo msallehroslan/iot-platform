@@ -224,6 +224,21 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
                       </select>
                     </div>
                   ))}
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginTop: 4 }}>Efficiency (optional)</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Fallback head (m)</label>
+                      <input type="number" style={{ ...inp, fontSize: 12 }} placeholder="e.g. 30"
+                        value={cfg.head_m || ""}
+                        onChange={e => set("head_m", e.target.value ? parseFloat(e.target.value) : "")} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, color: "#94a3b8" }}>Fluid Cp (J/kg·K)</label>
+                      <input type="number" style={{ ...inp, fontSize: 12 }} placeholder="4186 (water)"
+                        value={cfg.fluid_cp || ""}
+                        onChange={e => set("fluid_cp", e.target.value ? parseFloat(e.target.value) : "")} />
+                    </div>
+                  </div>
                 </div>
               )}
               {needsMultiKey && (
