@@ -85,7 +85,9 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const needsKey      = ![
     "alarm_list","markdown","entity_table","html_card","pie_chart",
     "rpc_button","rpc_toggle","rpc_input","device_summary","map","multi_axis_chart",
+    "pump_twin",
   ].includes(type);
+  const isPumpTwin    = type === "pump_twin";
   const isStatusLight = type === "status_light";
   const needsMultiKey  = ["pie_chart","multi_axis_chart"].includes(type);
   const needsContent   = ["markdown","html_card"].includes(type);
@@ -193,6 +195,35 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
                     <option value="">— Select key —</option>
                     {availableKeys.map(k => <option key={k}>{k}</option>)}
                   </select>
+                </div>
+              )}
+              {isPumpTwin && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <label style={{ display: "block", fontSize: 12, fontWeight: 500, color: "#64748b", marginBottom: 2 }}>Sensor key mapping</label>
+                  {[
+                    { label: "NDE motor vibration",   key: "key_vib_nde"      },
+                    { label: "DE motor vibration",    key: "key_vib_de"       },
+                    { label: "DE pump vibration",     key: "key_vib_de_pump"  },
+                    { label: "PP pump vibration",     key: "key_vib_pp"       },
+                    { label: "NDE motor temperature", key: "key_temp_nde"     },
+                    { label: "DE motor temperature",  key: "key_temp_de"      },
+                    { label: "DE pump temperature",   key: "key_temp_de_pump" },
+                    { label: "Fluid inlet temp",      key: "key_temp_inlet"   },
+                    { label: "Fluid outlet temp",     key: "key_temp_outlet"  },
+                    { label: "Suction pressure",      key: "key_pressure_in"  },
+                    { label: "Discharge pressure",    key: "key_pressure_out" },
+                    { label: "Shaft speed (RPM)",     key: "key_speed"        },
+                  ].map(({ label, key }) => (
+                    <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
+                      <label style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{label}</label>
+                      <select style={{ ...inp, cursor: "pointer", fontSize: 12 }}
+                        value={cfg[key] || ""}
+                        onChange={e => set(key, e.target.value)}>
+                        <option value="">— not mapped —</option>
+                        {availableKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                      </select>
+                    </div>
+                  ))}
                 </div>
               )}
               {needsMultiKey && (
