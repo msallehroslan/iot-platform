@@ -16,6 +16,7 @@
  */
 
 import React, { useRef, useState, useMemo, Suspense } from "react";
+import * as THREE from "three";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 
@@ -132,6 +133,16 @@ function diagnoseFaults(
   if (isBad(pp) && !isBad(nde) && !isBad(deM) && !isBad(deP))
     faults.push({ component: "PP", message: "Pump end vibration elevated — cavitation or impeller damage. Check suction pressure and inlet valve.", severity: pp });
 
+  // ── NDE combinations ─────────────────────────────────────────────────────
+  if (isBad(nde) && isBad(deM) && !isBad(deP) && !isBad(pp))
+    faults.push({ component: "NDE + DE motor", message: "Both motor bearings elevated — possible rotor imbalance or motor-wide lubrication failure.", severity: nde === "CRITICAL" || deM === "CRITICAL" ? "CRITICAL" : "WARNING" });
+
+  if (isBad(nde) && isBad(pp) && !isBad(deM) && !isBad(deP))
+    faults.push({ component: "NDE + PP", message: "Motor NDE and pump end both elevated — possible shaft resonance or soft-foot foundation issue.", severity: nde === "CRITICAL" || pp === "CRITICAL" ? "CRITICAL" : "WARNING" });
+
+  if (isBad(nde) && isBad(deP) && !isBad(deM) && !isBad(pp))
+    faults.push({ component: "NDE + DE pump", message: "Motor NDE and pump bearing elevated — check shaft straightness and bearing preload.", severity: nde === "CRITICAL" || deP === "CRITICAL" ? "CRITICAL" : "WARNING" });
+
   // ── Combined patterns — shaft / alignment ────────────────────────────────
   if (isBad(deM) && isBad(deP) && !isBad(nde) && !isBad(pp))
     faults.push({ component: "DE motor + DE pump", message: "Both DE bearings elevated — shaft misalignment between motor and pump. Re-align coupling immediately.", severity: deM === "CRITICAL" || deP === "CRITICAL" ? "CRITICAL" : "WARNING" });
@@ -193,9 +204,8 @@ function PumpModel({ ndeColor, deMotorColor, dePumpColor, ppColor, rpm }) {
   const spin     = ((rpm || 1450) / 1450) * 4;
 
   useFrame((_, dt) => {
-    if (groupRef.current) groupRef.current.rotation.y += dt * 0.15;
-    if (impRef.current)   impRef.current.rotation.x   += dt * spin;
-    if (fanRef.current)   fanRef.current.rotation.x   += dt * spin * 0.9;
+    if (impRef.current) impRef.current.rotation.x += dt * spin;
+    if (fanRef.current) fanRef.current.rotation.x += dt * spin * 0.9;
   });
 
   const cast = (color, m = 0.45, r = 0.55) => (
@@ -507,7 +517,7 @@ function HealthArc({ score, color, size = 80 }) {
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
       <path d={bg}   fill="none" stroke="#e2e8f0" strokeWidth="6" strokeLinecap="round" />
-      {score != null && <path d={fill} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" />}
+      {score != null && score > 0 && <path d={fill} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" />}
       <text x={cx} y={cy + 2}  textAnchor="middle" fontSize="13" fontWeight="700" fill={score != null ? color : "#94a3b8"}>{score != null ? Math.round(score) : "?"}</text>
       <text x={cx} y={cy + 13} textAnchor="middle" fontSize="7"  fill="#94a3b8">/100</text>
     </svg>
@@ -614,10 +624,16 @@ export default function PumpTwinWidget({
       if (n >= 50) return "WARNING";
       return "NORMAL";
     }
-    // Pressure keys (kPa)
+    // Discharge pressure (kPa)
     if (configKey.startsWith("key_pressure_out")) {
       if (n < 370) return "CRITICAL";
       if (n < 400) return "WARNING";
+      return "NORMAL";
+    }
+    // Suction pressure (kPa) — low suction = cavitation risk
+    if (configKey.startsWith("key_pressure_in")) {
+      if (n < 200) return "CRITICAL";
+      if (n < 250) return "WARNING";
       return "NORMAL";
     }
     return "NORMAL";
@@ -652,10 +668,11 @@ export default function PumpTwinWidget({
     getKeyStatus("key_vib_de_pump"),
   );
 
-  // PP pump    = worst of: PP vib + inlet temp anomaly (cavitation)
+  // PP pump    = worst of: PP vib + inlet temp + suction pressure (cavitation)
   const ppStatus = worstStatus(
     getKeyStatus("key_vib_pp"),
     getKeyStatus("key_temp_inlet"),
+    getKeyStatus("key_pressure_in"),
   );
 
   const getRaw = (k) => {
@@ -704,7 +721,7 @@ export default function PumpTwinWidget({
 
       {/* Reason strip */}
       {overallReason && (
-        <div style={{ margin: "4px 10px 0", padding: "4px 8px", borderRadius: 6, background: overallStatus === "CRITICAL" ? "#fef2f2" : overallStatus === "WARNING" ? "#fffbeb" : "#f0fdf4", borderLeft: `3px solid ${headerColor}`, fontSize: 10, color: "#334155", lineHeight: 1.5, flexShrink: 0 }}>
+        <div style={{ margin: "4px 10px", padding: "4px 8px", borderRadius: 6, background: overallStatus === "CRITICAL" ? "#fef2f2" : overallStatus === "WARNING" ? "#fffbeb" : "#f0fdf4", borderLeft: `3px solid ${headerColor}`, fontSize: 10, color: "#334155", lineHeight: 1.5, flexShrink: 0 }}>
           {overallReason}
           {overallRecommendation && <span style={{ color: "#3b82f6", marginLeft: 4 }}>→ {overallRecommendation}</span>}
         </div>
@@ -728,8 +745,10 @@ export default function PumpTwinWidget({
               shadows={{ type: 2 }}
               camera={{ position: [3.5, 2.2, 5.5], fov: 38 }}
               gl={{ antialias: true, alpha: false, powerPreference: "high-performance" }}
-              style={{ background: "linear-gradient(180deg,#0b1220,#1e293b)" }}
-              onCreated={({ gl }) => { gl.shadowMap.type = 2; }}
+              onCreated={({ gl, scene }) => {
+                gl.shadowMap.type = 2;
+                scene.background = new THREE.Color("#0b1220");
+              }}
             >
               <ambientLight intensity={0.4} />
               <directionalLight position={[5, 8, 4]} intensity={1.1} castShadow
@@ -813,7 +832,7 @@ export default function PumpTwinWidget({
           <div style={{ padding: "8px 10px", height: "100%", overflowY: "auto" }}>
             {anomaly?.anomaly_count > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 8, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 11, color: "#dc2626" }}>
-                <span style={{ fontWeight: 700 }}>⚡ {anomaly.anomaly_count} anomaly detected</span>
+                <span style={{ fontWeight: 700 }}>⚡ {anomaly.anomaly_count} {anomaly.anomaly_count === 1 ? "anomaly" : "anomalies"} detected</span>
                 {anomaly.most_anomalous_key && <span style={{ color: "#7f1d1d" }}>Most critical: {anomaly.most_anomalous_key}</span>}
               </div>
             )}
