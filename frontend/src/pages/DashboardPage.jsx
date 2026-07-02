@@ -46,7 +46,7 @@ function Spinner() {
 // The old "Size" picker is removed — initial size now comes from
 // getDefaultPositionForType(), matching UserDashboardPage behaviour.
 // The user drags to resize after adding, same as the user dashboard.
-function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
+function WidgetModal({ availableKeys, onSave, onClose, editWidget, user, deviceId }) {
   const isEdit = !!editWidget;
   const [step,  setStep]  = useState(isEdit ? 2 : 1);
   const [type,  setType]  = useState(editWidget?.widget_type || "");
@@ -85,6 +85,7 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const needsKey      = ![
     "alarm_list","markdown","entity_table","html_card","pie_chart",
     "rpc_button","rpc_toggle","rpc_input","device_summary","map","multi_axis_chart",
+    "pump_twin",
   ].includes(type);
   const isStatusLight = type === "status_light";
   const needsMultiKey  = ["pie_chart","multi_axis_chart"].includes(type);
@@ -93,6 +94,7 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
   const isRpcToggle    = type === "rpc_toggle";
   const isRpcInput     = type === "rpc_input";
   const isMap          = type === "map";
+  const isPumpTwin     = type === "pump_twin";
   const isMultiAxisChart = type === "multi_axis_chart";
 
   const handleSave = () => {
@@ -118,6 +120,31 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
       position,
       ...(isEdit ? { id: editWidget.id } : {}),
     });
+
+    // Pump Twin — mirror the key mapping into device.additional_info so
+    // backend services (twin server ingest, TAAT sensor semantics) can
+    // resolve which telemetry key means what. Merge, never overwrite.
+    if (isPumpTwin && deviceId) {
+      const PUMP_KEY_SLOTS = [
+        "key_vib_nde", "key_vib_de", "key_vib_de_pump", "key_vib_pp",
+        "key_temp_nde", "key_temp_de", "key_temp_de_pump",
+        "key_temp_inlet", "key_temp_outlet",
+        "key_pressure_in", "key_pressure_out", "key_speed",
+      ];
+      (async () => {
+        try {
+          const dev  = await deviceApi.get(deviceId);
+          const info = { ...(dev?.additional_info || {}) };
+          PUMP_KEY_SLOTS.forEach(slot => {
+            if (cfg[slot]) info[slot] = cfg[slot];
+            else delete info[slot];            // clear slots un-mapped by the user
+          });
+          await deviceApi.update(deviceId, { additional_info: info });
+        } catch (e) {
+          console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
+        }
+      })();
+    }
   };
 
   const inp = {
@@ -349,6 +376,44 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user }) {
                       </select>
                     </div>
                   </div>
+                </div>
+              )}
+              {/* ── Pump Twin key mapping — same 12 slots as UserDashboardPage ── */}
+              {isPumpTwin && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ padding: "8px 12px", background: "#f0f9ff", borderRadius: 8, fontSize: 11, color: "#0369a1", lineHeight: 1.6 }}>
+                    Map your sensor keys to each pump monitoring point. All fields optional — widget works with whatever sensors you have.
+                  </div>
+                  {availableKeys.length === 0 ? (
+                    <div style={{ padding: "8px 12px", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, fontSize: 12, color: "#92400e" }}>
+                      No telemetry keys found for this device yet. Send data first, then re-open this modal.
+                    </div>
+                  ) : (
+                    [
+                      { label: "NDE motor vibration",    key: "key_vib_nde"      },
+                      { label: "DE motor vibration",     key: "key_vib_de"       },
+                      { label: "DE pump vibration",      key: "key_vib_de_pump"  },
+                      { label: "PP pump vibration",      key: "key_vib_pp"       },
+                      { label: "NDE motor temperature",  key: "key_temp_nde"     },
+                      { label: "DE motor temperature",   key: "key_temp_de"      },
+                      { label: "DE pump temperature",    key: "key_temp_de_pump" },
+                      { label: "Fluid inlet temp",       key: "key_temp_inlet"   },
+                      { label: "Fluid outlet temp",      key: "key_temp_outlet"  },
+                      { label: "Suction pressure",       key: "key_pressure_in"  },
+                      { label: "Discharge pressure",     key: "key_pressure_out" },
+                      { label: "Shaft speed (RPM)",      key: "key_speed"        },
+                    ].map(({ label, key }) => (
+                      <div key={key} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, alignItems: "center" }}>
+                        <label style={{ fontSize: 11, color: "#64748b", fontWeight: 500 }}>{label}</label>
+                        <select style={{ ...inp, cursor: "pointer", fontSize: 12 }}
+                          value={cfg[key] || ""}
+                          onChange={e => set(key, e.target.value)}>
+                          <option value="">— not mapped —</option>
+                          {availableKeys.map(k => <option key={k} value={k}>{k}</option>)}
+                        </select>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
               {["value_card","gauge","timeseries_table"].includes(type) && (
@@ -1033,6 +1098,7 @@ export default function DashboardPage({ device, onBack, user }) {
           onClose={() => { setShowModal(false); setEditingWidget(null); }}
           editWidget={editingWidget}
           user={user}
+          deviceId={device?.id}
         />
       )}
     </div>
