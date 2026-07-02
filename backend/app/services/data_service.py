@@ -23,6 +23,7 @@ All public functions return plain dicts — no SQLAlchemy models leak out.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -583,14 +584,23 @@ def get_unified_intelligence(
     confidence = "high" if (has_baseline and has_health) else "medium" if has_health else "low"
 
     # Pump Digital Twin — fetch efficiency from twin server (non-fatal)
+    # Only attempted when TWIN_SERVER_URL is set (e.g. http://localhost:8001).
+    # Prevents a dead HTTP call on every unified request when no twin exists,
+    # and passes device_id so per-device efficiency is possible.
     efficiency = None
-    try:
-        import httpx
-        resp = httpx.get("http://localhost:8001/intelligence", timeout=2.0)
-        if resp.status_code == 200:
-            efficiency = resp.json().get("efficiency")
-    except Exception:
-        pass
+    _twin_url = os.environ.get("TWIN_SERVER_URL", "").rstrip("/")
+    if _twin_url:
+        try:
+            import httpx
+            resp = httpx.get(
+                f"{_twin_url}/intelligence",
+                params={"device_id": device_id},
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                efficiency = resp.json().get("efficiency")
+        except Exception:
+            pass
 
     return {
         "device_id":      device_id,

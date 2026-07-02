@@ -177,6 +177,33 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
       position,
       ...(isEdit ? { id: editWidget.id } : {}),
     });
+
+    // Pump Twin — mirror the key mapping into device.additional_info so
+    // backend services (twin server ingest in telemetry_service.py, TAAT
+    // sensor semantics) can resolve which telemetry key means what.
+    // Merge, never overwrite: other additional_info fields are preserved.
+    // Best-effort: device PUT requires admin; failures are logged, not silent.
+    if (isPumpTwin && selectedDeviceId) {
+      const PUMP_KEY_SLOTS = [
+        "key_vib_nde", "key_vib_de", "key_vib_de_pump", "key_vib_pp",
+        "key_temp_nde", "key_temp_de", "key_temp_de_pump",
+        "key_temp_inlet", "key_temp_outlet",
+        "key_pressure_in", "key_pressure_out", "key_speed",
+      ];
+      (async () => {
+        try {
+          const dev  = await deviceApi.get(selectedDeviceId);
+          const info = { ...(dev?.additional_info || {}) };
+          PUMP_KEY_SLOTS.forEach(slot => {
+            if (cfg[slot]) info[slot] = cfg[slot];
+            else delete info[slot];            // clear slots un-mapped by the user
+          });
+          await deviceApi.update(selectedDeviceId, { additional_info: info });
+        } catch (e) {
+          console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
+        }
+      })();
+    }
   };
 
   const inp = {

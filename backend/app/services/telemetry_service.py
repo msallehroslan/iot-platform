@@ -449,11 +449,15 @@ async def ingest_telemetry(
             except: pass
 
     # Pump Digital Twin — forward reading to twin server (non-fatal)
-    if numeric_values:
+    # Only when TWIN_SERVER_URL is set; key names resolved from
+    # device.additional_info (kept in sync by the Pump Twin widget config).
+    _twin_url = os.environ.get("TWIN_SERVER_URL", "").rstrip("/")
+    if numeric_values and _twin_url:
         try:
             import httpx
             info = device.additional_info or {}
             twin_payload = {
+                "device_id":     str(device.id),
                 "timestamp":     ts.isoformat(),
                 "T_in":          values.get(info.get("key_temp_inlet",   ""), None),
                 "T_out":         values.get(info.get("key_temp_outlet",  ""), None),
@@ -472,9 +476,9 @@ async def ingest_telemetry(
             }
             # Remove None values — only send keys that exist in this reading
             twin_payload = {k: v for k, v in twin_payload.items() if v is not None}
-            if len(twin_payload) > 1:  # more than just timestamp
+            if len(twin_payload) > 2:  # more than just device_id + timestamp
                 async with httpx.AsyncClient(timeout=2.0) as client:
-                    await client.post("http://localhost:8001/ingest", json=twin_payload)
+                    await client.post(f"{_twin_url}/ingest", json=twin_payload)
         except Exception as exc:
             logger.debug("twin server ingest skipped: %s", exc)
 

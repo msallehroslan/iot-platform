@@ -160,6 +160,9 @@ function diagnoseFaults(
   if (isBad(deP) && isBad(pp) && !isBad(nde) && !isBad(deM))
     faults.push({ component: "DE pump + PP", message: "Pump bearing and pump end both elevated — possible impeller imbalance or bent shaft.", severity: deP === "CRITICAL" || pp === "CRITICAL" ? "CRITICAL" : "WARNING" });
 
+  if (isBad(deM) && isBad(pp) && !isBad(nde) && !isBad(deP))
+    faults.push({ component: "DE motor + PP", message: "Motor DE and pump end both elevated — coupling misalignment transmitting to pump end, or cavitation loading the drivetrain. Check alignment and suction conditions.", severity: deM === "CRITICAL" || pp === "CRITICAL" ? "CRITICAL" : "WARNING" });
+
   if (isBad(deM) && isBad(deP) && isBad(pp) && !isBad(nde))
     faults.push({ component: "DE motor + DE pump + PP", message: "All pump-side points critical — severe misalignment or pump mechanical failure. Stop pump for inspection.", severity: "CRITICAL" });
 
@@ -211,7 +214,9 @@ function PumpModel({ ndeColor, deMotorColor, dePumpColor, ppColor, rpm }) {
   const groupRef = useRef();
   const impRef   = useRef();
   const fanRef   = useRef();
-  const spin     = ((rpm || 1450) / 1450) * 4;
+  // rpm == null → key unmapped, assume nominal 1450 for visual effect
+  // rpm <= 0    → pump stopped, no rotation
+  const spin     = rpm == null ? 4 : rpm > 0 ? (rpm / 1450) * 4 : 0;
 
   useFrame((_, dt) => {
     if (impRef.current) impRef.current.rotation.x += dt * spin;
@@ -691,7 +696,7 @@ export default function PumpTwinWidget({
     return (v != null && !isNaN(parseFloat(v))) ? parseFloat(v) : null;
   };
 
-  const RPM  = getRaw("key_speed") || 1450;
+  const RPM  = getRaw("key_speed");          // null = unmapped, 0 = stopped
   const T1   = getRaw("key_temp_inlet");
   const T2   = getRaw("key_temp_outlet");
   const PIN  = getRaw("key_pressure_in");
@@ -699,7 +704,12 @@ export default function PumpTwinWidget({
   const Cp   = config?.fluid_cp || 4186;
   const H    = (PIN != null && POUT != null) ? (POUT - PIN) * 0.10197 : (config?.head_m || null);
   const liveEff = useMemo(() => calcEfficiency(T1, T2, H, Cp), [T1, T2, H, Cp]);
-  const dT   = (T1 != null && T2 != null) ? Math.abs(T2 - T1) : null;
+  const dT   = (T1 != null && T2 != null) ? (T2 - T1) : null;  // signed — negative reveals sensor swap / idle
+  // True when the widget config actually maps the keys needed for η
+  const effKeysMapped = !!(
+    config?.key_temp_inlet && config?.key_temp_outlet &&
+    (config?.head_m || (config?.key_pressure_in && config?.key_pressure_out))
+  );
 
   const rulDays         = efficiency?.rul_days         ?? null;
   const degradationRate = efficiency?.degradation_rate ?? null;
@@ -832,7 +842,7 @@ export default function PumpTwinWidget({
               ))}
             </div>
             <div style={{ position: "absolute", bottom: 8, right: 10, fontSize: 10, color: "#94a3b8", background: "rgba(15,23,42,0.6)", padding: "3px 8px", borderRadius: 6 }}>
-              Drag · Zoom · {RPM} RPM
+              Drag · Zoom{RPM != null ? ` · ${RPM} RPM${RPM <= 0 ? " (stopped)" : ""}` : ""}
             </div>
           </div>
         )}
@@ -912,7 +922,7 @@ export default function PumpTwinWidget({
               <div>
                 <div style={{ fontSize: 20, fontWeight: 700, color: efficiencyColor(liveEff), lineHeight: 1.1 }}>{liveEff != null ? `${liveEff.toFixed(1)}%` : "—"}</div>
                 <div style={{ fontSize: 10, color: "#64748b" }}>Thermodynamic efficiency</div>
-                <div style={{ fontSize: 10, fontWeight: 600, color: efficiencyColor(liveEff) }}>{liveEff == null ? "Configure sensor keys" : liveEff >= 80 ? "Excellent" : liveEff >= 65 ? "Good" : liveEff >= 50 ? "Warning — degrading" : "Critical — overhaul needed"}</div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: efficiencyColor(liveEff) }}>{liveEff == null ? (effKeysMapped ? "No thermal gradient (ΔT ≤ 0) — pump idle or awaiting data" : "Configure sensor keys") : liveEff >= 80 ? "Excellent" : liveEff >= 65 ? "Good" : liveEff >= 50 ? "Warning — degrading" : "Critical — overhaul needed"}</div>
               </div>
             </div>
 
@@ -951,7 +961,11 @@ export default function PumpTwinWidget({
             </div>
 
             <div style={{ padding: "7px 9px", borderRadius: 7, fontSize: 10, lineHeight: 1.7, background: liveEff == null ? "#f8fafc" : liveEff >= 65 ? "#f0fdf4" : liveEff >= 50 ? "#fffbeb" : "#fef2f2", border: `1px solid ${liveEff == null ? "#e2e8f0" : liveEff >= 65 ? "#bbf7d0" : liveEff >= 50 ? "#fde68a" : "#fecaca"}`, color: liveEff == null ? "#94a3b8" : liveEff >= 65 ? "#166534" : liveEff >= 50 ? "#92400e" : "#dc2626" }}>
-              {liveEff == null ? "Set key_temp_inlet and key_temp_outlet in widget config to enable thermodynamic efficiency calculation."
+              {liveEff == null ? (effKeysMapped
+                  ? (dT != null && dT < 0
+                      ? "ΔT is negative (outlet cooler than inlet) — sensors may be swapped, or the pump is idle. Verify key_temp_inlet / key_temp_outlet mapping."
+                      : "No usable thermal gradient yet — pump may be idle or data still arriving. Efficiency will appear once ΔT > 0.")
+                  : "Set key_temp_inlet and key_temp_outlet in widget config to enable thermodynamic efficiency calculation.")
                 : liveEff >= 80 ? "Pump is near-peak condition. Continue routine monitoring."
                 : liveEff >= 65 ? "Operating within normal range. Monitor monthly for degradation trend."
                 : liveEff >= 50 ? "⚠️ Efficiency degrading. Likely impeller wear or internal leakage. Inspect within 2 weeks."
