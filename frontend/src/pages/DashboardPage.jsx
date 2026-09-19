@@ -25,7 +25,7 @@ import {
 import {
   persistLayout, applyLayoutToWidgets, getDefaultPositionForType,
 } from "../services/widgetService.js";
-import { dashboardsHttp, telemetryApi, deviceApi, intelligenceApi } from "../services/api.js";       // injected into persistLayout
+import { dashboardsHttp, telemetryApi, deviceApi, intelligenceApi, syncPumpTwinKeys } from "../services/api.js";       // injected into persistLayout
 import { TelemetrySocket } from "../services/websocket.js";
 import GridLayout from "../components/dashboard/GridLayout.jsx";
 import { WidgetRenderer, WIDGET_REGISTRY } from "../components/widgets/index.jsx";
@@ -46,7 +46,7 @@ function Spinner() {
 // The old "Size" picker is removed — initial size now comes from
 // getDefaultPositionForType(), matching UserDashboardPage behaviour.
 // The user drags to resize after adding, same as the user dashboard.
-function WidgetModal({ availableKeys, onSave, onClose, editWidget, user, deviceId }) {
+function WidgetModal({ availableKeys, onSave, onClose, editWidget, user, deviceId, onWarn }) {
   const isEdit = !!editWidget;
   const [step,  setStep]  = useState(isEdit ? 2 : 1);
   const [type,  setType]  = useState(editWidget?.widget_type || "");
@@ -123,27 +123,14 @@ function WidgetModal({ availableKeys, onSave, onClose, editWidget, user, deviceI
 
     // Pump Twin — mirror the key mapping into device.additional_info so
     // backend services (twin server ingest, TAAT sensor semantics) can
-    // resolve which telemetry key means what. Merge, never overwrite.
+    // resolve which telemetry key means what.
+    // Best-effort: device PUT requires admin, so this silently no-ops for
+    // other roles — surface that via onWarn rather than swallow it.
     if (isPumpTwin && deviceId) {
-      const PUMP_KEY_SLOTS = [
-        "key_vib_nde", "key_vib_de", "key_vib_de_pump", "key_vib_pp",
-        "key_temp_nde", "key_temp_de", "key_temp_de_pump",
-        "key_temp_inlet", "key_temp_outlet",
-        "key_pressure_in", "key_pressure_out", "key_speed",
-      ];
-      (async () => {
-        try {
-          const dev  = await deviceApi.get(deviceId);
-          const info = { ...(dev?.additional_info || {}) };
-          PUMP_KEY_SLOTS.forEach(slot => {
-            if (cfg[slot]) info[slot] = cfg[slot];
-            else delete info[slot];            // clear slots un-mapped by the user
-          });
-          await deviceApi.update(deviceId, { additional_info: info });
-        } catch (e) {
-          console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
-        }
-      })();
+      syncPumpTwinKeys(deviceId, cfg).catch(e => {
+        console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
+        if (onWarn) onWarn("Widget saved, but sensor key mapping needs an admin to sync to the device — ask an admin to re-save this widget so twin efficiency/RUL tracking picks it up.");
+      });
     }
   };
 
@@ -1099,6 +1086,7 @@ export default function DashboardPage({ device, onBack, user }) {
           editWidget={editingWidget}
           user={user}
           deviceId={device?.id}
+          onWarn={setError}
         />
       )}
     </div>

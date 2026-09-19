@@ -32,7 +32,7 @@ import {
 // DashboardRuntime: centralized owner of all dashboard state
 // Widgets are passive — they receive slices, never fetch independently
 import { useDashboardRuntime } from "../hooks/useDashboardRuntime.js";
-import { deviceApi, telemetryApi } from "../services/api.js";
+import { deviceApi, telemetryApi, syncPumpTwinKeys } from "../services/api.js";
 
 const ACTIVE_DASH_KEY = "active_user_dashboard_id";
 const ACCENT_COLORS   = ["#3b82f6","#10b981","#f59e0b","#ef4444","#8b5cf6","#06b6d4","#f97316","#84cc16"];
@@ -53,7 +53,7 @@ function Spinner({ size = 16 }) {
 //   onSave     — called with completed widget data including config.device_id
 //   onClose    — closes modal
 //   editWidget — existing widget object when editing (null for add)
-function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
+function WidgetModal({ devices, onSave, onClose, editWidget, user, onToast }) {
   const isEdit = !!editWidget;
 
   // Step 1 = choose widget type, Step 2 = configure
@@ -181,28 +181,13 @@ function WidgetModal({ devices, onSave, onClose, editWidget, user }) {
     // Pump Twin — mirror the key mapping into device.additional_info so
     // backend services (twin server ingest in telemetry_service.py, TAAT
     // sensor semantics) can resolve which telemetry key means what.
-    // Merge, never overwrite: other additional_info fields are preserved.
-    // Best-effort: device PUT requires admin; failures are logged, not silent.
+    // Best-effort: device PUT requires admin, so this silently no-ops for
+    // other roles — surface that via onToast rather than swallow it.
     if (isPumpTwin && selectedDeviceId) {
-      const PUMP_KEY_SLOTS = [
-        "key_vib_nde", "key_vib_de", "key_vib_de_pump", "key_vib_pp",
-        "key_temp_nde", "key_temp_de", "key_temp_de_pump",
-        "key_temp_inlet", "key_temp_outlet",
-        "key_pressure_in", "key_pressure_out", "key_speed",
-      ];
-      (async () => {
-        try {
-          const dev  = await deviceApi.get(selectedDeviceId);
-          const info = { ...(dev?.additional_info || {}) };
-          PUMP_KEY_SLOTS.forEach(slot => {
-            if (cfg[slot]) info[slot] = cfg[slot];
-            else delete info[slot];            // clear slots un-mapped by the user
-          });
-          await deviceApi.update(selectedDeviceId, { additional_info: info });
-        } catch (e) {
-          console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
-        }
-      })();
+      syncPumpTwinKeys(selectedDeviceId, cfg).catch(e => {
+        console.warn("PumpTwin: device additional_info sync skipped —", e?.message || e);
+        if (onToast) onToast("Widget saved, but sensor key mapping needs an admin to sync to the device — ask an admin to re-save this widget so twin efficiency/RUL tracking picks it up.", "error");
+      });
     }
   };
 
@@ -1009,6 +994,7 @@ export default function UserDashboardPage({ onToast, user }) {
           onClose={() => { setShowModal(false); setEditingWidget(null); }}
           editWidget={editingWidget}
           user={user}
+          onToast={onToast}
         />
       )}
     </div>

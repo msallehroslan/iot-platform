@@ -74,6 +74,29 @@ export const deviceApi = {
   regenerateToken: id            => apiFetch(`/devices/${id}/token/regenerate`, { method: "POST" }),
 };
 
+// Pump Twin — mirror a widget's sensor key mapping into device.additional_info
+// so backend services (twin server ingest in telemetry_service.py, TAAT sensor
+// semantics) can resolve which telemetry key means what.
+// Merge, never overwrite: other additional_info fields are preserved.
+// Best-effort: device PUT requires TENANT_ADMIN, so this silently no-ops (via
+// the returned rejection) for other roles — callers should surface that to
+// the user rather than swallow it.
+export const PUMP_TWIN_KEY_SLOTS = [
+  "key_vib_nde", "key_vib_de", "key_vib_de_pump", "key_vib_pp",
+  "key_temp_nde", "key_temp_de", "key_temp_de_pump",
+  "key_temp_inlet", "key_temp_outlet",
+  "key_pressure_in", "key_pressure_out", "key_speed",
+];
+export async function syncPumpTwinKeys(deviceId, cfg) {
+  const dev  = await deviceApi.get(deviceId);
+  const info = { ...(dev?.additional_info || {}) };
+  PUMP_TWIN_KEY_SLOTS.forEach(slot => {
+    if (cfg[slot]) info[slot] = cfg[slot];
+    else delete info[slot];            // clear slots un-mapped by the user
+  });
+  return deviceApi.update(deviceId, { additional_info: info });
+}
+
 // ── Telemetry ─────────────────────────────────────────────────────────────────
 export const telemetryApi = {
   latest:      deviceId                    => apiFetch(`/telemetry/latest/${deviceId}`),
