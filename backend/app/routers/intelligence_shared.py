@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.auth_deps import get_current_user, require_admin
+from app.core.auth_deps import get_current_user, require_admin, require_tenant_member
 from app.models.models import Device, Alarm, TelemetryData, ThresholdRule
 from app.services.trend_service import get_device_key_trend, get_all_key_trends
 from app.services.data_service import (

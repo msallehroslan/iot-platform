@@ -39,6 +39,11 @@ from app.services import dashboard_service
 router = APIRouter(prefix="/dashboards", tags=["Dashboards"])
 
 
+def _customer_scope(current_user: User) -> Optional[UUID]:
+    """CUSTOMER_USER calls are additionally scoped to their own customer_id."""
+    return current_user.customer_id if current_user.role == "CUSTOMER_USER" else None
+
+
 # ── Request bodies (unchanged) ────────────────────────────────────────────────
 
 class DashboardCreateBody(BaseModel):
@@ -102,6 +107,7 @@ def list_dashboards(
         device_id=device_id,
         tenant_id=current_user.tenant_id,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -118,6 +124,7 @@ def create_dashboard(
         description=body.description,
         is_default=body.is_default,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
           action="dashboard.create", resource="dashboard", resource_id=str(result.get("id","")),
@@ -135,6 +142,7 @@ def get_dashboard(
         dashboard_id=dashboard_id,
         tenant_id=current_user.tenant_id,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -152,6 +160,7 @@ def update_dashboard(
         description=body.description,
         is_default=body.is_default,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -167,6 +176,7 @@ def delete_dashboard(
         dashboard_id=dashboard_id,
         tenant_id=current_user.tenant_id,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -182,6 +192,7 @@ def list_widgets(
         dashboard_id=dashboard_id,
         tenant_id=current_user.tenant_id,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -200,6 +211,7 @@ def add_widget(
         config=body.config,
         position=body.position.model_dump(),
         db=db,
+        customer_id=_customer_scope(current_user),
     )
     audit(db, tenant_id=current_user.tenant_id, user=current_user,
           action="widget.add", resource="widget", resource_id=str(result.get("id","")),
@@ -224,6 +236,7 @@ def update_widget(
         config=body.config,
         position=body.position.model_dump() if body.position else None,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -245,6 +258,7 @@ def delete_widget(
         widget_id=widget_id,
         tenant_id=current_user.tenant_id,
         db=db,
+        customer_id=_customer_scope(current_user),
     )
 
 
@@ -261,4 +275,5 @@ def save_layout(
         tenant_id=current_user.tenant_id,
         layout=[item.model_dump() for item in body.layout],
         db=db,
+        customer_id=_customer_scope(current_user),
     )

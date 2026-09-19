@@ -59,13 +59,20 @@ def serialize_dashboard(d: Dashboard, include_widgets: bool = True) -> dict:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-def _get_device_for_tenant(device_id: UUID, tenant_id: UUID, db: Session) -> Device:
+def _get_device_for_tenant(
+    device_id: UUID,
+    tenant_id: UUID,
+    db: Session,
+    customer_id: Optional[UUID] = None,
+) -> Device:
     """
-    Fetch a device and verify it belongs to the caller's tenant.
+    Fetch a device and verify it belongs to the caller's tenant (and, when
+    customer_id is given — i.e. the caller is a CUSTOMER_USER — that it also
+    belongs to that customer).
 
     Raises:
         404  if the device does not exist (safe: no tenant information leaked)
-        403  if the device exists but belongs to a different tenant
+        403  if the device exists but belongs to a different tenant/customer
     """
     device = db.query(Device).filter(Device.id == device_id).first()
     if not device:
@@ -78,6 +85,11 @@ def _get_device_for_tenant(device_id: UUID, tenant_id: UUID, db: Session) -> Dev
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this device",
         )
+    if customer_id is not None and device.customer_id != customer_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this device",
+        )
     return device
 
 
@@ -85,13 +97,15 @@ def _get_dashboard_for_tenant(
     dashboard_id: UUID,
     tenant_id: UUID,
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> Dashboard:
     """
-    Fetch a dashboard and verify its device belongs to the caller's tenant.
+    Fetch a dashboard and verify its device belongs to the caller's tenant
+    (and customer, for CUSTOMER_USER callers).
 
     Raises:
         404  if the dashboard does not exist
-        403  if the dashboard's device belongs to a different tenant
+        403  if the dashboard's device belongs to a different tenant/customer
     """
     d = db.query(Dashboard).filter(Dashboard.id == dashboard_id).first()
     if not d:
@@ -99,16 +113,16 @@ def _get_dashboard_for_tenant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Dashboard not found",
         )
-    # Walk the ownership chain: dashboard → device → tenant
-    _get_device_for_tenant(d.device_id, tenant_id, db)
+    # Walk the ownership chain: dashboard → device → tenant (+ customer)
+    _get_device_for_tenant(d.device_id, tenant_id, db, customer_id=customer_id)
     return d
 
 
 # ── Dashboard service ─────────────────────────────────────────────────────────
 
-def list_dashboards(device_id: UUID, tenant_id: UUID, db: Session) -> List[dict]:
+def list_dashboards(device_id: UUID, tenant_id: UUID, db: Session, customer_id: Optional[UUID] = None) -> List[dict]:
     """Return all dashboards for a device, scoped to the caller's tenant."""
-    _get_device_for_tenant(device_id, tenant_id, db)
+    _get_device_for_tenant(device_id, tenant_id, db, customer_id=customer_id)
     rows = (
         db.query(Dashboard)
         .filter(Dashboard.device_id == device_id)
@@ -125,9 +139,10 @@ def create_dashboard(
     description: Optional[str],
     is_default: bool,
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> dict:
     """Create a dashboard for a device after verifying tenant ownership."""
-    _get_device_for_tenant(device_id, tenant_id, db)
+    _get_device_for_tenant(device_id, tenant_id, db, customer_id=customer_id)
     if not name or not name.strip():
         raise HTTPException(status_code=400, detail="Dashboard name is required")
 
@@ -148,9 +163,9 @@ def create_dashboard(
     return serialize_dashboard(d)
 
 
-def get_dashboard(dashboard_id: UUID, tenant_id: UUID, db: Session) -> dict:
+def get_dashboard(dashboard_id: UUID, tenant_id: UUID, db: Session, customer_id: Optional[UUID] = None) -> dict:
     """Fetch a single dashboard with widgets, verifying tenant ownership."""
-    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
     return serialize_dashboard(d)
 
 
@@ -161,9 +176,10 @@ def update_dashboard(
     description: Optional[str],
     is_default: Optional[bool],
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> dict:
     """Rename / update a dashboard after verifying tenant ownership."""
-    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
 
     if name is not None:
         if not name.strip():
@@ -184,9 +200,9 @@ def update_dashboard(
     return serialize_dashboard(d)
 
 
-def delete_dashboard(dashboard_id: UUID, tenant_id: UUID, db: Session) -> None:
+def delete_dashboard(dashboard_id: UUID, tenant_id: UUID, db: Session, customer_id: Optional[UUID] = None) -> None:
     """Delete a dashboard (cascades to widgets) after verifying tenant ownership."""
-    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
     db.delete(d)
     db.commit()
 
@@ -212,9 +228,9 @@ VALID_WIDGET_TYPES = {
 }
 
 
-def list_widgets(dashboard_id: UUID, tenant_id: UUID, db: Session) -> List[dict]:
+def list_widgets(dashboard_id: UUID, tenant_id: UUID, db: Session, customer_id: Optional[UUID] = None) -> List[dict]:
     """List all widgets for a dashboard, verifying tenant ownership."""
-    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
     return [serialize_widget(w) for w in d.widgets]
 
 
@@ -226,9 +242,10 @@ def add_widget(
     config: dict,
     position: dict,
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> dict:
     """Add a widget to a dashboard after verifying tenant ownership."""
-    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    d = _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
     if widget_type not in VALID_WIDGET_TYPES:
         raise HTTPException(
             status_code=400,
@@ -264,10 +281,11 @@ def update_widget(
     position: Optional[dict],
     widget_type: Optional[str],
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> dict:
     """Update a widget after verifying tenant ownership of its dashboard."""
     # Ownership check: dashboard → device → tenant
-    _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
 
     w = db.query(Widget).filter(
         Widget.id == widget_id,
@@ -307,9 +325,10 @@ def delete_widget(
     widget_id: UUID,
     tenant_id: UUID,
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> None:
     """Delete a widget after verifying tenant ownership of its dashboard."""
-    _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
 
     w = db.query(Widget).filter(
         Widget.id == widget_id,
@@ -327,13 +346,14 @@ def save_layout(
     tenant_id: UUID,
     layout: List[dict],
     db: Session,
+    customer_id: Optional[UUID] = None,
 ) -> dict:
     """
     Bulk-update widget positions after drag/resize.
     Verifies tenant ownership before any writes.
     layout = [{id, x, y, w, h}, ...]
     """
-    _get_dashboard_for_tenant(dashboard_id, tenant_id, db)
+    _get_dashboard_for_tenant(dashboard_id, tenant_id, db, customer_id=customer_id)
 
     updated_ids = []
     for item in layout:

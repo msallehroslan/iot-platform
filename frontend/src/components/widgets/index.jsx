@@ -4,6 +4,7 @@
  * Props: { config, liveTelem, historyData, alarms, deviceId }
  */
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import DOMPurify from "dompurify";
 import { telemetryApi, intelligenceApi, widgetApi, API_BASE, getApiToken } from "../../services/api.js";
 // useTelemSlice: subscribes to exactly ONE key — prevents unrelated renders
 import { useTelemSlice } from "../../hooks/useTelemetry.js";
@@ -1202,8 +1203,15 @@ export function PieChartWidget({ config, liveTelem }) {
   );
 }
 
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function MarkdownWidget({ config }) {
-  const html = (config.content || "_Empty — click Edit_")
+  const html = escapeHtml(config.content || "_Empty — click Edit_")
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(/`(.+?)`/g, `<code style="background:#f1f5f9;padding:1px 4px;border-radius:3px;font-family:monospace;font-size:11px">$1</code>`)
@@ -1211,7 +1219,7 @@ export function MarkdownWidget({ config }) {
   return (
     <div
       style={{ height: "100%", overflowY: "auto", fontSize: 13, lineHeight: 1.6, color: "#334155" }}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}
     />
   );
 }
@@ -1250,10 +1258,14 @@ export function HtmlCard({ config, liveTelem }) {
       if (v === undefined) return `\${${k}}`;
       return typeof v === "number" ? v.toFixed(config.decimals ?? 1) : String(v);
     });
+  // Widget content is user-authored (stored per widget config) and can be
+  // viewed by other users on a shared device dashboard — strip script/event
+  // handlers so it can't be used to execute JS in a viewer's session.
+  const safe = DOMPurify.sanitize(rendered, { ADD_ATTR: ["style"] });
   return (
     <div
       style={{ height: "100%", overflowY: "auto", fontSize: 13, color: "#334155" }}
-      dangerouslySetInnerHTML={{ __html: rendered }}
+      dangerouslySetInnerHTML={{ __html: safe }}
     />
   );
 }

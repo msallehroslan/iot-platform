@@ -203,18 +203,20 @@ def cancel_scheduled(
     """
     q = db.query(RpcCommand).filter(RpcCommand.status == RpcCommandStatus.SCHEDULED)
 
+    # Always scope to devices the caller's tenant (and, for CUSTOMER_USER,
+    # customer) can see — prevents cancelling another tenant's commands by
+    # guessing a cmd_id.
+    from app.models.models import Device
+    device_q = db.query(Device.id).filter(Device.tenant_id == current_user.tenant_id)
+    if getattr(current_user, "role", None) == "CUSTOMER_USER" and current_user.customer_id:
+        device_q = device_q.filter(Device.customer_id == current_user.customer_id)
+    device_ids = [r[0] for r in device_q.all()]
+    q = q.filter(RpcCommand.device_id.in_(device_ids))
+
     if cmd_id:
         q = q.filter(RpcCommand.id == cmd_id)
     elif device_id:
         q = q.filter(RpcCommand.device_id == device_id)
-    else:
-        # Scope to tenant via devices
-        from app.models.models import Device
-        device_ids = [
-            r[0] for r in db.query(Device.id)
-            .filter(Device.tenant_id == current_user.tenant_id).all()
-        ]
-        q = q.filter(RpcCommand.device_id.in_(device_ids))
 
     cmds = q.all()
     count = len(cmds)

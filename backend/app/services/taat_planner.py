@@ -362,6 +362,11 @@ def check_permission(
     if role == "CUSTOMER_USER" and intent not in CUSTOMER_ALLOWED_INTENTS:
         return False, f"Your role allows viewing status and reports only."
 
+    # Device control (immediate or scheduled): admin only, matching the
+    # direct /rpc/{device_id} and /schedule-rpc REST endpoints.
+    if intent in ("DEVICE_CONTROL", "SCHEDULE") and role != "TENANT_ADMIN":
+        return False, "Only admins can send or schedule device-control commands."
+
     # USER management: admin only
     if intent == "USER" and role != "TENANT_ADMIN":
         return False, "Only admins can manage users."

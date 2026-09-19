@@ -40,6 +40,8 @@ def _get_alarm_owned(alarm_id: UUID, current_user: User, db: Session) -> Alarm:
         raise HTTPException(status_code=404, detail="Alarm not found")
     if not alarm.device or alarm.device.tenant_id != current_user.tenant_id:
         raise HTTPException(status_code=403, detail="You do not have access to this alarm")
+    if current_user.role == "CUSTOMER_USER" and alarm.device.customer_id != current_user.customer_id:
+        raise HTTPException(status_code=403, detail="You do not have access to this alarm")
     return alarm
 
 

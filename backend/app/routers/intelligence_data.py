@@ -140,7 +140,7 @@ class AlarmActionRequest(BaseModel):
 def alarm_action(
     body: AlarmActionRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_tenant_member),
 ):
     """
     Perform alarm actions via chat or direct API.
@@ -217,7 +217,7 @@ class ScheduledRpcRequest(BaseModel):
 def schedule_rpc(
     body: ScheduledRpcRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_admin),
 ):
     """
     Schedule an RPC command to run at a specific UTC time.
