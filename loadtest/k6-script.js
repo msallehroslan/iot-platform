@@ -131,21 +131,36 @@ function login() {
 }
 
 // ── Scenario 1: dashboard / widget reads ─────────────────────────────────────
+// Hits EVERY device on the tenant each iteration (not just one) — each
+// VU logs in as its own user (see emailForThisVU()/EMAILS above) and
+// looks up each device's own real telemetry key (not hardcoded
+// "temperature", which only Pump-01 happens to have) the same way
+// soak-test.sh does, so this works across different device types.
 
 let _token;
-let _deviceId;
+let _devices;  // [{id, key}, ...]
+
+function discoverDevices(token) {
+  const devicesRes = http.get(`${BASE_URL}/api/v1/devices/?page=1&page_size=50`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const items = devicesRes.json("items") || [];
+  return items.map((d) => {
+    const keysRes = http.get(`${BASE_URL}/api/v1/telemetry/keys/${d.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const keys = (keysRes.json("keys") || []);
+    return { id: d.id, key: keys[0] || null };
+  });
+}
 
 export function dashboardScenario() {
   if (!_token) {
     _token = login();
-    const devicesRes = http.get(`${BASE_URL}/api/v1/devices/?page=1&page_size=1`, {
-      headers: { Authorization: `Bearer ${_token}` },
-    });
-    const items = devicesRes.json("items") || [];
-    _deviceId = items[0] && items[0].id;
+    _devices = discoverDevices(_token);
   }
-  if (!_deviceId) {
-    console.warn("No device found on this tenant — add at least one device first");
+  if (!_devices || _devices.length === 0) {
+    console.warn("No devices found on this tenant — add at least one device first");
     sleep(1);
     return;
   }
@@ -155,17 +170,21 @@ export function dashboardScenario() {
   const r1 = http.get(`${BASE_URL}/api/v1/dashboard/stats`, { headers });
   check(r1, { "stats 200": (r) => r.status === 200 });
 
-  const r2 = http.get(
-    `${BASE_URL}/api/v1/widgets/data/${_deviceId}?type=value_card&key=temperature`,
-    { headers },
-  );
-  check(r2, { "widget 200": (r) => r.status === 200 });
+  for (const device of _devices) {
+    if (!device.key) continue;  // no telemetry yet for this device — skip
 
-  const r3 = http.get(
-    `${BASE_URL}/api/v1/widgets/data/${_deviceId}?type=line_chart&key=temperature&hours=24`,
-    { headers },
-  );
-  check(r3, { "line_chart 200": (r) => r.status === 200 });
+    const r2 = http.get(
+      `${BASE_URL}/api/v1/widgets/data/${device.id}?type=value_card&key=${device.key}`,
+      { headers },
+    );
+    check(r2, { "widget 200": (r) => r.status === 200 });
+
+    const r3 = http.get(
+      `${BASE_URL}/api/v1/widgets/data/${device.id}?type=line_chart&key=${device.key}&hours=24`,
+      { headers },
+    );
+    check(r3, { "line_chart 200": (r) => r.status === 200 });
+  }
 
   sleep(1 + Math.random());  // mimic a human refreshing every 1-2s
 }
