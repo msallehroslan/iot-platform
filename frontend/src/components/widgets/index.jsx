@@ -448,6 +448,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value).filter(v => Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
   const [window, setWindow] = useState("1h");
   const [windowAgg, setWindowAgg] = useState(null); // null = not fetched yet, fall back to historyData-derived agg
+  const [windowLoading, setWindowLoading] = useState(false);
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
   // (for device-scoped dashboard, or if preload intelligence wasn't available).
@@ -509,6 +510,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
 
     const { hours, resolution } = WINDOW_CONFIG[window] || WINDOW_CONFIG["1h"];
     let cancelled = false;
+    setWindowLoading(true);
 
     widgetApi
       .lineChart(devId, config.key, { hours, limit: 300, resolution })
@@ -525,7 +527,8 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
           max: Math.round(Math.max(...vals) * 100) / 100,
         });
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setWindowLoading(false); });
 
     return () => { cancelled = true; };
   }, [devId, config.key, window]);
@@ -606,7 +609,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
       </div>
 
       {/* AVG / MIN / MAX */}
-      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 4, flexShrink: 0, opacity: windowLoading ? 0.4 : 1, transition: "opacity .15s" }}>
         {[["AVG", agg.avg, "#2F8CFF"], ["MIN", agg.min, "#10b981"], ["MAX", agg.max, "#f59e0b"]].map(([label, val, color]) => (
           <div key={label} style={{ flex: 1, background: "#F4F8FF", borderRadius: 6, padding: "3px 0",
             display: "flex", flexDirection: "column", alignItems: "center", border: "1px solid #D8E3F3" }}>
