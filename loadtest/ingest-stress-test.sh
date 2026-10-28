@@ -10,15 +10,20 @@
 #   DURATION_S=20 ./loadtest/ingest-stress-test.sh
 #
 # Config via env vars:
-#   BASE_URL     default http://localhost:8000
-#   PG_CONTAINER default postgres
-#   DURATION_S   how long to hammer, in seconds (default 20)
+#   BASE_URL           default http://localhost:8000
+#   PG_CONTAINER       default postgres
+#   DURATION_S         how long to hammer, in seconds (default 20)
+#   WORKERS_PER_DEVICE parallel hammer loops per device token (default 1) —
+#                       raise this to push throughput higher without
+#                       creating more device records; each worker hammers
+#                       the SAME device's token independently.
 #
 set -uo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8000}"
 PG_CONTAINER="${PG_CONTAINER:-postgres}"
 DURATION_S="${DURATION_S:-20}"
+WORKERS_PER_DEVICE="${WORKERS_PER_DEVICE:-1}"
 
 log() { echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"; }
 
@@ -40,7 +45,7 @@ for row in "${rows[@]}"; do
 done
 
 n_devices="${#DEVICE_TOKENS[@]}"
-log "stress-testing ingest for $n_devices devices, duration=${DURATION_S}s, no delay between ingests"
+log "stress-testing ingest for $n_devices devices x $WORKERS_PER_DEVICE worker(s) each, duration=${DURATION_S}s, no delay between ingests"
 
 COUNT_FILE=$(mktemp)
 echo 0 > "$COUNT_FILE"
@@ -70,8 +75,10 @@ touch "$COUNT_FILE.parts" "$FAIL_FILE.parts"
 
 pids=()
 for token in "${DEVICE_TOKENS[@]}"; do
-  hammer_device "$token" &
-  pids+=($!)
+  for w in $(seq 1 "$WORKERS_PER_DEVICE"); do
+    hammer_device "$token" &
+    pids+=($!)
+  done
 done
 
 log "hammering... (waiting ${DURATION_S}s + wrap-up)"
