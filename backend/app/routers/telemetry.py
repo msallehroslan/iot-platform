@@ -111,7 +111,12 @@ def get_telemetry_history(
         query = query.filter(TelemetryData.ts >= start_ts)
     if end_ts:
         query = query.filter(TelemetryData.ts <= end_ts)
-    records = query.order_by(TelemetryData.ts.asc()).limit(limit).all()
+    # ORDER BY ts ASC + LIMIT returns the OLDEST rows, not the most recent —
+    # a device with more history than `limit` would always show its very
+    # first samples instead of its latest ones. Take the newest `limit`
+    # rows (DESC) then reverse back to chronological order for the chart.
+    records = query.order_by(TelemetryData.ts.desc()).limit(limit).all()
+    records = list(reversed(records))
     result = []
     for r in records:
         value = (r.value_num if r.value_num is not None else
