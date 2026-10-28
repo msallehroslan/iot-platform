@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone, timedelta
-from types import SimpleNamespace
 from typing import Optional
 from uuid import UUID
 
@@ -55,7 +54,7 @@ from app.services.data_service import (
 )
 from app.services.trend_service import get_device_key_trend, get_all_key_trends
 from app.services.data_service import _sync_cache
-from app.services.cache_service import TTL_WIDGET_DATA, TTL_DEVICE_RBAC
+from app.services.cache_service import TTL_WIDGET_DATA
 
 logger = logging.getLogger(__name__)
 
@@ -63,48 +62,18 @@ router = APIRouter(prefix="/widgets", tags=["Widgets"])
 
 # ── RBAC helper ───────────────────────────────────────────────────────────────
 
-def _fetch_device_row(device_id: UUID, db: Session) -> Optional[dict]:
-    """Direct DB fetch of the device fields RBAC + widget handlers need."""
-    device = db.query(Device).filter(Device.id == device_id).first()
-    if not device:
-        return None
-    return {
-        "id":            str(device.id),
-        "tenant_id":     str(device.tenant_id),
-        "customer_id":   str(device.customer_id) if device.customer_id else None,
-        "name":          device.name,
-        "last_seen_at":  device.last_seen_at.isoformat() if device.last_seen_at else None,
-    }
-
-
-def _assert_device(device_id: UUID, current_user, db: Session) -> SimpleNamespace:
-    """
-    Return device if the current user has access, else 404/403.
-
-    Cached for TTL_DEVICE_RBAC seconds — this ran as an uncached DB query
-    on EVERY widget request (even when the widget response itself was a
-    cache hit), so it set a floor on request latency regardless of the
-    widgets/data cache. Device identity/ownership rarely changes within
-    a few seconds, so a short cache is safe here.
-    """
-    row = _sync_cache(
-        key   = f"iot:devicerbac:{device_id}",
-        fetch = lambda: _fetch_device_row(device_id, db),
-        ttl   = TTL_DEVICE_RBAC,
+def _assert_device(device_id: UUID, current_user, db: Session) -> Device:
+    """Return device if the current user has access, else 404/403."""
+    q = db.query(Device).filter(
+        Device.id == device_id,
+        Device.tenant_id == current_user.tenant_id,
     )
-    if not row:
-        raise HTTPException(status_code=404, detail="Device not found")
-    if row["tenant_id"] != str(current_user.tenant_id):
-        raise HTTPException(status_code=404, detail="Device not found")
     if current_user.role == "CUSTOMER_USER" and current_user.customer_id:
-        if row["customer_id"] != str(current_user.customer_id):
-            raise HTTPException(status_code=404, detail="Device not found")
-
-    last_seen_at = datetime.fromisoformat(row["last_seen_at"]) if row["last_seen_at"] else None
-    return SimpleNamespace(
-        id=row["id"], name=row["name"], last_seen_at=last_seen_at,
-        tenant_id=row["tenant_id"], customer_id=row["customer_id"],
-    )
+        q = q.filter(Device.customer_id == current_user.customer_id)
+    device = q.first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
 
 
 # ── Widget type → handler map ─────────────────────────────────────────────────
