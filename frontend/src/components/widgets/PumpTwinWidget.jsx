@@ -800,7 +800,13 @@ export default function PumpTwinWidget({
                   rpm={RPM}
                 />
               </Suspense>
-              <OrbitControls enablePan={false} minDistance={4} maxDistance={12} />
+              <OrbitControls
+                enablePan={false}
+                minDistance={4}
+                maxDistance={12}
+                autoRotate
+                autoRotateSpeed={1.2}
+              />
             </Canvas>
             {/* Legend — 4 separate monitoring points */}
             <div style={{ position: "absolute", top: 10, left: 10, display: "flex", flexDirection: "column", gap: 5, background: "rgba(15,23,42,0.75)", backdropFilter: "blur(6px)", padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(148,163,184,0.2)" }}>
