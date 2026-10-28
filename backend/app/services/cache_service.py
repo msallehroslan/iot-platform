@@ -56,6 +56,9 @@ TTL_WIDGET_DATA = 5    # per-widget combined response — short so widgets still
                         # but collapses N concurrent viewers of the same device+widget
                         # into 1 real fetch instead of each doing their own latest+
                         # baseline+anomaly+trend round trips
+TTL_DEVICE_RBAC = 15   # device existence/ownership row — was an uncached DB query on
+                        # EVERY widget request (even cache hits), since RBAC must be
+                        # checked before the cached response can be returned
 
 
 class CacheService:
