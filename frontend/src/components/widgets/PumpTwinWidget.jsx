@@ -768,9 +768,15 @@ export default function PumpTwinWidget({
       {/* Tab content */}
       <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
 
-        {/* 3D TAB */}
-        {activeTab === "3d" && (
-          <div style={{ height: "100%", position: "relative" }}>
+        {/* 3D TAB — always mounted (display:none when inactive), never
+            conditionally unmounted. Tearing the Canvas down and recreating
+            it every time the user switches tabs destroys and recreates a
+            WebGL context each time; over a long session (frequent live
+            telemetry re-renders + repeated tab switching) this can exhaust
+            the browser's WebGL context budget and surface as
+            "THREE.WebGLRenderer: Context Lost", after which the 3D view
+            never renders again until a full page reload. */}
+          <div style={{ height: "100%", position: "relative", display: activeTab === "3d" ? "block" : "none" }}>
             <Canvas
               shadows={{ type: 2 }}
               camera={{ position: [3.5, 2.2, 5.5], fov: 38 }}
@@ -855,7 +861,6 @@ export default function PumpTwinWidget({
               Drag · Zoom{RPM != null ? ` · ${RPM} RPM${RPM <= 0 ? " (stopped)" : ""}` : ""}
             </div>
           </div>
-        )}
 
         {/* INTEL TAB */}
         {activeTab === "intel" && (
