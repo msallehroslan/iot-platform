@@ -1,7 +1,50 @@
 # Load testing — IoT Platform
 
-k6 scripts covering the 3 areas: dashboard/widget reads, telemetry ingest,
-and TAAT chat. See `k6-script.js` for the full usage comment.
+Two kinds of test here, for two different questions:
+
+- **`k6-script.js`** — short burst load (minutes): "does it handle N
+  concurrent users right now?" Covers dashboard/widget reads, telemetry
+  ingest, and TAAT chat. See the file's own usage comment.
+- **`soak-test.sh` + `metrics-sampler.sh` + `analyze-soak.py`** — long
+  continuous load (days/weeks): "does it stay healthy over time?" Catches
+  slow leaks a 2-minute burst test can't show (e.g. the Redis pubsub
+  connection not closed on websocket_manager reconnect, noted in the code
+  review — that only shows up as memory climbing over days).
+
+## Soak / endurance test (14-30 days)
+
+1. Start the light continuous background load (survives SSH disconnect
+   via `nohup` + `disown`; or set it up as a systemd service for
+   reboot-survival — see the comment at the top of `soak-test.sh`):
+   ```bash
+   chmod +x loadtest/soak-test.sh loadtest/metrics-sampler.sh loadtest/analyze-soak.py
+   nohup ./loadtest/soak-test.sh > loadtest/soak.log 2>&1 &
+   disown
+   ```
+
+2. Schedule the metrics sampler via cron, every 10 minutes:
+   ```bash
+   crontab -e
+   # add:
+   */10 * * * * cd /mnt/apps/iot-platform && EMAIL=demo@triaxisai.com PASSWORD=demo1234 ./loadtest/metrics-sampler.sh >> loadtest/metrics-sampler.log 2>&1
+   ```
+
+3. Let it run. Check in occasionally with `tail -f loadtest/soak.log` or
+   `wc -l loadtest/metrics.jsonl` to confirm it's still collecting.
+
+4. After days/weeks, analyze the trend:
+   ```bash
+   python3 loadtest/analyze-soak.py
+   ```
+   A steadily rising `Process memory` or `DB pool checked_out` across
+   the whole window (not just noise) is a leak — the thing this test
+   exists to catch.
+
+5. Stop it when done:
+   ```bash
+   pkill -f soak-test.sh
+   crontab -e   # remove the metrics-sampler line
+   ```
 
 ## 1. Install k6
 
