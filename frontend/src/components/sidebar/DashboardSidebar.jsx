@@ -306,7 +306,7 @@ export default function DashboardSidebar({
   const [newName,     setNewName]     = useState("");
   const [renamingId,  setRenamingId]  = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-  const [collapsed,   setCollapsed]   = useState(false);
+  const [collapsed,   setCollapsed]   = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
   const createInputRef = useRef(null);
 
   useEffect(() => {

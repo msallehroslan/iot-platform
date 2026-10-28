@@ -160,9 +160,11 @@ export default function GridLayout({
     [onLayoutChange]
   );
 
-  // Responsive breakpoints — same cols at every size (12 col grid)
-  const breakpoints = { lg: 1200, md: 996, sm: 768 };
-  const cols        = { lg: GRID_CONFIG.cols, md: GRID_CONFIG.cols, sm: GRID_CONFIG.cols };
+  // Responsive breakpoints — full 12-col grid down to tablet (sm), then
+  // fewer columns so widgets stack full-width instead of shrinking to
+  // unreadable slivers on phone-width containers.
+  const breakpoints = { lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 };
+  const cols        = { lg: GRID_CONFIG.cols, md: GRID_CONFIG.cols, sm: GRID_CONFIG.cols, xs: 4, xxs: 2 };
 
   return (
     <div style={{ position: "relative" }}>
