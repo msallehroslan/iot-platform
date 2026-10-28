@@ -126,22 +126,27 @@ while true; do
 
   n="${#DEVICE_IDS[@]}"
   if [ -n "$TOKEN" ] && [ "$n" -gt 0 ]; then
-    idx=$(( (ROUND - 1) % n ))
-    device_id="${DEVICE_IDS[$idx]}"
-    device_name="${DEVICE_NAMES[$idx]}"
-    key="${DEVICE_KEYS[$idx]}"
+    # Hit every device once per round (not round-robin) — with only a
+    # handful of devices this is still a light request rate overall,
+    # and it exercises all of them continuously rather than each one
+    # only once every N rounds.
+    for idx in "${!DEVICE_IDS[@]}"; do
+      device_id="${DEVICE_IDS[$idx]}"
+      device_name="${DEVICE_NAMES[$idx]}"
+      key="${DEVICE_KEYS[$idx]}"
 
-    if [ -n "$key" ]; then
-      t0=$(date +%s%N)
-      code=$(curl -s -o /dev/null -w "%{http_code}" \
-        -H "Authorization: Bearer $TOKEN" \
-        "$BASE_URL/api/v1/widgets/data/$device_id?type=value_card&key=$key")
-      t1=$(date +%s%N)
-      ms=$(( (t1 - t0) / 1000000 ))
-      log "round=$ROUND device=\"$device_name\" key=$key widget_data status=$code latency_ms=$ms"
-    else
-      log "round=$ROUND device=\"$device_name\" skipped — no telemetry key known yet"
-    fi
+      if [ -n "$key" ]; then
+        t0=$(date +%s%N)
+        code=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: Bearer $TOKEN" \
+          "$BASE_URL/api/v1/widgets/data/$device_id?type=value_card&key=$key")
+        t1=$(date +%s%N)
+        ms=$(( (t1 - t0) / 1000000 ))
+        log "round=$ROUND device=\"$device_name\" key=$key widget_data status=$code latency_ms=$ms"
+      else
+        log "round=$ROUND device=\"$device_name\" skipped — no telemetry key known yet"
+      fi
+    done
 
     code2=$(curl -s -o /dev/null -w "%{http_code}" \
       -H "Authorization: Bearer $TOKEN" \
