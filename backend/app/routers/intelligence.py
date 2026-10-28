@@ -1384,7 +1384,19 @@ async def ai_chat(
     if not device_id_str and devices:
         device_id_str = devices[0]["id"] if len(devices) >= 1 else None
     try:
-        ctx = build_context(db, current_user, devices, intent, device_id_str, last_user_msg)
+        # build_context() is a plain sync function that runs up to ~10
+        # blocking DB queries per device. Called directly (no await) from
+        # this async handler, it used to run ON the single uvicorn event
+        # loop (backend runs --workers 1 by design — see Dockerfile) and
+        # block EVERY other request — dashboard reads, WebSocket pings,
+        # telemetry ingest — for its full duration. Offloading it to the
+        # default executor gives it its own thread so the loop stays free
+        # for everything else while this chat request's context builds.
+        import asyncio as _asyncio
+        _loop = _asyncio.get_running_loop()
+        ctx = await _loop.run_in_executor(
+            None, build_context, db, current_user, devices, intent, device_id_str, last_user_msg
+        )
         try:
             from app.services.taat_context_compressor import compress_context
             ctx = compress_context(ctx, intent=intent)
