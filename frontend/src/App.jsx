@@ -124,12 +124,15 @@ const NAV = [
   { id:"audit-log",         label:"Audit Log",          icon:"M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z" },
 ];
 
-const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, alarmCount }) {
+const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, alarmCount, mobileOpen, onMobileClose }) {
   const [col, setCol] = useState(false);
   const ini = user ? (user.first_name?.[0]||user.email?.[0]||"U").toUpperCase() : "U";
   const name = user ? (user.first_name ? `${user.first_name} ${user.last_name||""}`.trim() : user.email) : "User";
+  const go = (id) => { setPage(id); onMobileClose?.(); };
   return (
-    <aside className={`${col?"w-14":"w-56"} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
+    <>
+      {mobileOpen && <div className="tn-sidebar-backdrop" onClick={onMobileClose} />}
+      <aside className={`${col?"w-14":"w-56"} tn-sidebar ${mobileOpen?"tn-sidebar-open":""} flex-shrink-0 flex flex-col h-screen transition-all duration-200`} style={{background:"#EAF2FF"}}>
       <div className="flex items-center gap-3 px-4 py-5 border-b border-[#D8E3F3] overflow-hidden">
         {!col && <span className="font-bold text-[#0B1426] text-sm tracking-wide truncate">Iotera Nexus</span>}
       </div>
@@ -141,7 +144,7 @@ const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, ala
           if (adminOnly.includes(id) && user?.role !== "TENANT_ADMIN") return false;
           return true;
         }).map(({id,label,icon}) => (
-          <button key={id} onClick={() => setPage(id)} title={col?label:undefined}
+          <button key={id} onClick={() => go(id)} title={col?label:undefined}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 ${page===id?"bg-[#D7E8FF] text-[#0B4BB3] font-semibold":"text-[#334866] hover:bg-[#D7E8FF]/60 hover:text-[#0B1426]"}`}>
             <svg className="w-[17px] h-[17px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={icon}/></svg>
             {!col && <span className="truncate">{label}</span>}
@@ -173,18 +176,24 @@ const Sidebar = React.memo(function Sidebar({ page, setPage, user, onLogout, ala
             </div>
           </div>
         )}
-        <button onClick={() => setCol(c=>!c)} className="w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
+        <button onClick={() => setCol(c=>!c)} className="tn-collapse-btn w-full flex items-center justify-center py-1.5 rounded-lg text-[#6B7F9F] hover:text-[#0B1426] hover:bg-[#D7E8FF] transition-colors"><svg className={`w-4 h-4 transition-transform ${col?"rotate-180":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg></button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }); // end Sidebar memo
 
-const Header = React.memo(function Header({ title, onRefresh, refreshing }) {
+const Header = React.memo(function Header({ title, onRefresh, refreshing, onMenuClick }) {
   const [time, setTime] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setTime(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
     <header className="h-16 flex-shrink-0 border-b flex items-center justify-between px-7 shadow-sm shadow-blue-100/30" style={{background:"#F4F8FF",borderColor:"#D8E3F3"}}>
-      <div><h1 className="text-base font-bold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
+      <div className="flex items-center gap-3">
+        <button onClick={onMenuClick} className="tn-hamburger-btn items-center justify-center w-8 h-8 rounded-lg text-[#334866] hover:bg-[#D7E8FF] transition-colors flex-shrink-0" aria-label="Open menu">
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div><h1 className="text-base font-bold text-[#0B1426]">{title}</h1><p className="text-[11px] text-[#6B7F9F] mt-0.5">{time.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}</p></div>
+      </div>
       <div className="flex items-center gap-3">
         <button onClick={onRefresh} className="flex items-center gap-1.5 text-[11px] font-medium text-[#334866] hover:text-[#0B1426] px-3 py-1.5 rounded-lg hover:bg-[#D7E8FF] transition-colors"><svg className={`w-3.5 h-3.5 ${refreshing?"animate-spin":""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>Refresh</button>
         <div className="w-px h-4 bg-[#D8E3F3]"/>
@@ -3027,6 +3036,7 @@ export default function App() {
   const [toast,      setToast]      = useState(null);
   const [alarmCount, setAlarmCount] = useState(0);
   const [dashDevice, setDashDevice] = useState(null);  // device open in device dashboard
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);  // sidebar drawer, mobile only
 
   // Silent token restore on page reload — uses HTTP-only refresh_token cookie.
   useEffect(() => {
@@ -3140,9 +3150,20 @@ export default function App() {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{background:"#F4F8FF"}}>
-      <Sidebar page={page} setPage={handleSetPage} user={user} onLogout={handleLogout} alarmCount={alarmCount} />
+      <style>{`
+        .tn-sidebar-backdrop{display:none;}
+        .tn-hamburger-btn{display:none;}
+        @media (max-width: 768px) {
+          .tn-sidebar{position:fixed!important;top:0;left:0;z-index:60;box-shadow:0 0 40px rgba(11,20,38,0.25);transform:translateX(-100%);width:224px!important;}
+          .tn-sidebar.tn-sidebar-open{transform:translateX(0);}
+          .tn-sidebar .tn-collapse-btn{display:none!important;}
+          .tn-sidebar-backdrop{display:block;position:fixed;inset:0;background:rgba(11,20,38,0.45);z-index:55;}
+          .tn-hamburger-btn{display:inline-flex!important;}
+        }
+      `}</style>
+      <Sidebar page={page} setPage={handleSetPage} user={user} onLogout={handleLogout} alarmCount={alarmCount} mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-        <Header title={pageTitle} onRefresh={handleRefresh} refreshing={refreshing} />
+        <Header title={pageTitle} onRefresh={handleRefresh} refreshing={refreshing} onMenuClick={() => setMobileNavOpen(true)} />
         <main className={`flex-1 ${page === "user-dashboards" ? "overflow-hidden" : "overflow-y-auto p-6"}`} style={{background:"#F4F8FF"}}>
           {page === "overview"           && <OverviewPage refreshKey={refreshKey} onToast={showToast} />}
           {page === "user-dashboards"     && <UserDashboardPage onToast={showToast} user={user} />}
