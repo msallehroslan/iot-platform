@@ -232,9 +232,10 @@ def preload_dashboard(
     if not device_ids:
         return {"devices": {}}
 
-    # Verify devices belong to this tenant (security check)
-    allowed_ids = {
-        str(d.id)
+    # Verify devices belong to this tenant (security check) — fetch full
+    # rows once here so the loop below doesn't re-query per device.
+    allowed_devices = {
+        str(d.id): d
         for d in db.query(Device).filter(
             Device.id.in_(list(device_ids)),
             Device.tenant_id == current_user.tenant_id,
@@ -243,7 +244,7 @@ def preload_dashboard(
 
     result: dict = {}
 
-    for device_id in allowed_ids:
+    for device_id, device_obj in allowed_devices.items():
         try:
             # 1. Latest telemetry values
             telem  = get_latest_telemetry(db, device_id)
@@ -272,7 +273,6 @@ def preload_dashboard(
             alarms_data = get_active_alarms(db, device_id)
 
             # 4. Unified intelligence — health, risk, anomalies, baseline status
-            device_obj = db.query(Device).filter(Device.id == device_id).first()
             intel = get_unified_intelligence(db, device_id, device=device_obj)
 
             result[device_id] = {

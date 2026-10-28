@@ -64,6 +64,9 @@ TTL_TREND = 15          # per-key trend (30min window) — was an uncached DB qu
                         # for a 12-sensor Pump Twin widget call)
 TTL_UNITS = 300         # device's key->unit map — was an uncached DB query per key;
                         # fetched once per device and cached, units rarely change
+TTL_HISTORY = 15        # per-key aggregated history (sparkline/chart points) — was
+                        # an uncached DB query per key, run for every numeric key
+                        # when preloading a dashboard (e.g. up to 10 keys x N devices)
 
 
 class CacheService:
@@ -85,7 +88,7 @@ class CacheService:
         Silently disables caching if redis_url is None or connection fails.
         """
         # Capture the running event loop here, on the main asyncio thread.
-        # data_service._sync_cache() (called from sync route handlers running
+        # _sync_cache() (this module) (called from sync route handlers running
         # in a worker thread) needs a real reference to THIS loop to bridge
         # into async Redis calls — asyncio.get_event_loop() from a worker
         # thread does not return it (and raises/creates a throwaway loop),
@@ -188,7 +191,7 @@ class CacheService:
         Pure cache read — no DB fallback. Returns None on miss or any error.
         Safe to run on the main event loop: pure async Redis I/O, never a
         blocking DB call (unlike get_or_set, whose `fetch` must run on the
-        caller's own thread — see data_service._sync_cache).
+        caller's own thread — see _sync_cache, this module).
         """
         if not self._enabled or not self._client:
             return None
@@ -305,7 +308,7 @@ class CacheService:
     @property
     def loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """The main FastAPI event loop, captured at setup(). Used by
-        data_service._sync_cache() to bridge sync route handlers (running
+        _sync_cache() (this module) to bridge sync route handlers (running
         in a worker thread) into this service's async Redis calls."""
         return self._main_loop
 
@@ -322,3 +325,54 @@ def _hit_rate(hits: int, misses: int) -> float:
 #   from app.services.cache_service import cache
 
 cache = CacheService()
+
+
+def _sync_cache(key: str, fetch: Callable[[], Any], ttl: int):
+    """
+    Synchronous cache wrapper for callers running in sync FastAPI route
+    handlers / worker threads (which cannot await directly).
+
+    Lives here (not in data_service, where it originated) so any service
+    module can use it without risking a circular import back into
+    data_service — trend_service in particular needs it to cache
+    get_device_key_trend(), and data_service already imports from
+    trend_service at module level.
+
+    NOTE: asyncio.get_event_loop() does NOT work here — called from a
+    worker thread it raises (or returns a throwaway loop that is never
+    running), which would silently disable the cache for every read that
+    went through a sync route handler. cache.loop is the real main loop,
+    captured at startup.
+
+    IMPORTANT: `fetch` (a blocking DB call tied to the caller's own
+    Session) always runs on THIS thread, never on the main event loop —
+    running it there would block the whole app (WebSocket broadcasts,
+    every other request) for the duration of the DB query on every
+    cache miss. Only the actual Redis GET/SET — real async I/O — is
+    bridged to the main loop.
+
+    Falls through to direct DB fetch on any error (cache is additive).
+    """
+    if not cache.enabled:
+        return fetch()
+
+    loop = cache.loop
+
+    if loop is not None and loop.is_running():
+        try:
+            read_fut = asyncio.run_coroutine_threadsafe(cache.get(key), loop)
+            cached = read_fut.result(timeout=2)
+            if cached is not None:
+                return cached
+        except Exception as exc:
+            logger.debug("cache read fallback: %s", exc)
+
+    result = fetch()
+
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(cache.set(key, result, ttl), loop)
+        except Exception as exc:
+            logger.debug("cache write fallback: %s", exc)
+
+    return result

@@ -22,6 +22,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.models.models import TelemetryData, Device
+from app.services.cache_service import _sync_cache, TTL_TREND
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,27 @@ def get_device_key_trend(
 ) -> dict:
     """
     Fetch recent telemetry for a device/key and return trend analysis.
+
+    Cached per device+key+window (TTL_TREND seconds). Called once per key
+    by both get_key_intelligence() (per-key enrichment, e.g. 12x for a
+    Pump Twin widget) and get_all_key_trends() (unified intelligence
+    summary) — was an uncached DB query on every one of those calls.
     """
+    return _sync_cache(
+        key   = f"iot:trend:{device_id}:{key}:{minutes}:{max_points}",
+        fetch = lambda: _fetch_device_key_trend(db, device_id, key, minutes, max_points),
+        ttl   = TTL_TREND,
+    )
+
+
+def _fetch_device_key_trend(
+    db: Session,
+    device_id: str,
+    key: str,
+    minutes: int,
+    max_points: int,
+) -> dict:
+    """Direct DB fetch — called by cache or directly when cache unavailable."""
     since = datetime.now(timezone.utc) - timedelta(minutes=minutes)
 
     rows = (
