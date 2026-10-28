@@ -2,7 +2,11 @@
 #
 # create-rules.sh — create threshold rules (alarms) for:
 #   1. GlucIQ-Patient2-Demo / glucose_mmol  > 10   (WARNING — hyperglycemia)
-#   2. Pump-01 / pump_nde_velocity          > 4.5  (CRITICAL — ISO 10816-3)
+#   2. Pump-01 / motor_nde_velocity         > 4.5  (CRITICAL — ISO 10816-3)
+#
+# Key names confirmed from the Pump Twin widget's own sensor mapping:
+#   NDE motor vibration → motor_nde_velocity   DE motor vibration → motor_de_velocity
+#   DE pump vibration   → pump_de_velocity     PP pump vibration  → pump_nde_velocity
 #
 # Run this FIRST to sanity-check the pump vibration key name before
 # creating the rule (device key names can vary) — it prints the real
@@ -64,7 +68,8 @@ if [ -n "$GLUCIQ_ID" ]; then
 fi
 
 if [ -n "$PUMP_ID" ]; then
-  # NOTE: confirm "pump_nde_velocity" matches the printed key list above —
-  # adjust if Pump-01's real vibration key name differs.
-  create_rule "$PUMP_ID" "pump_nde_velocity" "gt" "4.5" "CRITICAL" "high_vibration"
+  # motor_nde_velocity = NDE motor vibration (confirmed via the Pump Twin
+  # widget's sensor mapping, not pump_nde_velocity — that key is actually
+  # "PP pump vibration"). Adjust below if a different point is intended.
+  create_rule "$PUMP_ID" "motor_nde_velocity" "gt" "4.5" "CRITICAL" "high_vibration"
 fi
