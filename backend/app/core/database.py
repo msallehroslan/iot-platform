@@ -5,8 +5,8 @@ from app.core.config import settings
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,          # increased from 3
-    max_overflow=10,      # increased from 7
+    pool_size=settings.DB_POOL_SIZE,
+    max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=10,      # fail fast instead of blocking for 30s
     pool_recycle=1800,
     connect_args={"connect_timeout": 5},

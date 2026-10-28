@@ -5,6 +5,13 @@ from typing import List, Optional
 class Settings(BaseSettings):
     # ── Core ──────────────────────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://postgres:postgres@localhost:5432/iotdb"
+    # DB connection pool — raise these if many concurrent dashboard users hit
+    # sqlalchemy.exc.TimeoutError: QueuePool limit ... reached. Total possible
+    # concurrent DB connections = DB_POOL_SIZE + DB_MAX_OVERFLOW. Make sure
+    # Postgres's own max_connections (default 100) comfortably exceeds this
+    # (leave room for other clients: migrations, psql, other services).
+    DB_POOL_SIZE:    int = 20
+    DB_MAX_OVERFLOW: int = 30
     # SECRET_KEY has NO default — must be set as env var.
     # Generate: python -c "import secrets; print(secrets.token_hex(32))"
     SECRET_KEY: str
