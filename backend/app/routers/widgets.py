@@ -53,6 +53,8 @@ from app.services.data_service import (
     get_unified_intelligence,
 )
 from app.services.trend_service import get_device_key_trend, get_all_key_trends
+from app.services.data_service import _sync_cache
+from app.services.cache_service import TTL_WIDGET_DATA
 
 logger = logging.getLogger(__name__)
 
@@ -427,16 +429,30 @@ def get_widget_data(
 
     device = _assert_device(device_id, current_user, db)
 
-    return handler(
-        db=db,
-        device_id=str(device_id),
-        device=device,
-        key=key,
-        keys=keys,
-        hours=hours,
-        limit=limit,
-        resolution=resolution,
-        minutes=minutes,
+    # Combined-response cache — each handler internally does several
+    # fetches (latest + baseline + anomaly + trend for value_card, etc).
+    # Those are each cached individually, but under many concurrent
+    # viewers of the same device+widget each request still pays for
+    # several separate cache round trips. A short cache on the full
+    # response collapses all of them into one real fetch per TTL window.
+    cache_key = (
+        f"iot:widgetdata:{device_id}:{type}:{key}:{keys}:"
+        f"{hours}:{limit}:{resolution}:{minutes}"
+    )
+    return _sync_cache(
+        key   = cache_key,
+        fetch = lambda: handler(
+            db=db,
+            device_id=str(device_id),
+            device=device,
+            key=key,
+            keys=keys,
+            hours=hours,
+            limit=limit,
+            resolution=resolution,
+            minutes=minutes,
+        ),
+        ttl = TTL_WIDGET_DATA,
     )
 
 

@@ -52,6 +52,10 @@ TTL_ANOMALY    = 60    # anomaly_summary — z-scores don't change per-second
 TTL_HEALTH     = 120   # health_score — recomputed hourly
 TTL_BASELINE   = 300   # baseline — updated nightly, very stable
 TTL_DASH_STATS = 10    # tenant dashboard /stats — was uncached, hammered DB under concurrency
+TTL_WIDGET_DATA = 5    # per-widget combined response — short so widgets still feel live,
+                        # but collapses N concurrent viewers of the same device+widget
+                        # into 1 real fetch instead of each doing their own latest+
+                        # baseline+anomaly+trend round trips
 
 
 class CacheService:
