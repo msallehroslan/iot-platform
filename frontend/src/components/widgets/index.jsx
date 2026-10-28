@@ -613,6 +613,12 @@ export function LineChartWidget({ config, historyData, deviceId }) {
       resolution: "raw",
     };
 
+    // Guard against out-of-order responses: switching windows quickly
+    // (e.g. 1h -> 12h -> 6h) fires a new request each time, and nothing
+    // stopped a slower, STALE response from a previous window arriving
+    // after a newer one and overwriting it — showing data that doesn't
+    // match the currently-selected window button.
+    let cancelled = false;
     setLoading(true);
 
     widgetApi
@@ -622,6 +628,7 @@ export function LineChartWidget({ config, historyData, deviceId }) {
         resolution,
       })
       .then(res => {
+        if (cancelled) return;
         const pts = res?.points || [];
         setChartData(pts);
 
@@ -640,7 +647,9 @@ export function LineChartWidget({ config, historyData, deviceId }) {
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [devId, key, window]);
 
   // For raw windows, append live WebSocket points on top of fetched data
@@ -755,20 +764,31 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
   useEffect(() => {
     if (!devId || !config.key) return;
 
-    const WINDOW_HOURS = {
-      "1h": 1,
-      "6h": 6,
-      "24h": 24,
-      "7d": 168,
+    // Resolution must scale with the window, same as LineChartWidget/
+    // BarChartWidget — fetching "raw" for a 24h/7d window combined with
+    // limit:300 silently caps the result to only the most recent ~300
+    // samples (well under an hour of data at a typical ingest cadence),
+    // so the displayed min/max/avg didn't actually reflect the selected
+    // window at all for anything beyond "1h".
+    const WINDOW_CONFIG = {
+      "1h":  { hours: 1,   resolution: "raw"  },
+      "6h":  { hours: 6,   resolution: "5min" },
+      "24h": { hours: 24,  resolution: "1h"   },
+      "7d":  { hours: 168, resolution: "1h"   },
     };
+    const { hours, resolution } = WINDOW_CONFIG[window] || WINDOW_CONFIG["24h"];
+
+    // Guard against out-of-order responses — see LineChartWidget for why.
+    let cancelled = false;
 
     widgetApi
       .lineChart(devId, config.key, {
-        hours: WINDOW_HOURS[window] || 24,
+        hours,
         limit: 300,
-        resolution: "raw",
+        resolution,
       })
       .then(res => {
+        if (cancelled) return;
         const vals = (res?.points || [])
           .map(p => p.value)
           .filter(v => v !== null && Number.isFinite(v));
@@ -784,6 +804,8 @@ export function GaugeWidget({ config, liveTelem, deviceId, intelligence }) {
         }
       })
       .catch(() => {});
+
+    return () => { cancelled = true; };
   }, [devId, config.key, window]);
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(1);
@@ -947,6 +969,8 @@ export function BarChartWidget({ config, historyData, deviceId }) {
       resolution: "raw",
     };
 
+    // Guard against out-of-order responses — see LineChartWidget for why.
+    let cancelled = false;
     setLoading(true);
 
     widgetApi
@@ -956,6 +980,7 @@ export function BarChartWidget({ config, historyData, deviceId }) {
         resolution,
       })
       .then(res => {
+        if (cancelled) return;
         const pts = res?.points || [];
         setChartData(pts);
 
@@ -974,7 +999,9 @@ export function BarChartWidget({ config, historyData, deviceId }) {
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [devId, key, window]);
 
   const isRaw = (WINDOW_CONFIG[window]?.resolution ?? "raw") === "raw";
@@ -1087,6 +1114,8 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
     };
 
     const hours = WINDOW_HOURS[window] || 1;
+    // Guard against out-of-order responses — see LineChartWidget for why.
+    let cancelled = false;
     setLoading(true);
 
     widgetApi
@@ -1095,6 +1124,7 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
         limit: 100,
       })
       .then(res => {
+        if (cancelled) return;
         const pts = res?.points || [];
         setPoints(pts);
 
@@ -1116,7 +1146,9 @@ export function TimeseriesTable({ config, historyData, deviceId }) {
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [devId, config.key, window]);
 
   // Fall back to historyData prop during initial load

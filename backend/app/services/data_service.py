@@ -213,10 +213,17 @@ def get_aggregated_telemetry(
                 TelemetryData.ts >= since,
             )
             .group_by(bucket)
-            .order_by(bucket.asc())
+            .order_by(bucket.desc())
             .limit(limit)
             .all()
         )
+        # ORDER BY ASC + LIMIT would return the OLDEST buckets in the
+        # window instead of the newest — harmless today since every
+        # preset window's bucket count stays under `limit`, but wrong
+        # the moment either grows (longer window, finer resolution, or
+        # a smaller limit). DESC + LIMIT then reverse keeps the result
+        # both correct and chronological.
+        rows = list(reversed(rows))
         points = [
             {
                 "ts":           r.bucket.isoformat(),
