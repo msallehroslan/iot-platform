@@ -211,16 +211,21 @@ function Flange({ outer = 0.6, inner = 0.35, thickness = 0.1, bolts = 8 }) {
 }
 
 function PumpModel({ ndeColor, deMotorColor, dePumpColor, ppColor, rpm }) {
-  const groupRef = useRef();
-  const impRef   = useRef();
-  const fanRef   = useRef();
+  const groupRef    = useRef();
+  const impRef      = useRef();
+  const fanRef      = useRef();
+  const shaftRef     = useRef();  // coupling shaft — spins with the impeller
   // rpm == null → key unmapped, assume nominal 1450 for visual effect
   // rpm <= 0    → pump stopped, no rotation
   const spin     = rpm == null ? 4 : rpm > 0 ? (rpm / 1450) * 4 : 0;
 
   useFrame((_, dt) => {
-    if (impRef.current) impRef.current.rotation.x += dt * spin;
-    if (fanRef.current) fanRef.current.rotation.x += dt * spin * 0.9;
+    if (impRef.current)   impRef.current.rotation.x   += dt * spin;
+    if (fanRef.current)   fanRef.current.rotation.x    += dt * spin * 0.9;
+    // Shaft axis for the whole assembly is the group's local X (same
+    // convention as impRef/fanRef above — every rotating part here spins
+    // around X regardless of each mesh's own construction rotation).
+    if (shaftRef.current) shaftRef.current.rotation.x  += dt * spin;
   });
 
   const cast = (color, m = 0.45, r = 0.55) => (
@@ -363,7 +368,9 @@ function PumpModel({ ndeColor, deMotorColor, dePumpColor, ppColor, rpm }) {
         </mesh>
       </group>
 
-      {/* Coupling guard */}
+      {/* Coupling guard — the bars/rings are a STATIONARY safety cage
+          (they don't rotate on a real pump); only the shaft + coupling
+          hubs inside it spin, via shaftRef below. */}
       <group position={[-0.05, 0.0, 0]}>
         {Array.from({ length: 10 }).map((_, i) => {
           const a = (i / 10) * Math.PI * 2;
@@ -380,18 +387,21 @@ function PumpModel({ ndeColor, deMotorColor, dePumpColor, ppColor, rpm }) {
             <meshStandardMaterial color="#f59e0b" metalness={0.5} roughness={0.4} />
           </mesh>
         ))}
-        <mesh position={[-0.12, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.18, 0.18, 0.18, 16]} />
-          {cast("#0f172a", 0.95, 0.2)}
-        </mesh>
-        <mesh position={[0.12, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.18, 0.18, 0.18, 16]} />
-          {cast("#0f172a", 0.95, 0.2)}
-        </mesh>
-        <mesh rotation={[0, 0, Math.PI / 2]}>
-          <cylinderGeometry args={[0.07, 0.07, 0.85, 16]} />
-          <meshStandardMaterial color="#cbd5e1" metalness={0.95} roughness={0.15} />
-        </mesh>
+        {/* Spinning shaft + coupling hubs */}
+        <group ref={shaftRef}>
+          <mesh position={[-0.12, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.18, 0.18, 0.18, 16]} />
+            {cast("#0f172a", 0.95, 0.2)}
+          </mesh>
+          <mesh position={[0.12, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.18, 0.18, 0.18, 16]} />
+            {cast("#0f172a", 0.95, 0.2)}
+          </mesh>
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.07, 0.07, 0.85, 16]} />
+            <meshStandardMaterial color="#cbd5e1" metalness={0.95} roughness={0.15} />
+          </mesh>
+        </group>
       </group>
 
       {/* TEFC Motor */}
