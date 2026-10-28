@@ -2,11 +2,11 @@
 #
 # create-rules.sh — create threshold rules (alarms) for:
 #   1. GlucIQ-Patient2-Demo / glucose_mmol  > 10   (WARNING — hyperglycemia)
-#   2. Pump-01 / motor_nde_velocity         > 4.5  (CRITICAL — ISO 10816-3)
-#
-# Key names confirmed from the Pump Twin widget's own sensor mapping:
-#   NDE motor vibration → motor_nde_velocity   DE motor vibration → motor_de_velocity
-#   DE pump vibration   → pump_de_velocity     PP pump vibration  → pump_nde_velocity
+#   2. Pump-01 — one rule PER vibration point, all > 4.5 (CRITICAL — ISO 10816-3):
+#        motor_nde_velocity (NDE motor)   motor_de_velocity (DE motor)
+#        pump_de_velocity   (DE pump)     pump_nde_velocity (PP pump)
+#      Covers all 4 points instead of guessing which one matters — whichever
+#      bearing actually goes bad, its own alarm fires with a matching alarm_type.
 #
 # Run this FIRST to sanity-check the pump vibration key name before
 # creating the rule (device key names can vary) — it prints the real
@@ -68,8 +68,11 @@ if [ -n "$GLUCIQ_ID" ]; then
 fi
 
 if [ -n "$PUMP_ID" ]; then
-  # motor_nde_velocity = NDE motor vibration (confirmed via the Pump Twin
-  # widget's sensor mapping, not pump_nde_velocity — that key is actually
-  # "PP pump vibration"). Adjust below if a different point is intended.
-  create_rule "$PUMP_ID" "motor_nde_velocity" "gt" "4.5" "CRITICAL" "high_vibration"
+  # One rule per vibration point (confirmed key names via the Pump Twin
+  # widget's own sensor mapping) — covers all 4 bearings instead of
+  # picking just one.
+  create_rule "$PUMP_ID" "motor_nde_velocity" "gt" "4.5" "CRITICAL" "high_vibration_nde_motor"
+  create_rule "$PUMP_ID" "motor_de_velocity"  "gt" "4.5" "CRITICAL" "high_vibration_de_motor"
+  create_rule "$PUMP_ID" "pump_de_velocity"   "gt" "4.5" "CRITICAL" "high_vibration_de_pump"
+  create_rule "$PUMP_ID" "pump_nde_velocity"  "gt" "4.5" "CRITICAL" "high_vibration_pp_pump"
 fi
