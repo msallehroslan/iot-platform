@@ -1,0 +1,181 @@
+/**
+ * k6 load test — IoT Platform
+ *
+ * Covers the 3 areas discussed:
+ *   1. dashboard  — many users hitting widget/dashboard reads
+ *                   (validates the Redis cache fix actually reduces DB load)
+ *   2. ingest     — many devices POSTing telemetry concurrently
+ *   3. taat_chat  — concurrent AI chat requests
+ *                   (validates the TAAT "parallel executor" fix)
+ *
+ * USAGE
+ * -----
+ * Install k6:  https://k6.io/docs/get-started/installation/
+ *   macOS:   brew install k6
+ *   Linux:   sudo apt install k6   (or see docs for your distro)
+ *
+ * Run ONE scenario at a time against LOCAL first:
+ *   k6 run -e BASE_URL=http://localhost:8000 -e EMAIL=you@example.com \
+ *       -e PASSWORD=yourpass -e SCENARIO=dashboard loadtest/k6-script.js
+ *
+ *   k6 run -e BASE_URL=http://localhost:8000 -e DEVICE_TOKEN=<a real device token> \
+ *       -e SCENARIO=ingest loadtest/k6-script.js
+ *
+ *   k6 run -e BASE_URL=http://localhost:8000 -e EMAIL=... -e PASSWORD=... \
+ *       -e SCENARIO=taat_chat loadtest/k6-script.js
+ *
+ * Only point BASE_URL at staging/production once you've checked the
+ * numbers locally and you're ready to watch /api/v1/system/metrics
+ * (DB latency, pool checkout, Redis status) WHILE it runs. Start with
+ * VUS=5 there, not the defaults below — this hits a shared DB.
+ */
+import http from "k6/http";
+import { check, sleep } from "k6";
+
+const BASE_URL = __ENV.BASE_URL || "http://localhost:8000";
+const EMAIL = __ENV.EMAIL || "";
+const PASSWORD = __ENV.PASSWORD || "";
+const DEVICE_TOKEN = __ENV.DEVICE_TOKEN || "";
+const SCENARIO = __ENV.SCENARIO || "dashboard";
+
+export const options = {
+  scenarios: {
+    dashboard: SCENARIO === "dashboard" ? {
+      executor: "ramping-vus",
+      exec: "dashboardScenario",
+      startVUs: 0,
+      stages: [
+        { duration: "30s", target: 20 },   // ramp to 20 concurrent "users"
+        { duration: "1m",  target: 20 },   // hold
+        { duration: "15s", target: 0 },    // ramp down
+      ],
+    } : undefined,
+
+    ingest: SCENARIO === "ingest" ? {
+      executor: "constant-arrival-rate",
+      exec: "ingestScenario",
+      rate: 50,              // 50 ingest requests/sec
+      timeUnit: "1s",
+      duration: "1m",
+      preAllocatedVUs: 20,
+      maxVUs: 100,
+    } : undefined,
+
+    taat_chat: SCENARIO === "taat_chat" ? {
+      executor: "ramping-vus",
+      exec: "taatChatScenario",
+      startVUs: 0,
+      stages: [
+        { duration: "20s", target: 5 },    // chat is expensive — keep this low
+        { duration: "40s", target: 5 },
+        { duration: "10s", target: 0 },
+      ],
+    } : undefined,
+  },
+  thresholds: {
+    http_req_failed: ["rate<0.05"],       // <5% errors
+    http_req_duration: ["p(95)<2000"],    // 95% of requests under 2s
+  },
+};
+
+// ── Shared login (dashboard + taat_chat scenarios) ───────────────────────────
+
+function login() {
+  if (!EMAIL || !PASSWORD) {
+    throw new Error("Set -e EMAIL=... -e PASSWORD=... for this scenario");
+  }
+  const res = http.post(
+    `${BASE_URL}/api/v1/auth/login`,
+    JSON.stringify({ email: EMAIL, password: PASSWORD }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+  check(res, { "login ok": (r) => r.status === 200 });
+  const body = res.json();
+  return body.access_token;
+}
+
+// ── Scenario 1: dashboard / widget reads ─────────────────────────────────────
+
+let _token;
+let _deviceId;
+
+export function dashboardScenario() {
+  if (!_token) {
+    _token = login();
+    const devicesRes = http.get(`${BASE_URL}/api/v1/devices/?page=1&page_size=1`, {
+      headers: { Authorization: `Bearer ${_token}` },
+    });
+    const items = devicesRes.json("items") || [];
+    _deviceId = items[0] && items[0].id;
+  }
+  if (!_deviceId) {
+    console.warn("No device found on this tenant — add at least one device first");
+    sleep(1);
+    return;
+  }
+
+  const headers = { Authorization: `Bearer ${_token}` };
+
+  const r1 = http.get(`${BASE_URL}/api/v1/dashboard/stats`, { headers });
+  check(r1, { "stats 200": (r) => r.status === 200 });
+
+  const r2 = http.get(
+    `${BASE_URL}/api/v1/widgets/data/${_deviceId}?type=value_card&key=temperature`,
+    { headers },
+  );
+  check(r2, { "widget 200": (r) => r.status === 200 });
+
+  const r3 = http.get(
+    `${BASE_URL}/api/v1/widgets/data/${_deviceId}?type=line_chart&key=temperature&hours=24`,
+    { headers },
+  );
+  check(r3, { "line_chart 200": (r) => r.status === 200 });
+
+  sleep(1 + Math.random());  // mimic a human refreshing every 1-2s
+}
+
+// ── Scenario 2: telemetry ingest ──────────────────────────────────────────────
+
+export function ingestScenario() {
+  if (!DEVICE_TOKEN) {
+    throw new Error("Set -e DEVICE_TOKEN=... (a real device token) for this scenario");
+  }
+  const payload = JSON.stringify({
+    values: {
+      temperature: 20 + Math.random() * 15,
+      humidity: 40 + Math.random() * 30,
+    },
+  });
+  const res = http.post(
+    `${BASE_URL}/api/v1/telemetry/ingest/${DEVICE_TOKEN}`,
+    payload,
+    { headers: { "Content-Type": "application/json" } },
+  );
+  check(res, {
+    "ingest 200": (r) => r.status === 200,
+    "ingest not rate-limited": (r) => r.status !== 429,
+  });
+}
+
+// ── Scenario 3: TAAT chat ─────────────────────────────────────────────────────
+
+export function taatChatScenario() {
+  if (!_token) {
+    _token = login();
+  }
+  const res = http.post(
+    `${BASE_URL}/api/v1/intelligence/chat`,
+    JSON.stringify({
+      messages: [{ role: "user", content: "What's the status of my devices?" }],
+    }),
+    {
+      headers: {
+        Authorization: `Bearer ${_token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: "30s",
+    },
+  );
+  check(res, { "chat 200": (r) => r.status === 200 });
+  sleep(2);
+}
