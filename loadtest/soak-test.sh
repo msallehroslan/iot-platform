@@ -16,12 +16,14 @@
 # Redis pubsub leak noted in the code review) that a 2-minute burst
 # test can't catch.
 #
-# Hits EVERY device on the tenant each round, as EACH of several users
-# in turn (round-robin by round number — one user's full device sweep
-# per round, not all users at once, to keep the per-round request count
-# small and the overall rate gentle). Each device's own telemetry keys
-# are looked up (not hardcoded), so this works generically across
-# different device types (pump, counter, patient monitor, ...).
+# Hits EVERY device on the tenant each round, as EVERY configured user
+# CONCURRENTLY (each user's full device sweep runs in parallel, not
+# round-robin) — simulates several real users on the dashboard at the
+# same moment, which is what actually exercises the single uvicorn
+# worker / DB pool / cache under concurrency, not just over time. Each
+# device's own telemetry keys are looked up (not hardcoded), so this
+# works generically across different device types (pump, counter,
+# patient monitor, ...).
 #
 # USAGE
 # -----
@@ -144,38 +146,54 @@ while true; do
     refresh_devices
   fi
 
-  n_users="${#EMAIL_LIST[@]}"
-  user_idx=$(( (ROUND - 1) % n_users ))
-  token="${TOKENS[$user_idx]:-}"
-  email="${EMAIL_LIST[$user_idx]}"
-
   n_devices="${#DEVICE_IDS[@]}"
-  if [ -n "$token" ] && [ "$n_devices" -gt 0 ]; then
-    for idx in "${!DEVICE_IDS[@]}"; do
-      device_id="${DEVICE_IDS[$idx]}"
-      device_name="${DEVICE_NAMES[$idx]}"
-      key="${DEVICE_KEYS[$idx]}"
 
-      if [ -n "$key" ]; then
-        t0=$(date +%s%N)
-        code=$(curl -s -o /dev/null -w "%{http_code}" \
-          -H "Authorization: Bearer $token" \
-          "$BASE_URL/api/v1/widgets/data/$device_id?type=value_card&key=$key")
-        t1=$(date +%s%N)
-        ms=$(( (t1 - t0) / 1000000 ))
-        log "round=$ROUND user=$email device=\"$device_name\" key=$key widget_data status=$code latency_ms=$ms"
-      else
-        log "round=$ROUND user=$email device=\"$device_name\" skipped — no telemetry key known yet"
-      fi
-    done
+  # Every user sweeps every device CONCURRENTLY this round (not
+  # round-robin) — simulates several real users hitting the dashboard
+  # at the same moment, which is what actually stresses the single
+  # uvicorn worker / DB pool / cache under concurrency.
+  pids=()
+  for user_idx in "${!EMAIL_LIST[@]}"; do
+    token="${TOKENS[$user_idx]:-}"
+    email="${EMAIL_LIST[$user_idx]}"
 
-    code2=$(curl -s -o /dev/null -w "%{http_code}" \
-      -H "Authorization: Bearer $token" \
-      "$BASE_URL/api/v1/dashboard/stats")
-    log "round=$ROUND user=$email dashboard_stats status=$code2"
-  else
-    log "round=$ROUND user=$email skipped — no token/devices yet"
-  fi
+    if [ -z "$token" ] || [ "$n_devices" -eq 0 ]; then
+      log "round=$ROUND user=$email skipped — no token/devices yet"
+      continue
+    fi
+
+    (
+      for idx in "${!DEVICE_IDS[@]}"; do
+        device_id="${DEVICE_IDS[$idx]}"
+        device_name="${DEVICE_NAMES[$idx]}"
+        key="${DEVICE_KEYS[$idx]}"
+
+        if [ -n "$key" ]; then
+          t0=$(date +%s%N)
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $token" \
+            "$BASE_URL/api/v1/widgets/data/$device_id?type=value_card&key=$key")
+          t1=$(date +%s%N)
+          ms=$(( (t1 - t0) / 1000000 ))
+          log "round=$ROUND user=$email device=\"$device_name\" key=$key widget_data status=$code latency_ms=$ms"
+        else
+          log "round=$ROUND user=$email device=\"$device_name\" skipped — no telemetry key known yet"
+        fi
+      done
+
+      code2=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer $token" \
+        "$BASE_URL/api/v1/dashboard/stats")
+      log "round=$ROUND user=$email dashboard_stats status=$code2"
+    ) &
+    pids+=($!)
+  done
+
+  # Wait for all users' sweeps this round to finish before the next
+  # interval — keeps rounds from overlapping as users/devices grow.
+  for pid in "${pids[@]:-}"; do
+    [ -n "$pid" ] && wait "$pid" 2>/dev/null
+  done
 
   sleep "$INTERVAL_S"
 done
