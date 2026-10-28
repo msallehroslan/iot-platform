@@ -1,5 +1,71 @@
 # Load testing — IoT Platform
 
+## Current setup (as of this writing)
+
+**Fleet**: 23 devices total —
+- `Pump-01`, `GlucIQ-Patient2-Demo`, `Swiftlet-Counter-001` (original demo devices)
+- `LoadTest-Sensor-01` .. `LoadTest-Sensor-20` (generic sensors, provisioned via
+  `create-extra-devices.sh`) — each reports a random 2-4 key subset from:
+  `temperature` (15-45°C), `humidity` (20-90%), `pressure` (80-120kPa),
+  `vibration` (0.5-5mm/s), `voltage` (210-240V), `current` (0-20A),
+  `rpm` (500-3000), `flow_rate` (10-100L/min), `signal_strength` (0-100%),
+  `battery_pct` (0-100%)
+
+**Alarm rules** (Rule Chains page): Pump-01 has 5 CRITICAL vibration rules
+(ISO 10816-3, one per bearing point) + GlucIQ has 1 glucose WARNING rule —
+all device-scoped. Plus 10 tenant-wide (`device_id=null`) WARNING rules, one
+per generic key above, from `create-generic-rules.sh` — these auto-apply to
+any device reporting that key, so they cover all 20 LoadTest-Sensor devices
+without per-device enumeration.
+
+**Background scripts normally running**:
+- `live-telemetry.sh` — nudges every device's current values ±2% every
+  ~10s, keeps devices ACTIVE and the dashboard visually live. Safe to leave
+  running continuously; low overhead (~342 telemetry rows/min at 23 devices).
+- `soak-test.sh` — NOT running by default. Start only when actively load
+  testing; it's a genuinely heavy 100-user continuous read load (see
+  "Known performance numbers" below) and will make the dashboard feel
+  slower for anyone using it live while it runs. Always `pkill -f
+  soak-test.sh` when done, don't leave it running unattended.
+
+**100 test user accounts**: `loadtest1@test.local` .. `loadtest100@test.local`,
+password `loadtest123` (NOT the demo admin's `demo1234` — using the wrong
+password for these accounts across 100 concurrent logins is exactly what
+tripped the per-IP login rate limiter during testing; see
+`backend/app/routers/auth.py`'s `/login` rate limit, 5 failed attempts per
+IP per 15 min, min lesson: always set `PASSWORD=loadtest123` when scripting
+logins for these accounts).
+
+**Known performance numbers** (verified, see conversation/commit history for
+exact methodology):
+- 100 concurrent users + 23 devices, sustained: **0 failed requests**,
+  widget API latency avg ~1.35s (min ~175ms, max ~2.7s), DB pool barely
+  used (1-2 of 40 connections), DB query latency <1ms.
+- Telemetry ingest: ~342 rows/min at normal `live-telemetry.sh` cadence;
+  stress-tested (via `ingest-stress-test.sh`) to 1095 calls/min with 0
+  failures using `WORKERS_PER_DEVICE=2`.
+- Running the 100-user soak test and an ingest stress test at the same
+  time visibly slows the dashboard down — that's two heavy synthetic
+  loads stacked, not a bug. Don't run both together unless specifically
+  testing combined worst-case load.
+
+**Scripts reference** (all in this directory, all idempotent/safe to re-run
+unless noted):
+
+| Script | What it does |
+|---|---|
+| `create-test-users.sh` | Provisions the 100 `loadtest*@test.local` accounts (password `loadtest123`) |
+| `create-extra-devices.sh` | Provisions `N` (default 20) generic sensor devices with realistic random telemetry (`N=5 ./create-extra-devices.sh` to add a different count) |
+| `fix-sensor-ranges.sh` | Re-ingests realistic values for whatever keys an existing `LoadTest-Sensor-*` device already reports — doesn't add/remove keys, run after `create-extra-devices.sh` if values look stale |
+| `create-rules.sh` | Creates Pump-01 vibration (ISO 10816-3, all 4 bearing points) + GlucIQ glucose threshold rules |
+| `create-generic-rules.sh` | Creates/refreshes the 10 tenant-wide generic-key threshold rules (deletes old ones with the same alarm_type first, so re-running updates thresholds without duplicating) |
+| `live-telemetry.sh` | Continuous ±2% nudge for every device, keeps the dashboard "alive" — see above |
+| `soak-test.sh` | 100-user continuous concurrent read load — see above, start/stop deliberately |
+| `ingest-stress-test.sh` | Short burst, max-speed ingest test (`DURATION_S`, `WORKERS_PER_DEVICE` env vars) — separate from `live-telemetry.sh`'s steady nudge rate |
+| `check-performance.sh` | One-shot snapshot: system/DB/cache metrics, `soak-test.sh` log error/latency summary (overall + since last backend restart), backend error log tail, `docker stats` |
+| `metrics-sampler.sh` + `analyze-soak.py` | Long-run (days/weeks) trend sampling via cron — see "Soak / endurance test" section below |
+| `k6-script.js` | Short burst load via k6 — see "1. Install k6" section below |
+
 Two kinds of test here, for two different questions:
 
 - **`k6-script.js`** — short burst load (minutes): "does it handle N
