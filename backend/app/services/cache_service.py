@@ -37,6 +37,7 @@ Usage:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Optional
@@ -63,12 +64,24 @@ class CacheService:
     def __init__(self):
         self._client = None      # redis.asyncio client, set by setup()
         self._enabled = False    # True once Redis is confirmed reachable
+        self._main_loop: Optional[asyncio.AbstractEventLoop] = None  # captured in setup()
 
     async def setup(self, redis_url: Optional[str]) -> None:
         """
         Connect to Redis. Call once at FastAPI startup.
         Silently disables caching if redis_url is None or connection fails.
         """
+        # Capture the running event loop here, on the main asyncio thread.
+        # data_service._sync_cache() (called from sync route handlers running
+        # in a worker thread) needs a real reference to THIS loop to bridge
+        # into async Redis calls — asyncio.get_event_loop() from a worker
+        # thread does not return it (and raises/creates a throwaway loop),
+        # which silently disabled the cache for every sync-handler read.
+        try:
+            self._main_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._main_loop = None
+
         # Fallback: read directly from env if not passed (guards against import-order issues)
         if not redis_url:
             import os
@@ -156,6 +169,33 @@ class CacheService:
             logger.warning("cache SET error (%s) — result returned without caching", exc)
 
         return result
+
+    async def get(self, key: str) -> Any:
+        """
+        Pure cache read — no DB fallback. Returns None on miss or any error.
+        Safe to run on the main event loop: pure async Redis I/O, never a
+        blocking DB call (unlike get_or_set, whose `fetch` must run on the
+        caller's own thread — see data_service._sync_cache).
+        """
+        if not self._enabled or not self._client:
+            return None
+        try:
+            raw = await self._client.get(key)
+            if raw is not None:
+                logger.debug("cache HIT  %s", key)
+                return json.loads(raw)
+        except Exception as exc:
+            logger.warning("cache GET error (%s)", exc)
+        return None
+
+    async def set(self, key: str, value: Any, ttl: int) -> None:
+        """Write-through cache write. Non-fatal — never raises."""
+        if not self._enabled or not self._client:
+            return
+        try:
+            await self._client.setex(key, ttl, json.dumps(value, default=str))
+        except Exception as exc:
+            logger.warning("cache SET error (%s) — result returned without caching", exc)
 
     async def delete(self, key: str) -> None:
         """Delete a single cache key. Non-fatal."""
@@ -248,6 +288,13 @@ class CacheService:
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    @property
+    def loop(self) -> Optional[asyncio.AbstractEventLoop]:
+        """The main FastAPI event loop, captured at setup(). Used by
+        data_service._sync_cache() to bridge sync route handlers (running
+        in a worker thread) into this service's async Redis calls."""
+        return self._main_loop
 
 
 def _hit_rate(hits: int, misses: int) -> float:

@@ -144,10 +144,11 @@ def get_device_key_trend(
             TelemetryData.ts >= since,
             TelemetryData.value_num.isnot(None),
         )
-        .order_by(TelemetryData.ts.asc())
+        .order_by(TelemetryData.ts.desc())
         .limit(max_points)
         .all()
     )
+    rows = list(reversed(rows))  # back to chronological order (oldest first)
 
     if not rows:
         return {**_unknown([]), "key": key, "device_id": device_id, "window_minutes": minutes}

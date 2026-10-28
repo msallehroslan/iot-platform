@@ -21,6 +21,7 @@ Tools exposed:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
@@ -28,6 +29,38 @@ from typing import Any, Callable, Dict, Optional
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_sync(fn: Callable, *args, **kwargs) -> Any:
+    """
+    Run a synchronous (blocking DB) call off the event loop thread, on its
+    own short-lived DB session.
+
+    Every read tool below wraps a plain synchronous data_service/taat_tools
+    function (whose first positional arg is a SQLAlchemy Session) in an
+    `async def`, but previously called it directly with no `await` inside
+    — so asyncio.gather() in taat_executor.py had no real yield point to
+    interleave on, and "parallel" batches actually ran fully sequentially
+    (no speedup, despite the executor's docstring claiming ~5x).
+
+    Routing the call through run_in_executor gives real concurrency, but
+    that means these calls can no longer share the single Session the
+    router handed to the executor — SQLAlchemy Sessions are not safe for
+    concurrent use across threads. So each call gets its own short-lived
+    session (opened and closed on the worker thread) instead of reusing
+    the caller's `db` arg.
+    """
+    from app.core.database import SessionLocal
+
+    def _call():
+        local_db = SessionLocal()
+        try:
+            return fn(local_db, *args[1:], **kwargs)
+        finally:
+            local_db.close()
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _call)
 
 
 # ── Standard I/O contract ─────────────────────────────────────────────────────
@@ -67,7 +100,7 @@ async def tool_get_devices(
 ) -> ToolResult:
     try:
         from app.services.taat_tools import tool_get_devices as _fn
-        return _result("get_devices", _fn(db, current_user))
+        return _result("get_devices", await _run_sync(_fn, db, current_user))
     except Exception as e:
         return _error("get_devices", str(e))
 
@@ -80,7 +113,7 @@ async def tool_get_telemetry(
         return _error("get_telemetry", "device_id required")
     try:
         from app.services.data_service import get_latest_telemetry
-        return _result("get_telemetry", get_latest_telemetry(db, device_id))
+        return _result("get_telemetry", await _run_sync(get_latest_telemetry, db, device_id))
     except Exception as e:
         return _error("get_telemetry", str(e))
 
@@ -93,7 +126,7 @@ async def tool_get_alarms(
         return _error("get_alarms", "device_id required")
     try:
         from app.services.data_service import get_active_alarms
-        return _result("get_alarms", get_active_alarms(db, device_id))
+        return _result("get_alarms", await _run_sync(get_active_alarms, db, device_id))
     except Exception as e:
         return _error("get_alarms", str(e))
 
@@ -106,7 +139,7 @@ async def tool_get_health(
         return _error("get_health", "device_id required")
     try:
         from app.services.data_service import get_health_summary
-        return _result("get_health", get_health_summary(db, device_id))
+        return _result("get_health", await _run_sync(get_health_summary, db, device_id))
     except Exception as e:
         return _error("get_health", str(e))
 
@@ -119,7 +152,7 @@ async def tool_get_anomalies(
         return _error("get_anomalies", "device_id required")
     try:
         from app.services.data_service import get_anomaly_summary
-        return _result("get_anomalies", get_anomaly_summary(db, device_id, hours=hours))
+        return _result("get_anomalies", await _run_sync(get_anomaly_summary, db, device_id, hours=hours))
     except Exception as e:
         return _error("get_anomalies", str(e))
 
@@ -132,7 +165,7 @@ async def tool_get_baseline(
         return _error("get_baseline", "device_id required")
     try:
         from app.services.taat_tools import tool_get_baseline as _fn
-        return _result("get_baseline", _fn(db, device_id, key=key))
+        return _result("get_baseline", await _run_sync(_fn, db, device_id, key=key))
     except Exception as e:
         return _error("get_baseline", str(e))
 
@@ -145,7 +178,7 @@ async def tool_get_key_intelligence(
         return _error("get_key_intelligence", "device_id and key required")
     try:
         from app.services.data_service import get_key_intelligence
-        return _result("get_key_intelligence", get_key_intelligence(db, device_id, key))
+        return _result("get_key_intelligence", await _run_sync(get_key_intelligence, db, device_id, key))
     except Exception as e:
         return _error("get_key_intelligence", str(e))
 
@@ -233,8 +266,8 @@ async def tool_get_memory(
 ) -> ToolResult:
     try:
         from app.services.taat_memory_service import get_relevant_memories
-        mems = get_relevant_memories(
-            db, current_user.tenant_id,
+        mems = await _run_sync(
+            get_relevant_memories, db, current_user.tenant_id,
             device_name=device_name, key=key
         )
         return _result("get_memory", {"count": len(mems), "memories": mems})
@@ -266,7 +299,7 @@ async def tool_get_telemetry_history(
         return _error("get_telemetry_history", "device_id and key required")
     try:
         from app.services.taat_tools import tool_get_telemetry_history as _fn
-        return _result("get_telemetry_history", _fn(db, device_id, key, hours=hours, resolution=resolution))
+        return _result("get_telemetry_history", await _run_sync(_fn, db, device_id, key, hours=hours, resolution=resolution))
     except Exception as e:
         return _error("get_telemetry_history", str(e))
 
@@ -280,7 +313,7 @@ async def tool_get_pump_analysis(
         return _error("get_pump_analysis", "device_id required")
     try:
         from app.services.taat_tools import tool_get_pump_analysis as _fn
-        return _result("get_pump_analysis", _fn(db, device_id))
+        return _result("get_pump_analysis", await _run_sync(_fn, db, device_id))
     except Exception as e:
         return _error("get_pump_analysis", str(e))
 

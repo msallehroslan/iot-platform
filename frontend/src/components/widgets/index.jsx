@@ -2417,13 +2417,30 @@ export function MapWidget({ config, liveTelem, deviceId }) {
   useEffect(() => {
     if (isNaN(lat) || isNaN(lng) || !mapRef.current) return;
 
+    const name = deviceInfo.name || config.device_name || "Device";
+    const statusLabel = isOnline === true ? "🟢 Online" : isOnline === false ? "⚫ Offline" : "🟡 Unknown";
+    const devId = deviceInfo.id || config.device_id || deviceId;
+
     const initMap = () => {
       if (!mapRef.current) return;
       const L = window.L;
 
       if (mapInstanceRef.current) {
-        // Update existing marker position (live GPS tracking)
-        if (markerRef.current) markerRef.current.setLatLng([lat, lng]);
+        // Map already exists — just move the marker/view, never tear down
+        // and rebuild the whole map (that would flicker + reset zoom/pan
+        // on every GPS update).
+        if (markerRef.current) {
+          markerRef.current.setLatLng([lat, lng]);
+          markerRef.current.setPopupContent(`
+            <div style="min-width:140px;font-family:sans-serif">
+              <strong style="font-size:13px">${name}</strong><br/>
+              <span style="font-size:11px;color:#64748b">${statusLabel}</span><br/>
+              <span style="font-size:10px;color:#94a3b8">${lat.toFixed(5)}, ${lng.toFixed(5)}</span>
+              ${isLive ? '<br/><span style="font-size:10px;color:#10b981">📡 Live GPS</span>' : ""}
+              ${devId ? `<br/><a href="#" onclick="window.dispatchEvent(new CustomEvent('taat-open-device',{detail:'${devId}'}));return false;" style="font-size:11px;color:#2F8CFF;text-decoration:none;font-weight:600">→ Open Dashboard</a>` : ""}
+            </div>
+          `);
+        }
         mapInstanceRef.current.setView([lat, lng]);
         return;
       }
@@ -2451,9 +2468,6 @@ export function MapWidget({ config, liveTelem, deviceId }) {
       const marker = L.marker([lat, lng], { icon }).addTo(map);
       markerRef.current = marker;
 
-      const name = deviceInfo.name || config.device_name || "Device";
-      const statusLabel = isOnline === true ? "🟢 Online" : isOnline === false ? "⚫ Offline" : "🟡 Unknown";
-      const devId = deviceInfo.id || config.device_id || deviceId;
       marker.bindPopup(`
         <div style="min-width:140px;font-family:sans-serif">
           <strong style="font-size:13px">${name}</strong><br/>
@@ -2486,6 +2500,13 @@ export function MapWidget({ config, liveTelem, deviceId }) {
       document.head.appendChild(script);
     }
 
+    // No cleanup here — the map/marker persist across lat/lng updates
+    // (torn down only on unmount, below) so GPS updates don't flicker
+    // the whole map or reset the user's zoom/pan.
+  }, [lat, lng]);
+
+  // Mount-only teardown — runs once when the widget actually unmounts.
+  useEffect(() => {
     return () => {
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
@@ -2493,7 +2514,7 @@ export function MapWidget({ config, liveTelem, deviceId }) {
         markerRef.current = null;
       }
     };
-  }, [lat, lng]);
+  }, []);
 
   if (isNaN(lat) || isNaN(lng)) return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:8,padding:12}}>

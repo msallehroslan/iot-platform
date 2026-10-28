@@ -91,27 +91,49 @@ def _sync_cache(key: str, fetch, ttl: int):
     Synchronous cache wrapper for data_service functions.
 
     data_service is called from synchronous FastAPI route handlers
-    (which run in a thread pool, not the event loop).  We cannot
-    await inside them, but we can grab the running event loop and
-    schedule the coroutine as a thread-safe future.
+    (which run in a thread pool, not the event loop). We cannot await
+    inside them, but we can schedule pure-async Redis calls onto the
+    main event loop (captured by cache_service at startup) as thread-safe
+    futures.
+
+    NOTE: asyncio.get_event_loop() does NOT work here — called from a
+    worker thread it raises (or returns a throwaway loop that is never
+    running), which silently disabled this cache for every read that
+    went through a sync route handler. cache.loop is the real loop.
+
+    IMPORTANT: `fetch` (a blocking DB call tied to this request's own
+    Session) always runs on THIS thread, never on the main event loop —
+    running it there via cache.get_or_set() would block the whole app
+    (WebSocket broadcasts, every other request) for the duration of the
+    DB query on every cache miss. Only the actual Redis GET/SET — real
+    async I/O — is bridged to the main loop.
 
     Falls through to direct DB fetch on any error (cache is additive).
     """
     if not cache.enabled:
         return fetch()
-    try:
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-            fut = asyncio.run_coroutine_threadsafe(
-                cache.get_or_set(key=key, fetch=fetch, ttl=ttl),
-                loop,
-            )
-            return fut.result(timeout=2)
-    except Exception as exc:
-        logger.debug("cache sync_cache fallback: %s", exc)
-    return fetch()
+
+    import asyncio
+    loop = cache.loop
+
+    if loop is not None and loop.is_running():
+        try:
+            read_fut = asyncio.run_coroutine_threadsafe(cache.get(key), loop)
+            cached = read_fut.result(timeout=2)
+            if cached is not None:
+                return cached
+        except Exception as exc:
+            logger.debug("cache read fallback: %s", exc)
+
+    result = fetch()
+
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(cache.set(key, result, ttl), loop)
+        except Exception as exc:
+            logger.debug("cache write fallback: %s", exc)
+
+    return result
 
 
 def _fetch_latest_telemetry(db: Session, device_id: str) -> dict:

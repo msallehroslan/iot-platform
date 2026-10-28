@@ -1723,14 +1723,14 @@ function ApiKeysPage({ onToast }) {
   const load = useCallback(async () => {
     setLoading(true);
     try { setKeys(await apiKeysApi.list()); }
-    catch(e) { onToast({ msg: e.message, type: "error" }); }
+    catch(e) { onToast(e.message, "error"); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const handleCreate = async () => {
-    if (!form.name.trim()) return onToast({ msg: "Name is required", type: "error" });
+    if (!form.name.trim()) return onToast("Name is required", "error");
     setCreating(true);
     try {
       const body = { name: form.name.trim(), ...(form.expires_days ? { expires_days: parseInt(form.expires_days) } : {}) };
@@ -1739,7 +1739,7 @@ function ApiKeysPage({ onToast }) {
       setForm({ name: "", expires_days: "" });
       setShowCreate(false);
       load();
-    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    } catch(e) { onToast(e.message, "error"); }
     finally { setCreating(false); }
   };
 
@@ -1747,15 +1747,15 @@ function ApiKeysPage({ onToast }) {
     setRevoking(id);
     try {
       await apiKeysApi.revoke(id);
-      onToast({ msg: "API key revoked", type: "success" });
+      onToast("API key revoked", "success");
       load();
-    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    } catch(e) { onToast(e.message, "error"); }
     finally { setRevoking(null); }
   };
 
   const copyKey = (key) => {
     navigator.clipboard.writeText(key).catch(() => {});
-    onToast({ msg: "Copied to clipboard", type: "success" });
+    onToast("Copied to clipboard", "success");
   };
 
   return (
@@ -1880,7 +1880,7 @@ function SystemMetricsPage({ onToast }) {
       const [sys, tenant] = await Promise.all([systemApi.metrics(), metricsApi.get()]);
       setData({ sys, tenant });
       setLastFetched(new Date());
-    } catch(e) { onToast({ msg: e.message, type: "error" }); }
+    } catch(e) { onToast(e.message, "error"); }
     finally { setLoading(false); }
   }, []);
 
@@ -2071,7 +2071,7 @@ function AuditLogPage({ onToast }) {
   const load = useCallback(async () => {
     setLoading(true);
     try { setRows(await systemApi.audit(limit, actionFilter || null)); }
-    catch(e) { onToast({ msg: e.message, type: "error" }); }
+    catch(e) { onToast(e.message, "error"); }
     finally { setLoading(false); }
   }, [limit, actionFilter]);
 
