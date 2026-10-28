@@ -24,6 +24,18 @@
  *   k6 run -e BASE_URL=http://localhost:8000 -e EMAIL=... -e PASSWORD=... \
  *       -e SCENARIO=taat_chat loadtest/k6-script.js
  *
+ * MULTIPLE USERS instead of one shared account (avoids hitting one
+ * user's rate limit, e.g. TAAT chat's 20/hour cap, and is a more
+ * realistic "many real users" load). First provision them:
+ *   ./loadtest/create-test-users.sh
+ * Then pass the comma-separated list it prints via EMAILS instead of
+ * EMAIL — each VU picks one deterministically by its VU number:
+ *   k6 run -e BASE_URL=http://localhost:8000 \
+ *       -e EMAILS="$(cat loadtest/test-users.txt)" -e PASSWORD=loadtest123 \
+ *       -e SCENARIO=taat_chat loadtest/k6-script.js
+ * (EMAIL still works for a single shared account — EMAILS takes
+ * priority when both are set.)
+ *
  * Only point BASE_URL at staging/production once you've checked the
  * numbers locally and you're ready to watch /api/v1/system/metrics
  * (DB latency, pool checkout, Redis status) WHILE it runs. Start with
@@ -34,9 +46,20 @@ import { check, sleep } from "k6";
 
 const BASE_URL = __ENV.BASE_URL || "http://localhost:8000";
 const EMAIL = __ENV.EMAIL || "";
+const EMAILS = (__ENV.EMAILS || "").split(",").map(e => e.trim()).filter(Boolean);
 const PASSWORD = __ENV.PASSWORD || "";
 const DEVICE_TOKEN = __ENV.DEVICE_TOKEN || "";
 const SCENARIO = __ENV.SCENARIO || "dashboard";
+
+// One user per VU — deterministic so the same VU always re-uses the
+// same account's token cache below, round-robining if there are more
+// VUs than accounts.
+function emailForThisVU() {
+  if (EMAILS.length > 0) {
+    return EMAILS[(__VU - 1) % EMAILS.length];
+  }
+  return EMAIL;
+}
 
 // Build only the ONE active scenario — k6 requires every key present in
 // `scenarios` to have a valid executor, so conditionally-undefined entries
@@ -93,12 +116,13 @@ export const options = {
 // ── Shared login (dashboard + taat_chat scenarios) ───────────────────────────
 
 function login() {
-  if (!EMAIL || !PASSWORD) {
-    throw new Error("Set -e EMAIL=... -e PASSWORD=... for this scenario");
+  const email = emailForThisVU();
+  if (!email || !PASSWORD) {
+    throw new Error("Set -e EMAIL=... (or EMAILS=...) -e PASSWORD=... for this scenario");
   }
   const res = http.post(
     `${BASE_URL}/api/v1/auth/login`,
-    JSON.stringify({ email: EMAIL, password: PASSWORD }),
+    JSON.stringify({ email, password: PASSWORD }),
     { headers: { "Content-Type": "application/json" } },
   );
   check(res, { "login ok": (r) => r.status === 200 });
