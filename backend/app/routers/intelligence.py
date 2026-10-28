@@ -509,20 +509,16 @@ async def _call_ollama(messages: list, max_tokens: int, temperature: float) -> s
 
 
 # ── Groq model strategy ──────────────────────────────────────────────────────
-# 8b: high quota (14,400/day) — chat, RPC parsing, summaries, comparisons
-# 70b: low quota (1,000/day)  — RCA, alarm explanation, daily report
-# ── Model selection ───────────────────────────────────────────────────────────
-# Override via Render env vars to switch models without redeploying.
+# llama-3.1-8b-instant / llama-3.3-70b-versatile have been deprecated and
+# removed from Groq's catalogue (confirmed via GET /openai/v1/models on
+# 2026-10-28) — verify current model IDs the same way before changing
+# these, Groq's lineup rotates.
 #
-# Groq-hosted options (all free tier, just set env var):
-#   Llama:  llama-3.1-8b-instant   llama-3.3-70b-versatile
-#   Gemma:  gemma2-9b-it            gemma-7b-it
-#   Mixtral: mixtral-8x7b-32768
-#
-# FAST = used for every chat turn (intent + reply)
-# DEEP = used for RCA, alarm explanation, daily report
-GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
-GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "llama-3.3-70b-versatile")
+# FAST = used for every chat turn (intent + reply) — smaller/faster model
+# DEEP = used for RCA, alarm explanation, daily report — larger model
+# Override via env vars to switch models without a code change.
+GROQ_MODEL_FAST = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
+GROQ_MODEL_DEEP = os.getenv("GROQ_MODEL_DEEP", "openai/gpt-oss-120b")
 
 # ── Groq rate limiter ─────────────────────────────────────────────────────────
 # 20 chat requests per user per hour — prevents one user burning the shared quota.
