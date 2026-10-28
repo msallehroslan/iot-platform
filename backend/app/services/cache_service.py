@@ -361,7 +361,15 @@ def _sync_cache(key: str, fetch: Callable[[], Any], ttl: int):
     if loop is not None and loop.is_running():
         try:
             read_fut = asyncio.run_coroutine_threadsafe(cache.get(key), loop)
-            cached = read_fut.result(timeout=2)
+            # Fail fast: a healthy local Redis round trip is sub-10ms. A
+            # 2s timeout here meant that once many more call sites were
+            # added (history/trend/units/device-rbac, on top of the
+            # original ones), any slowdown in Redis or the main event
+            # loop under heavy concurrency could make EVERY cached call
+            # in a request block up to 2s before falling through — net
+            # slower than no cache at all. 300ms is still generous for
+            # same-host Redis and caps the worst case.
+            cached = read_fut.result(timeout=0.3)
             if cached is not None:
                 return cached
         except Exception as exc:
@@ -370,9 +378,10 @@ def _sync_cache(key: str, fetch: Callable[[], Any], ttl: int):
     result = fetch()
 
     if loop is not None and loop.is_running():
-        try:
-            asyncio.run_coroutine_threadsafe(cache.set(key, result, ttl), loop)
-        except Exception as exc:
-            logger.debug("cache write fallback: %s", exc)
+        # Fire-and-forget: don't block the request on the cache WRITE at
+        # all — the response is already computed, writing it to Redis is
+        # pure upside for the NEXT request, never a reason to delay this one.
+        fut = asyncio.run_coroutine_threadsafe(cache.set(key, result, ttl), loop)
+        fut.add_done_callback(lambda f: f.exception() and logger.debug("cache write fallback: %s", f.exception()))
 
     return result
