@@ -28,7 +28,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func as sqlfunc
+from sqlalchemy import func as sqlfunc, extract as sql_extract
 
 from app.models.models import (
     Device, LatestTelemetry, TelemetryData, TelemetryKey,
@@ -189,12 +189,53 @@ def get_aggregated_telemetry(
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     TRUNC_MAP = {
-        "5min": "5 minutes",
-        "1h":   "hour",
-        "1d":   "day",
+        "1h": "hour",
+        "1d": "day",
     }
 
-    if resolution in TRUNC_MAP:
+    if resolution == "5min":
+        # PostgreSQL's date_trunc(field, source) only accepts fixed units
+        # (minute, hour, day, ...) — "5 minutes" is NOT a valid field name
+        # and raised sqlalchemy.exc.DataError / psycopg2 DataError on every
+        # call, which the frontend silently swallowed (.catch(()=>{})),
+        # showing stale/previous data instead of an error. Bucket to an
+        # arbitrary N-minute boundary via epoch arithmetic instead.
+        # func.extract('epoch', ts) would render as extract(:param, ts) —
+        # invalid Postgres syntax (EXTRACT needs "field FROM expr", not a
+        # comma). sqlalchemy.extract() generates the correct EXTRACT(...FROM...).
+        epoch = sql_extract("epoch", TelemetryData.ts)
+        bucket = sqlfunc.to_timestamp(sqlfunc.floor(epoch / 300) * 300).label("bucket")
+        rows = (
+            db.query(
+                bucket,
+                sqlfunc.avg(TelemetryData.value_num).label("avg_value"),
+                sqlfunc.min(TelemetryData.value_num).label("min_value"),
+                sqlfunc.max(TelemetryData.value_num).label("max_value"),
+                sqlfunc.count(TelemetryData.id).label("sample_count"),
+            )
+            .filter(
+                TelemetryData.device_id == device_id,
+                TelemetryData.key == key,
+                TelemetryData.value_num.isnot(None),
+                TelemetryData.ts >= since,
+            )
+            .group_by(bucket)
+            .order_by(bucket.desc())
+            .limit(limit)
+            .all()
+        )
+        rows = list(reversed(rows))
+        points = [
+            {
+                "ts":           r.bucket.isoformat(),
+                "value":        round(r.avg_value, 4) if r.avg_value is not None else None,
+                "min":          round(r.min_value, 4) if r.min_value is not None else None,
+                "max":          round(r.max_value, 4) if r.max_value is not None else None,
+                "sample_count": r.sample_count,
+            }
+            for r in rows
+        ]
+    elif resolution in TRUNC_MAP:
         trunc = TRUNC_MAP[resolution]
         # PostgreSQL date_trunc bucketed aggregation
         bucket = sqlfunc.date_trunc(trunc, TelemetryData.ts).label("bucket")
