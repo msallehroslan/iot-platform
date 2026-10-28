@@ -447,6 +447,7 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   const alert = config.threshold_high && isN && num > config.threshold_high;
   const history = (historyData?.[config.key] || []).slice(-20).map(p => p.value).filter(v => Number.isFinite(typeof v === "number" ? v : parseFloat(v)));
   const [window, setWindow] = useState("1h");
+  const [windowAgg, setWindowAgg] = useState(null); // null = not fetched yet, fall back to historyData-derived agg
 
   // Intelligence comes from DashboardRuntime prop. useIntelContext as fallback
   // (for device-scoped dashboard, or if preload intelligence wasn't available).
@@ -469,10 +470,11 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
   // Recommended action from KeyIntelligence (shown in tooltip / detail)
   const recommendedAction = keyIntel?.recommended_action || null;
 
-  // Compute agg from historyData prop — no API call needed.
-  // historyData is hydrated by dashboard preload + WS updates.
+  // Default agg from historyData prop (dashboard preload + WS updates,
+  // no API call) — used for the initial "1h" view so most Value Cards
+  // never need their own fetch at all.
   const aggData = historyData?.[config.key] || [];
-  const agg = (() => {
+  const defaultAgg = (() => {
     const vals = aggData.map(p => p.value).filter(v => v !== null && !isNaN(v));
     if (!vals.length) return { avg: null, min: null, max: null };
     const sum = vals.reduce((a, b) => a + b, 0);
@@ -482,6 +484,53 @@ function ValueCard({ config, liveTelem, historyData, deviceId, intelligence }) {
       max: Math.round(Math.max(...vals) * 100) / 100,
     };
   })();
+
+  // The window pills used to just set `window` with nothing downstream
+  // ever reading it — AVG/MIN/MAX always showed the same preload-derived
+  // numbers no matter which window was clicked. Fetch on demand, only
+  // when the user actually picks a window other than the preload
+  // default, reusing the already-cached (TTL_WIDGET_DATA) widgets/data
+  // endpoint — same resolution-per-window mapping as LineChartWidget/
+  // BarChartWidget/GaugeWidget so longer windows don't pull raw rows.
+  const WINDOW_CONFIG = {
+    "15m": { hours: 0.25, resolution: "raw"  },
+    "30m": { hours: 0.5,  resolution: "raw"  },
+    "1h":  { hours: 1,    resolution: "raw"  },
+    "6h":  { hours: 6,    resolution: "5min" },
+    "24h": { hours: 24,   resolution: "1h"   },
+  };
+
+  useEffect(() => {
+    if (!devId || !config.key || window === "1h") {
+      // "1h" is the preload default — no fetch needed, just use defaultAgg.
+      setWindowAgg(null);
+      return;
+    }
+
+    const { hours, resolution } = WINDOW_CONFIG[window] || WINDOW_CONFIG["1h"];
+    let cancelled = false;
+
+    widgetApi
+      .lineChart(devId, config.key, { hours, limit: 300, resolution })
+      .then(res => {
+        if (cancelled) return;
+        const vals = (res?.points || [])
+          .map(p => p.value)
+          .filter(v => v !== null && Number.isFinite(v));
+        if (!vals.length) { setWindowAgg({ avg: null, min: null, max: null }); return; }
+        const sum = vals.reduce((a, b) => a + b, 0);
+        setWindowAgg({
+          avg: Math.round((sum / vals.length) * 100) / 100,
+          min: Math.round(Math.min(...vals) * 100) / 100,
+          max: Math.round(Math.max(...vals) * 100) / 100,
+        });
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [devId, config.key, window]);
+
+  const agg = windowAgg || defaultAgg;
 
   const fmt = v => v === null ? "—" : Number(v).toFixed(config.decimals ?? 1);
   const WINDOWS = ["15m","30m","1h","6h","24h"];
