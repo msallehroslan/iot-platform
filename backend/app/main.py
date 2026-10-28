@@ -60,6 +60,15 @@ def create_tables_with_retry(retries: int = 5, delay: int = 3) -> None:
 async def lifespan(app: FastAPI):
     create_tables_with_retry()
 
+    # Raise anyio's default thread limiter — every sync `def` route handler
+    # runs in a worker thread via this limiter (default cap: 40), which
+    # throttles concurrent requests independently of DB_POOL_SIZE. Under
+    # concurrent-user load testing, a bigger DB pool alone did nothing once
+    # this cap was hit first.
+    import anyio.to_thread
+    anyio.to_thread.current_default_thread_limiter().total_tokens = settings.THREAD_POOL_SIZE
+    logger.info("anyio thread limiter raised to %d", settings.THREAD_POOL_SIZE)
+
     # Phase 11: start Redis cache service
     await _cache_service.setup(settings.REDIS_URL)
 

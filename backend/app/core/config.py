@@ -10,8 +10,13 @@ class Settings(BaseSettings):
     # concurrent DB connections = DB_POOL_SIZE + DB_MAX_OVERFLOW. Make sure
     # Postgres's own max_connections (default 100) comfortably exceeds this
     # (leave room for other clients: migrations, psql, other services).
-    DB_POOL_SIZE:    int = 20
-    DB_MAX_OVERFLOW: int = 30
+    DB_POOL_SIZE:    int = 40
+    DB_MAX_OVERFLOW: int = 50
+    # Starlette runs every sync `def` route handler in a worker thread via
+    # anyio's default thread limiter, capped at 40 concurrent threads
+    # regardless of DB_POOL_SIZE above — raise this too or a big DB pool
+    # still won't let more than ~40 sync requests run at once.
+    THREAD_POOL_SIZE: int = 80
     # SECRET_KEY has NO default — must be set as env var.
     # Generate: python -c "import secrets; print(secrets.token_hex(32))"
     SECRET_KEY: str
