@@ -424,9 +424,53 @@ class ChatRequest(BaseModel):
 
 OLLAMA_URL   = "http://192.168.1.22:11434/api/generate"
 OLLAMA_MODEL = "qwen3:8b"
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 
 async def _call_groq(api_key: str, messages: list, max_tokens: int = 4096, temperature: float = 0.4, model: str = None) -> str:
-    """Call Ollama Qwen3:8b — drop-in replacement for Groq."""
+    """
+    Call the LLM backing TAAT chat.
+
+    Prefers Groq's real cloud API (settings.GROQ_API_KEY — free tier,
+    console.groq.com) when configured. Falls back to a local Ollama
+    instance at OLLAMA_URL for dev setups that don't have a Groq key.
+    """
+    from app.core.config import settings as _settings
+
+    if _settings.GROQ_API_KEY:
+        return await _call_groq_cloud(messages, max_tokens, temperature, model)
+    return await _call_ollama(messages, max_tokens, temperature)
+
+
+async def _call_groq_cloud(messages: list, max_tokens: int, temperature: float, model: str = None) -> str:
+    """Real Groq API — OpenAI-compatible chat completions endpoint."""
+    from app.core.config import settings as _settings
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {_settings.GROQ_API_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":       model or GROQ_MODEL_FAST,
+                    "messages":    messages,
+                    "max_tokens":  max_tokens,
+                    "temperature": temperature,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        logger.error("_call_groq_cloud failed: %s", exc)
+        raise
+
+
+async def _call_ollama(messages: list, max_tokens: int, temperature: float) -> str:
+    """Local Ollama fallback — only used when GROQ_API_KEY is not set."""
     # Convert OpenAI-style messages to a single prompt string
     prompt_parts = []
     for m in messages:

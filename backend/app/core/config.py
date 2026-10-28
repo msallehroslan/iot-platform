@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None
     SMTP_FROM:     str           = "noreply@example.com"
 
+    # ── TAAT chat LLM ─────────────────────────────────────────────────────────
+    # Set GROQ_API_KEY to use Groq's cloud API (free tier — console.groq.com).
+    # If unset, TAAT chat falls back to the local OLLAMA_URL dev-only path.
+    GROQ_API_KEY: Optional[str] = None
+
     # ── MQTT ──────────────────────────────────────────────────────────────────
     MQTT_ENABLED:     bool  = True
     MQTT_BROKER_HOST: str   = "broker.hivemq.com"
