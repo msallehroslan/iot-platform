@@ -35,6 +35,27 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+# Our known tenant-wide generic alarm_types — used to find and remove
+# any earlier version of these rules before recreating, so re-running
+# this script (e.g. after fixing thresholds) doesn't pile up duplicates.
+KNOWN_TYPES="high_temperature high_humidity low_pressure high_vibration low_voltage overcurrent overspeed low_flow weak_signal low_battery"
+
+log "removing any existing tenant-wide rules with a known generic alarm_type..."
+curl -sf -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/v1/threshold-rules/" \
+  | python3 -c "
+import sys, json
+known = set('$KNOWN_TYPES'.split())
+rules = json.load(sys.stdin)
+for r in rules:
+    if r.get('device_id') is None and r.get('alarm_type') in known:
+        print(r['id'])
+" | while read -r rule_id; do
+    [ -z "$rule_id" ] && continue
+    curl -s -o /dev/null -X DELETE "$BASE_URL/api/v1/threshold-rules/$rule_id" \
+      -H "Authorization: Bearer $TOKEN"
+    log "  deleted old rule id=$rule_id"
+  done
+
 create_rule() {
   local key="$1" condition="$2" threshold="$3" alarm_type="$4"
   log "Creating rule: key=$key $condition $threshold -> $alarm_type (tenant-wide, WARNING)"
@@ -45,18 +66,18 @@ create_rule() {
     | python3 -c "import sys,json; d=json.load(sys.stdin); print('  ->', d.get('id', d))" 2>/dev/null
 }
 
-# Values are random uniform(10, 500) for these generic sensors — thresholds
-# picked near the top/bottom of that range so rules fire occasionally
-# under load testing, not on every single reading.
-create_rule "temperature"      "gt" "400" "high_temperature"
-create_rule "humidity"         "gt" "450" "high_humidity"
-create_rule "pressure"         "lt" "50"  "low_pressure"
-create_rule "vibration"        "gt" "400" "high_vibration"
-create_rule "voltage"          "lt" "50"  "low_voltage"
-create_rule "current"          "gt" "400" "overcurrent"
-create_rule "rpm"              "gt" "450" "overspeed"
-create_rule "flow_rate"        "lt" "50"  "low_flow"
-create_rule "signal_strength"  "lt" "50"  "weak_signal"
-create_rule "battery_pct"      "lt" "50"  "low_battery"
+# Thresholds matched to each key's realistic range (see
+# create-extra-devices.sh / fix-sensor-ranges.sh KEY_RANGES), not the
+# old blanket 10-500 range.
+create_rule "temperature"      "gt" "40"   "high_temperature"  # range 15-45 C
+create_rule "humidity"         "gt" "85"   "high_humidity"     # range 20-90 %
+create_rule "pressure"         "lt" "85"   "low_pressure"      # range 80-120 kPa
+create_rule "vibration"        "gt" "4.5"  "high_vibration"    # range 0.5-5 mm/s, ISO 10816-3
+create_rule "voltage"          "lt" "215"  "low_voltage"       # range 210-240 V
+create_rule "current"          "gt" "18"   "overcurrent"       # range 0-20 A
+create_rule "rpm"              "gt" "2800" "overspeed"         # range 500-3000 RPM
+create_rule "flow_rate"        "lt" "15"   "low_flow"          # range 10-100 L/min
+create_rule "signal_strength"  "lt" "20"   "weak_signal"       # range 0-100 %
+create_rule "battery_pct"      "lt" "20"   "low_battery"       # range 0-100 %
 
-log "done — 10 tenant-wide generic rules created."
+log "done — 10 tenant-wide generic rules created/refreshed."

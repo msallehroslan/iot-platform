@@ -61,11 +61,25 @@ for i in $(seq 1 "$N"); do
 
   # Pick 2-4 random keys and an initial random value for each, so the
   # device shows up with real data immediately (not just a bare shell).
+  # Each key gets a realistic range for what it's named, not one blanket
+  # 10-500 range for everything — "temperature 423.72" doesn't read as
+  # a real reading for anyone looking at the dashboard.
   payload=$(python3 -c "
 import random, json
-all_keys = ['temperature','humidity','pressure','vibration','voltage','current','rpm','flow_rate','signal_strength','battery_pct']
-picked = random.sample(all_keys, random.randint(2, 4))
-values = {k: round(random.uniform(10, 500), 2) for k in picked}
+KEY_RANGES = {
+    'temperature':      (15, 45),      # deg C, ambient/equipment
+    'humidity':         (20, 90),      # %
+    'pressure':         (80, 120),     # kPa, ambient-ish
+    'vibration':        (0.5, 5),      # mm/s, ISO 10816-3-ish
+    'voltage':          (210, 240),    # V, mains
+    'current':          (0, 20),       # A
+    'rpm':              (500, 3000),   # RPM
+    'flow_rate':        (10, 100),     # L/min
+    'signal_strength':  (0, 100),      # %
+    'battery_pct':      (0, 100),      # %
+}
+picked = random.sample(list(KEY_RANGES), random.randint(2, 4))
+values = {k: round(random.uniform(*KEY_RANGES[k]), 2) for k in picked}
 print(json.dumps({'values': values}))
 ")
 
