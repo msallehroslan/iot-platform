@@ -59,6 +59,11 @@ TTL_WIDGET_DATA = 5    # per-widget combined response — short so widgets still
 TTL_DEVICE_RBAC = 15   # device existence/ownership row — was an uncached DB query on
                         # EVERY widget request (even cache hits), since RBAC must be
                         # checked before the cached response can be returned
+TTL_TREND = 15          # per-key trend (30min window) — was an uncached DB query
+                        # PER KEY, run sequentially for every key enriched (e.g. 12x
+                        # for a 12-sensor Pump Twin widget call)
+TTL_UNITS = 300         # device's key->unit map — was an uncached DB query per key;
+                        # fetched once per device and cached, units rarely change
 
 
 class CacheService:

@@ -40,6 +40,7 @@ from app.services.cache_service import (
     cache,
     TTL_LATEST, TTL_ALARMS, TTL_UNIFIED,
     TTL_ANOMALY, TTL_HEALTH, TTL_BASELINE,
+    TTL_TREND, TTL_UNITS,
 )
 
 logger = logging.getLogger(__name__)
@@ -792,6 +793,12 @@ def _build_recommendation(
 
 # ── Per-key intelligence (Gap 1 — standard KeyIntelligence schema) ────────────
 
+def _fetch_telemetry_key_units(db: Session, device_id: str) -> dict:
+    """All key->unit mappings for a device in one query. Direct DB fetch."""
+    rows = db.query(TelemetryKey).filter(TelemetryKey.device_id == device_id).all()
+    return {row.key: row.unit for row in rows}
+
+
 def get_key_intelligence(
     db,
     device_id: str,
@@ -831,7 +838,15 @@ def get_key_intelligence(
 
     try:
         from app.services.trend_service import get_device_key_trend
-        trend_data = get_device_key_trend(db, device_id, key, minutes=30)
+        # Cached per device+key — callers that enrich many keys for one
+        # device in a single request (e.g. a 12-sensor Pump Twin widget)
+        # otherwise ran this as an uncached DB query once per key, every
+        # single request.
+        trend_data = _sync_cache(
+            key   = f"iot:trend:{device_id}:{key}:30",
+            fetch = lambda: get_device_key_trend(db, device_id, key, minutes=30),
+            ttl   = TTL_TREND,
+        )
     except Exception:
         trend_data = {}
 
@@ -840,14 +855,16 @@ def get_key_intelligence(
     ts    = latest["ts"]
 
     # ── Unit from TelemetryKey metadata ──────────────────────────────────────
+    # Fetched once per device (all keys at once) and cached, instead of one
+    # uncached DB query per key — same multi-key-per-request concern as trend above.
     unit = None
     try:
-        tk = db.query(TelemetryKey).filter(
-            TelemetryKey.device_id == device_id,
-            TelemetryKey.key == key,
-        ).first()
-        if tk:
-            unit = tk.unit
+        units_map = _sync_cache(
+            key   = f"iot:units:{device_id}",
+            fetch = lambda: _fetch_telemetry_key_units(db, device_id),
+            ttl   = TTL_UNITS,
+        )
+        unit = units_map.get(key)
     except Exception:
         pass
 
