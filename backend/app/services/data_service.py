@@ -37,10 +37,10 @@ from app.models.models import (
 )
 from app.services.trend_service import get_all_key_trends
 from app.services.cache_service import (
-    cache, _sync_cache,
+    cache,
     TTL_LATEST, TTL_ALARMS, TTL_UNIFIED,
     TTL_ANOMALY, TTL_HEALTH, TTL_BASELINE,
-    TTL_UNITS, TTL_HISTORY,
+    TTL_TREND, TTL_UNITS,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,56 @@ def get_latest_telemetry(db: Session, device_id: str) -> dict:
 
 
 
+def _sync_cache(key: str, fetch, ttl: int):
+    """
+    Synchronous cache wrapper for data_service functions.
+
+    data_service is called from synchronous FastAPI route handlers
+    (which run in a thread pool, not the event loop). We cannot await
+    inside them, but we can schedule pure-async Redis calls onto the
+    main event loop (captured by cache_service at startup) as thread-safe
+    futures.
+
+    NOTE: asyncio.get_event_loop() does NOT work here — called from a
+    worker thread it raises (or returns a throwaway loop that is never
+    running), which silently disabled this cache for every read that
+    went through a sync route handler. cache.loop is the real loop.
+
+    IMPORTANT: `fetch` (a blocking DB call tied to this request's own
+    Session) always runs on THIS thread, never on the main event loop —
+    running it there via cache.get_or_set() would block the whole app
+    (WebSocket broadcasts, every other request) for the duration of the
+    DB query on every cache miss. Only the actual Redis GET/SET — real
+    async I/O — is bridged to the main loop.
+
+    Falls through to direct DB fetch on any error (cache is additive).
+    """
+    if not cache.enabled:
+        return fetch()
+
+    import asyncio
+    loop = cache.loop
+
+    if loop is not None and loop.is_running():
+        try:
+            read_fut = asyncio.run_coroutine_threadsafe(cache.get(key), loop)
+            cached = read_fut.result(timeout=2)
+            if cached is not None:
+                return cached
+        except Exception as exc:
+            logger.debug("cache read fallback: %s", exc)
+
+    result = fetch()
+
+    if loop is not None and loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(cache.set(key, result, ttl), loop)
+        except Exception as exc:
+            logger.debug("cache write fallback: %s", exc)
+
+    return result
+
+
 def _fetch_latest_telemetry(db: Session, device_id: str) -> dict:
     """Direct DB fetch — called by cache or directly when cache unavailable."""
     rows = (
@@ -129,10 +179,6 @@ def get_aggregated_telemetry(
     resolution="1h"   → hourly AVG buckets
     resolution="1d"   → daily AVG buckets
 
-    Cached for TTL_HISTORY seconds — was an uncached DB query per key,
-    run sequentially for every numeric key when preloading a dashboard
-    (e.g. up to 10 keys x several devices in one /preload request).
-
     Returns:
         {
             "device_id": str,
@@ -141,22 +187,6 @@ def get_aggregated_telemetry(
             "points": [{"ts": "...", "value": 36.5}, ...]
         }
     """
-    return _sync_cache(
-        key   = f"iot:history:{device_id}:{key}:{hours}:{limit}:{resolution}",
-        fetch = lambda: _fetch_aggregated_telemetry(db, device_id, key, hours, limit, resolution),
-        ttl   = TTL_HISTORY,
-    )
-
-
-def _fetch_aggregated_telemetry(
-    db: Session,
-    device_id: str,
-    key: str,
-    hours: int,
-    limit: int,
-    resolution: str,
-) -> dict:
-    """Direct DB fetch — called by cache or directly when cache unavailable."""
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
     TRUNC_MAP = {
@@ -807,12 +837,16 @@ def get_key_intelligence(
     anomaly  = get_anomaly_summary(db, device_id, hours=24)
 
     try:
-        # get_device_key_trend is itself cached per device+key (see
-        # trend_service.py) — callers that enrich many keys for one
-        # device in a single request (e.g. a 12-sensor Pump Twin widget)
-        # no longer pay for an uncached DB query per key.
         from app.services.trend_service import get_device_key_trend
-        trend_data = get_device_key_trend(db, device_id, key, minutes=30)
+        # Cached per device+key — callers that enrich many keys for one
+        # device in a single request (e.g. a 12-sensor Pump Twin widget)
+        # otherwise ran this as an uncached DB query once per key, every
+        # single request.
+        trend_data = _sync_cache(
+            key   = f"iot:trend:{device_id}:{key}:30",
+            fetch = lambda: get_device_key_trend(db, device_id, key, minutes=30),
+            ttl   = TTL_TREND,
+        )
     except Exception:
         trend_data = {}
 
