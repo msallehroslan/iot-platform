@@ -55,8 +55,15 @@ function LineChart({ data = [], color = "#3b82f6" }) {
   // safeRange: guaranteed finite mn/mx/rng — no divide-by-zero
   const mn = Math.min(...vals), mx = Math.max(...vals);
   const rng = (mx - mn) || 1;
-  // px: safe denominator — max(1, n-1) prevents divide-by-zero on single point
-  const px = i => pad.l + (i / Math.max(1, pts.length - 1)) * w;
+  // px: position by real elapsed time, not by index — points are not
+  // evenly spaced in time (e.g. a cluster of samples seconds apart
+  // followed by a long idle gap), so index-based spacing drew a long
+  // gap at the same pixel width as a tight cluster, making ordinary
+  // gaps look like a sudden cliff/spike in the value.
+  const tVals = pts.map(p => new Date(p.ts).getTime());
+  const tMin = Math.min(...tVals), tMax = Math.max(...tVals);
+  const tRng = (tMax - tMin) || 1;
+  const px = i => pad.l + ((tVals[i] - tMin) / tRng) * w;
   const py = v => { const y = pad.t + h - ((v - mn) / rng) * h; return Number.isFinite(y) ? y : pad.t; };
   // Build path skipping any non-finite coords (belt-and-suspenders)
   let pathStr = "", first = true;
