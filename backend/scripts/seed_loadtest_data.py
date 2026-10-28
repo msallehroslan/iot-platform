@@ -34,6 +34,24 @@ KEY_PROFILES = {
     "humidity":    (65.0, 15.0, 2.0, 24),  # daily cycle, %
     "pressure":    (1013.0, 3.0, 0.5, 12), # slow drift, hPa
     "vibration":   (0.3, 0.15, 0.05, 6),   # mechanical noise, g
+
+    # ── Pump Twin widget — matches PumpTwinWidget.jsx's ISO 10816-3 /
+    # pressure thresholds (see device.additional_info key_* mapping).
+    # Baselines sit comfortably in the NORMAL band; the 1%-chance spike
+    # in generate_points() occasionally pushes a point into WARNING/
+    # CRITICAL so the fault-diagnosis UI has something to show.
+    "motor_nde_velocity": (1.2, 0.5, 0.2, 24),   # vib mm/s — NORMAL <2.3, CRITICAL >=4.5
+    "motor_de_velocity":  (1.3, 0.5, 0.2, 24),
+    "pump_de_velocity":   (1.5, 0.6, 0.2, 24),
+    "pump_nde_velocity":  (1.4, 0.5, 0.2, 24),
+    "temp_nde":           (55.0, 8.0, 3.0, 24),  # bearing °C — NORMAL <65, CRITICAL >=80
+    "temp_de":            (58.0, 8.0, 3.0, 24),
+    "temp_de_pump":       (56.0, 8.0, 3.0, 24),
+    "temp_inlet":         (35.0, 6.0, 2.0, 24),  # fluid °C — NORMAL <50
+    "temp_outlet":        (42.0, 6.0, 2.0, 24),
+    "pressure_in":        (280.0, 20.0, 8.0, 24),  # suction kPa — NORMAL >=250
+    "pressure_out":       (450.0, 20.0, 8.0, 24),  # discharge kPa — NORMAL >=400
+    "shaft_rpm":          (1450.0, 15.0, 5.0, 24), # RPM
 }
 
 
