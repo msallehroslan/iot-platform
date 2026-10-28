@@ -8,6 +8,21 @@ services:
     env_file: .env
     volumes:
       - /mnt/database/postgres:/var/lib/postgresql/data
+    # Tuned for the host's actual 15GB RAM / NVMe SSD — stock image
+    # defaults (shared_buffers=128MB, work_mem=4MB) were sized for a
+    # tiny VM and left most of the available RAM unused as OS page
+    # cache only. Values are moderate (not "dedicated DB server"
+    # sizing) since this host also runs other unrelated services.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=256MB
 
   redis:
     image: redis:7
