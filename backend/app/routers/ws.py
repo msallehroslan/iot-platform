@@ -30,6 +30,18 @@ async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
     from app.core.database import SessionLocal
     from app.models.models import User as UserModel, Device
 
+    # Accept the WebSocket handshake FIRST, before any validation. Calling
+    # .close() on a connection that was never .accept()-ed leaves the HTTP
+    # Upgrade handshake (101 Switching Protocols) incomplete — behavior
+    # then depends on the ASGI server/proxy, and over a reverse proxy
+    # (e.g. Cloudflare Tunnel) this showed up in the browser as
+    # "WebSocket is closed before the connection is established" for
+    # EVERY connection attempt, 100% of the time, regardless of whether
+    # the token/device checks below would have passed. Accept first, then
+    # close with a real WS close code if validation fails — the client
+    # still sees a clean close, just after a valid handshake.
+    await websocket.accept()
+
     # ── 1. Require token ──────────────────────────────────────────────────────
     if not token:
         await websocket.close(code=4001)
@@ -79,8 +91,7 @@ async def telemetry_ws(device_id: str, websocket: WebSocket, token: str = None):
     finally:
         db.close()
 
-    # ── 3. Accept and register ────────────────────────────────────────────────
-    await websocket.accept()
+    # ── 3. Register ────────────────────────────────────────────────────────────
     manager.connect(device_id, websocket)
 
     try:
