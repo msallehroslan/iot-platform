@@ -15,7 +15,7 @@
  *   - Efficiency : live formula, RUL, degradation rate, scale bar
  */
 
-import React, { useRef, useState, useMemo, Suspense } from "react";
+import React, { useRef, useState, useEffect, useMemo, Suspense } from "react";
 import * as THREE from "three";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
@@ -600,6 +600,16 @@ export default function PumpTwinWidget({
 }) {
   const [activeTab, setActiveTab] = useState("3d");
 
+  // Tracks whether intelligence has arrived at least once this session.
+  // Before that, getKeyStatus must not guess via ISO fallback thresholds —
+  // doing so causes a visible "flash" of a possibly-wrong color on every
+  // dashboard load that self-corrects once the real baseline-adaptive
+  // status (enriched_keys) lands a moment later.
+  const [hasLoadedIntel, setHasLoadedIntel] = useState(false);
+  useEffect(() => {
+    if (intelligence) setHasLoadedIntel(true);
+  }, [intelligence]);
+
   const health       = intelligence?.health        || {};
   const anomaly      = intelligence?.anomaly       || {};
   const baseline     = intelligence?.baseline      || {};
@@ -625,6 +635,10 @@ export default function PumpTwinWidget({
       const found = enrichedKeys.find(x => x.key === sensorKey);
       if (found) return found.status;
     }
+
+    // Intelligence hasn't loaded yet this session — show neutral/loading
+    // instead of guessing via generic ISO thresholds (prevents color flash).
+    if (!hasLoadedIntel) return "UNKNOWN";
 
     // Priority 2 — fallback to liveTelem with ISO thresholds
     const val = liveTelem?.[sensorKey];
