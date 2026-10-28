@@ -38,39 +38,51 @@ const PASSWORD = __ENV.PASSWORD || "";
 const DEVICE_TOKEN = __ENV.DEVICE_TOKEN || "";
 const SCENARIO = __ENV.SCENARIO || "dashboard";
 
+// Build only the ONE active scenario — k6 requires every key present in
+// `scenarios` to have a valid executor, so conditionally-undefined entries
+// (the previous approach) make it fail with "doesn't have a specified
+// executor type" regardless of which SCENARIO you pick.
+const SCENARIO_DEFS = {
+  dashboard: {
+    executor: "ramping-vus",
+    exec: "dashboardScenario",
+    startVUs: 0,
+    stages: [
+      { duration: "30s", target: 20 },   // ramp to 20 concurrent "users"
+      { duration: "1m",  target: 20 },   // hold
+      { duration: "15s", target: 0 },    // ramp down
+    ],
+  },
+  ingest: {
+    executor: "constant-arrival-rate",
+    exec: "ingestScenario",
+    rate: 50,              // 50 ingest requests/sec
+    timeUnit: "1s",
+    duration: "1m",
+    preAllocatedVUs: 20,
+    maxVUs: 100,
+  },
+  taat_chat: {
+    executor: "ramping-vus",
+    exec: "taatChatScenario",
+    startVUs: 0,
+    stages: [
+      { duration: "20s", target: 5 },    // chat is expensive — keep this low
+      { duration: "40s", target: 5 },
+      { duration: "10s", target: 0 },
+    ],
+  },
+};
+
+if (!SCENARIO_DEFS[SCENARIO]) {
+  throw new Error(
+    `Unknown SCENARIO '${SCENARIO}' — use dashboard, ingest, or taat_chat`,
+  );
+}
+
 export const options = {
   scenarios: {
-    dashboard: SCENARIO === "dashboard" ? {
-      executor: "ramping-vus",
-      exec: "dashboardScenario",
-      startVUs: 0,
-      stages: [
-        { duration: "30s", target: 20 },   // ramp to 20 concurrent "users"
-        { duration: "1m",  target: 20 },   // hold
-        { duration: "15s", target: 0 },    // ramp down
-      ],
-    } : undefined,
-
-    ingest: SCENARIO === "ingest" ? {
-      executor: "constant-arrival-rate",
-      exec: "ingestScenario",
-      rate: 50,              // 50 ingest requests/sec
-      timeUnit: "1s",
-      duration: "1m",
-      preAllocatedVUs: 20,
-      maxVUs: 100,
-    } : undefined,
-
-    taat_chat: SCENARIO === "taat_chat" ? {
-      executor: "ramping-vus",
-      exec: "taatChatScenario",
-      startVUs: 0,
-      stages: [
-        { duration: "20s", target: 5 },    // chat is expensive — keep this low
-        { duration: "40s", target: 5 },
-        { duration: "10s", target: 0 },
-      ],
-    } : undefined,
+    [SCENARIO]: SCENARIO_DEFS[SCENARIO],
   },
   thresholds: {
     http_req_failed: ["rate<0.05"],       // <5% errors
