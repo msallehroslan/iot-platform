@@ -2213,8 +2213,21 @@ function LoginPage({ onLogin }) {
         .tn-tab{transition:background .2s ease,color .2s ease,box-shadow .2s ease;}
         .tn-demo{transition:border-color .2s ease,background .2s ease;}
         .tn-demo:hover{border-color:#2F8CFF!important;background:#F4F8FF!important;}
+        @media (max-width: 860px) {
+          .tn-header{padding:12px 16px!important;flex-wrap:wrap!important;row-gap:8px!important;}
+          .tn-header-collab{display:none!important;}
+          .tn-login-grid{grid-template-columns:1fr!important;}
+          .tn-hero{padding:32px 20px 24px!important;}
+          .tn-hero-title{font-size:30px!important;}
+          .tn-stats-grid{max-width:none!important;grid-template-columns:repeat(2,1fr)!important;row-gap:14px!important;}
+          .tn-stats-grid>div{border-right:none!important;}
+          .tn-feat-grid{max-width:none!important;grid-template-columns:1fr!important;}
+          .tn-login-card-wrap{padding:16px 20px 40px!important;}
+          .tn-login-card{max-width:none!important;padding:24px!important;}
+          .tn-footer{padding:12px 16px!important;flex-direction:column!important;gap:8px!important;text-align:center!important;}
+        }
       `}</style>
-      <header style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 40px",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(10px)",borderBottom:"1px solid #EAF0F8",position:"relative",zIndex:10}}>
+      <header className="tn-header" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 40px",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(10px)",borderBottom:"1px solid #EAF0F8",position:"relative",zIndex:10}}>
         <div style={{display:"flex",alignItems:"center",gap:14}}>
           <img src="/iotera-logo.png" alt="Iotera" style={{height:30}}/>
           <div style={{width:1,height:22,background:"#E2E8F0"}}/>
@@ -2223,7 +2236,7 @@ function LoginPage({ onLogin }) {
             <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#6B7F9F",letterSpacing:"0.18em",textTransform:"uppercase"}}>Industrial AI · IoT</span>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <div className="tn-header-collab" style={{display:"flex",alignItems:"center",gap:14}}>
           <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:500,color:"#94A3B8",letterSpacing:"0.18em",textTransform:"uppercase"}}>In collaboration with</span>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:"#FFFFFF",border:"1px solid #EAF0F8",borderRadius:8}}>
             <img src="/fkee-logo.png" alt="FKEE UTHM" style={{height:32,objectFit:"contain"}}/>
@@ -2232,7 +2245,7 @@ function LoginPage({ onLogin }) {
           </div>
         </div>
       </header>
-      <div style={{flex:1,display:"grid",gridTemplateColumns:"1.15fr 1fr",gap:0,alignItems:"stretch",position:"relative",overflow:"hidden"}}>
+      <div className="tn-login-grid" style={{flex:1,display:"grid",gridTemplateColumns:"1.15fr 1fr",gap:0,alignItems:"stretch",position:"relative",overflow:"hidden"}}>
         <div aria-hidden="true" style={{position:"absolute",inset:0,pointerEvents:"none",background:"radial-gradient(900px 600px at 10% 10%,rgba(47,140,255,0.12),transparent 60%),radial-gradient(700px 500px at 95% 90%,rgba(47,140,255,0.08),transparent 60%)"}}/>
         <svg aria-hidden="true" width="100%" height="100%" style={{position:"absolute",inset:0,opacity:0.5,pointerEvents:"none"}}>
           <defs>
@@ -2245,7 +2258,7 @@ function LoginPage({ onLogin }) {
         <svg aria-hidden="true" viewBox="0 0 1200 80" preserveAspectRatio="none" style={{position:"absolute",bottom:0,left:0,width:"100%",height:80,opacity:0.35,pointerEvents:"none"}}>
           <path d="M0 40 Q150 10 300 40 T600 40 T900 40 T1200 40" fill="none" stroke="#2F8CFF" strokeWidth="1.2" strokeDasharray="4 8" style={{animation:"tn-wave 6s linear infinite"}}/>
         </svg>
-        <div style={{padding:"64px 64px 64px 72px",display:"flex",flexDirection:"column",justifyContent:"center",position:"relative",zIndex:2}}>
+        <div className="tn-hero" style={{padding:"64px 64px 64px 72px",display:"flex",flexDirection:"column",justifyContent:"center",position:"relative",zIndex:2}}>
           <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:28}}>
             <span style={{width:32,height:1.5,background:"linear-gradient(90deg,#2F8CFF,transparent)"}}/>
             <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10,fontWeight:600,color:"#2F8CFF",letterSpacing:"0.32em",textTransform:"uppercase"}}>Industrial AI · IoT Platform</span>
@@ -2260,13 +2273,13 @@ function LoginPage({ onLogin }) {
               <div style={{position:"absolute",bottom:-6,left:"50%",transform:"translateX(-50%)",padding:"3px 10px",background:"#0B1426",color:"#FFFFFF",fontFamily:"'JetBrains Mono',monospace",fontSize:9,fontWeight:600,letterSpacing:"0.22em",borderRadius:9999}}>TAAT</div>
             </div>
             <div>
-              <h1 style={{fontSize:52,fontWeight:700,color:"#0B1426",letterSpacing:"-0.03em",lineHeight:1.02,margin:0}}>
+              <h1 className="tn-hero-title" style={{fontSize:52,fontWeight:700,color:"#0B1426",letterSpacing:"-0.03em",lineHeight:1.02,margin:0}}>
                 <span style={{color:"#2F8CFF"}}>Iotera</span> Nexus<br/>Platform
               </h1>
               <p style={{fontSize:14,fontWeight:500,color:"#475569",margin:"10px 0 0"}}>AI-powered industrial IoT intelligence — predictive, autonomous, enterprise-grade.</p>
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:0,maxWidth:580,marginBottom:28,background:"rgba(255,255,255,0.75)",backdropFilter:"blur(8px)",border:"1px solid #EAF0F8",borderRadius:12,padding:"14px 4px"}}>
+          <div className="tn-stats-grid" style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:0,maxWidth:580,marginBottom:28,background:"rgba(255,255,255,0.75)",backdropFilter:"blur(8px)",border:"1px solid #EAF0F8",borderRadius:12,padding:"14px 4px"}}>
             {stats.map((s,i)=>(
               <div key={s.l} style={{padding:"0 16px",borderRight:i<stats.length-1?"1px solid #EAF0F8":"none",display:"flex",flexDirection:"column",gap:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -2277,7 +2290,7 @@ function LoginPage({ onLogin }) {
               </div>
             ))}
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,maxWidth:580}}>
+          <div className="tn-feat-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,maxWidth:580}}>
             {features.map((f)=>(
               <div key={f.t} className="tn-feat" style={{background:"rgba(255,255,255,0.9)",backdropFilter:"blur(8px)",border:"1px solid #EAF0F8",borderRadius:12,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
                 <div style={{width:38,height:38,borderRadius:10,background:"linear-gradient(135deg,#EAF2FF,#D8E7FC)",border:"1px solid #D2E1F8",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -2294,8 +2307,8 @@ function LoginPage({ onLogin }) {
             ))}
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 72px 48px 24px",position:"relative",zIndex:2}}>
-          <div style={{position:"relative",width:"100%",maxWidth:420,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(14px)",borderRadius:18,padding:36,boxShadow:"0 40px 80px -20px rgba(15,42,82,0.22)",border:"1px solid rgba(208,222,244,0.9)"}}>
+        <div className="tn-login-card-wrap" style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"48px 72px 48px 24px",position:"relative",zIndex:2}}>
+          <div className="tn-login-card" style={{position:"relative",width:"100%",maxWidth:420,background:"rgba(255,255,255,0.92)",backdropFilter:"blur(14px)",borderRadius:18,padding:36,boxShadow:"0 40px 80px -20px rgba(15,42,82,0.22)",border:"1px solid rgba(208,222,244,0.9)"}}>
             <div aria-hidden="true" style={{position:"absolute",top:0,left:24,right:24,height:2,background:"linear-gradient(90deg,transparent,#2F8CFF,transparent)",borderRadius:2}}/>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:22}}>
               <div>
@@ -2342,7 +2355,7 @@ function LoginPage({ onLogin }) {
           </div>
         </div>
       </div>
-      <footer style={{padding:"16px 40px",display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid #EAF0F8",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(8px)",position:"relative",zIndex:10}}>
+      <footer className="tn-footer" style={{padding:"16px 40px",display:"flex",alignItems:"center",justifyContent:"space-between",borderTop:"1px solid #EAF0F8",background:"rgba(255,255,255,0.85)",backdropFilter:"blur(8px)",position:"relative",zIndex:10}}>
         <span style={{fontSize:11.5,color:"#94A3B8"}}>© 2026 Iotera Technologies · In collaboration with FKEE UTHM</span>
         <div style={{display:"flex",alignItems:"center",gap:18,fontFamily:"'JetBrains Mono',monospace",fontSize:10,color:"#94A3B8",letterSpacing:"0.16em",textTransform:"uppercase"}}>
           <span style={{display:"flex",alignItems:"center",gap:6}}><span style={{width:6,height:6,borderRadius:9999,background:"#10B981",animation:"tn-pulse 2s ease-in-out infinite"}}/>All systems operational</span>
