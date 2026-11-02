@@ -1436,7 +1436,13 @@ async def ai_chat(
             except Exception as exc:
                 logger.debug("action extraction failed: %s", exc)
 
-        if action:
+        # SCHEDULE and USER have their own dedicated execution blocks below
+        # (elif intent == "SCHEDULE"/"USER") — they are not in the generic
+        # planner's _PLAN_BUILDERS, so routing them through `if action:`
+        # silently falls back to a read-only question plan and the write
+        # never happens. Keep them out of this branch so they reach their
+        # real handlers.
+        if action and intent not in ("SCHEDULE", "USER"):
             # ── Step 4b: Inject memory before planning ────────────────────────
             focus_dev_pre = action.get("device_name")
             focus_key_pre = next(iter(action.get("params", {}).keys()), None) if action.get("params") else None
@@ -1681,7 +1687,7 @@ async def ai_chat(
     # ── READ intents: run through planner for rich parallel data ─────────────
     # QUESTION, RCA, RECOMMEND, FLEET all need the planner + executor to
     # fetch per-device data before the system prompt is built.
-    elif intent in ("QUESTION", "RCA", "RECOMMEND", "FLEET"):
+    elif intent in ("QUESTION", "RCA", "RECOMMEND", "FLEET", "REPORT"):
         try:
             plan = make_plan(
                 intent    = intent,

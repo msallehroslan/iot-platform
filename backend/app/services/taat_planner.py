@@ -384,7 +384,7 @@ def get_action_risk(intent: str, action: dict, message: str) -> str:
     tool_map = {
         "DEVICE_CONTROL": "send_rpc",
         "ALARM":          "clear_alarm" if "clear" in message.lower() else "ack_alarm",
-        "RULE":           "delete_rule" if action.get("action") == "delete" else "create_rule",
+        "RULE":           "delete_rule" if action.get("action") == "delete" else ("update_rule" if action.get("action") == "update" else "create_rule"),
         "USER":           "create_rule",  # medium
     }
     tool_name = tool_map.get(intent, "get_devices")
@@ -967,11 +967,21 @@ def _extract_alarm_action(message: str, ctx: dict) -> dict:
         if s.lower() in msg_lower:
             sev = s
             break
+    # Match a device name mentioned in the message against known devices —
+    # without this, a request like "ack the alarm on Pump-01" silently
+    # falls back to acting on every device in the tenant.
+    device_id = None
+    for d in ctx.get("device_list", []):
+        name = (d.get("name") or "").lower()
+        if name and name in msg_lower:
+            device_id = d.get("id")
+            break
     return {
-        "action":   "clear" if is_clear else "ack",
-        "bulk":     is_bulk,
-        "severity": sev,
-        "count":    len(all_alarms),
+        "action":    "clear" if is_clear else "ack",
+        "bulk":      is_bulk,
+        "severity":  sev,
+        "count":     len(all_alarms),
+        "device_id": device_id,
     }
 
 

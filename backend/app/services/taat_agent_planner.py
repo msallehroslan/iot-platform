@@ -170,10 +170,13 @@ def _plan_alarm(ctx, action, message, device_id) -> Plan:
     op       = action.get("action", "ack")
     severity = action.get("severity")
     tool     = "clear_alarm" if op == "clear" else "ack_alarm"
+    # A device explicitly named in the message takes priority over
+    # whichever device happens to be in UI focus.
+    target_device_id = action.get("device_id") or device_id
 
     steps = [
-        Step("get_alarms", {"device_id": device_id}, "Fetch current alarms before action", "alarms"),
-        Step(tool, {"device_id": device_id, "severity": severity}, f"{op} alarms", "alarm_result"),
+        Step("get_alarms", {"device_id": target_device_id}, "Fetch current alarms before action", "alarms"),
+        Step(tool, {"device_id": target_device_id, "severity": severity}, f"{op} alarms", "alarm_result"),
     ]
     return Plan(intent="ALARM", steps=steps, risk="MEDIUM",
                 summary=f"{op} alarms{' — ' + severity if severity else ''}")
@@ -204,7 +207,21 @@ def _plan_rule(ctx, action, message, device_id) -> Plan:
         return Plan(intent="RULE", steps=steps, risk="MEDIUM",
                     summary=f"Delete rule for key '{action.get('key')}'")
 
-    if op in ("create", "update"):
+    if op == "update":
+        threshold = action.get("threshold")
+        steps = [
+            Step("update_rule", {
+                "key":         action.get("key", "value"),
+                "threshold":   float(threshold) if threshold is not None else None,
+                "condition":   action.get("condition"),
+                "severity":    action.get("severity"),
+                "device_name": action.get("device_name"),
+            }, f"Update rule: {action.get('key')} -> {threshold}", "rule_result"),
+        ]
+        return Plan(intent="RULE", steps=steps, risk="MEDIUM",
+                    summary=f"Update alarm rule for '{action.get('key')}'")
+
+    if op == "create":
         devices = ctx.get("device_list", [])
         steps = [
             Step("create_rule", {
@@ -231,13 +248,20 @@ def _plan_rca(ctx, action, message, device_id) -> Plan:
         Step("get_devices", {}, "Fetch device list"),
     ]
     if device_id:
+        # get_memory's tool takes device_name, not device_id — resolve it
+        # from the device list so RCA memory lookups are actually scoped
+        # to this device instead of silently fetching unfiltered memories.
+        device_name = next(
+            (d.get("name") for d in ctx.get("device_list", []) if d.get("id") == device_id),
+            None,
+        )
         steps += [
             Step("get_telemetry",  {"device_id": device_id}, "Fetch latest telemetry",  "telemetry"),
             Step("get_anomalies",  {"device_id": device_id, "hours": 48}, "Fetch anomalies (48h)", "anomalies"),
             Step("get_baseline",   {"device_id": device_id}, "Fetch baseline norms",    "baseline"),
             Step("get_health",     {"device_id": device_id}, "Fetch health score",      "health"),
             Step("get_alarms",     {"device_id": device_id}, "Fetch active alarms",     "alarms"),
-            Step("get_memory",     {"device_id": device_id}, "Fetch device memory",     "memory"),
+            Step("get_memory",     {"device_name": device_name}, "Fetch device memory",     "memory"),
             Step("get_pump_analysis", {"device_id": device_id}, "DE/NDE asymmetry + efficiency", "pump_analysis"),
         ]
         # Try to enrich the most anomalous key
@@ -321,4 +345,5 @@ _PLAN_BUILDERS = {
     "RCA":            _plan_rca,
     "RECOMMEND":      _plan_recommend,
     "FLEET":          _plan_fleet,
+    "REPORT":         _plan_fleet,  # fleet-wide report = same per-device health+alarms sweep
 }

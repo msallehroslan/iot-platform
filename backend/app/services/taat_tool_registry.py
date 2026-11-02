@@ -16,7 +16,7 @@ data_service.py with:
 Tools exposed:
     READ (7):   get_devices, get_telemetry, get_alarms, get_health,
                 get_anomalies, get_baseline, get_key_intelligence
-    WRITE (5):  send_rpc, ack_alarm, clear_alarm, create_rule, delete_rule
+    WRITE (6):  send_rpc, ack_alarm, clear_alarm, create_rule, delete_rule, update_rule
     MEMORY (2): get_memory, save_memory
 """
 from __future__ import annotations
@@ -259,6 +259,26 @@ async def tool_delete_rule(
         return _error("delete_rule", str(e))
 
 
+async def tool_update_rule(
+    db: Session, current_user,
+    key: str,
+    threshold: Optional[float] = None,
+    condition: Optional[str] = None,
+    severity: Optional[str] = None,
+    device_name: Optional[str] = None, **_
+) -> ToolResult:
+    if not key:
+        return _error("update_rule", "key required")
+    try:
+        from app.services.taat_tools import tool_update_rule as _fn
+        return _result("update_rule", _fn(
+            db, current_user, key=key, threshold=threshold,
+            condition=condition, severity=severity, device_name=device_name,
+        ))
+    except Exception as e:
+        return _error("update_rule", str(e))
+
+
 async def tool_get_memory(
     db: Session, current_user,
     device_name: Optional[str] = None,
@@ -333,6 +353,7 @@ REGISTRY: Dict[str, Callable] = {
     "clear_alarm":           tool_clear_alarm,
     "create_rule":           tool_create_rule,
     "delete_rule":           tool_delete_rule,
+    "update_rule":           tool_update_rule,
     "get_memory":            tool_get_memory,
     "write_memory":          tool_write_memory,
     "get_pump_analysis":     tool_get_pump_analysis,

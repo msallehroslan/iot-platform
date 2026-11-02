@@ -451,6 +451,57 @@ def tool_create_rule(
     }
 
 
+def tool_update_rule(db: Session, current_user, key: str,
+                     threshold: Optional[float] = None,
+                     condition: Optional[str] = None,
+                     severity: Optional[str] = None,
+                     device_name: Optional[str] = None) -> dict:
+    """Update the threshold/condition/severity of an EXISTING rule in place
+    (by key, optionally scoped to a device) — does not create a new row."""
+    from app.models.models import ThresholdRule, Device, AlarmSeverity
+    from app.services.audit import audit
+
+    q = db.query(ThresholdRule).filter(
+        ThresholdRule.tenant_id == current_user.tenant_id,
+        ThresholdRule.key == key,
+    )
+    if device_name:
+        device = db.query(Device).filter(
+            Device.tenant_id == current_user.tenant_id,
+            Device.name.ilike(f"%{device_name}%"),
+        ).first()
+        if device:
+            q = q.filter(ThresholdRule.device_id == device.id)
+
+    rule = q.first()
+    if not rule:
+        return {"success": False, "reason": f"No existing rule found for key '{key}'"}
+
+    if threshold is not None:
+        rule.threshold = threshold
+    if condition:
+        rule.condition = condition
+    if severity:
+        try:
+            rule.severity = AlarmSeverity[severity.upper()]
+        except KeyError:
+            pass
+    db.commit()
+    db.refresh(rule)
+    audit(db, tenant_id=current_user.tenant_id, user=current_user,
+          action="rule.update", resource="threshold_rule", resource_id=str(rule.id),
+          detail={"key": key, "threshold": rule.threshold, "source": "taat_v2"}, commit=True)
+
+    return {
+        "success":   True,
+        "rule_id":   str(rule.id),
+        "key":       rule.key,
+        "condition": rule.condition,
+        "threshold": rule.threshold,
+        "severity":  rule.severity.value if hasattr(rule.severity, "value") else str(rule.severity),
+    }
+
+
 def tool_delete_rule(
     db: Session, current_user,
     key: Optional[str] = None,
