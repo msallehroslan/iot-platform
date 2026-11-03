@@ -1795,6 +1795,34 @@ async def ai_chat(
                 f"Output EXACTLY this line, no changes: "
                 f"⏰ Scheduled → {dev}: {prms} at {disp}"
             )
+        elif intent == "USER" and isinstance(action_result, dict):
+            uact = action_result.get("action", "")
+            if action_result.get("error"):
+                update_instruction = (
+                    f"Tell the user: Could not complete the user action — "
+                    f"{action_result['error']}. Be brief."
+                )
+            elif uact == "list":
+                users = action_result.get("users", [])
+                summary = ", ".join(f"{u['email']} ({u['role']})" for u in users[:10])
+                update_instruction = (
+                    f"Tell the user: {len(users)} user(s): {summary}. Be brief."
+                )
+            elif uact == "invited":
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Invited {action_result.get('email')} "
+                    f"as {action_result.get('role')}. Temporary password: {action_result.get('password')}. "
+                    f"Tell them to share this password securely and have the user change it on first login."
+                )
+            elif uact == "deleted":
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Removed user {action_result.get('email')}. Be brief."
+                )
+            elif uact == "role_changed":
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Changed {action_result.get('email')}'s role from "
+                    f"{action_result.get('old_role')} to {action_result.get('new_role')}. Be brief."
+                )
         elif intent == "ALARM" and isinstance(action_result, dict):
             count     = action_result.get("count", 0)
             act_label = action_result.get("action", "updated")
