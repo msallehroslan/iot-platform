@@ -348,8 +348,14 @@ def tool_ack_alarm(db: Session, current_user, device_id: Optional[str] = None,
     """Acknowledge active alarms, optionally filtered by device/severity."""
     from app.models.models import Alarm, AlarmStatus, Device
     from app.services.audit import audit
+    import logging
+    logger = logging.getLogger(__name__)
 
     device_ids = _resolve_device_ids(db, current_user, device_id)
+    logger.info(
+        "tool_ack_alarm DEBUG: input_device_id=%r tenant_id=%s resolved_device_ids=%s",
+        device_id, current_user.tenant_id, device_ids,
+    )
     q = db.query(Alarm).filter(
         Alarm.device_id.in_(device_ids),
         Alarm.status == AlarmStatus.ACTIVE_UNACK,
