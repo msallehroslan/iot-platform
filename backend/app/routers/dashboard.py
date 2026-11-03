@@ -30,13 +30,18 @@ def _fetch_stats(db: Session, tid) -> dict:
         Device.status == DeviceStatus.ACTIVE,
     ).scalar()
 
-    # Alarms scoped via device → tenant
+    # Alarms scoped via device → tenant.
+    # Counts only ACTIVE_UNACK (not yet acknowledged) so the Overview stat
+    # drops as soon as alarms are acknowledged — acknowledged-but-not-yet-
+    # cleared alarms no longer count toward this number, since "Clear" is a
+    # separate, deliberate step and shouldn't be required just to make this
+    # count honest.
     active_alarms = (
         db.query(func.count(Alarm.id))
         .join(Device, Alarm.device_id == Device.id)
         .filter(
             Device.tenant_id == tid,
-            Alarm.status.in_([AlarmStatus.ACTIVE_UNACK, AlarmStatus.ACTIVE_ACK]),
+            Alarm.status == AlarmStatus.ACTIVE_UNACK,
         )
         .scalar()
     )
