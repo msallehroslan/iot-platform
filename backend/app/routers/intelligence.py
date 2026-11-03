@@ -1799,8 +1799,9 @@ async def ai_chat(
             uact = action_result.get("action", "")
             if action_result.get("error"):
                 update_instruction = (
-                    f"Tell the user: Could not complete the user action — "
-                    f"{action_result['error']}. Be brief."
+                    "Reply with ONLY this line, verbatim, and nothing else.\n"
+                    f"Line to send: Could not complete the user action — "
+                    f"{action_result['error']}."
                 )
             elif uact == "list":
                 users = action_result.get("users", [])
@@ -1826,25 +1827,34 @@ async def ai_chat(
         elif intent == "ALARM" and isinstance(action_result, dict):
             count     = action_result.get("count", 0)
             act_label = action_result.get("action", "updated")
+            guard = (
+                "Reply with ONLY the single line below, verbatim, and nothing else. "
+                "Do NOT enumerate, list, or individually confirm any alarms by device "
+                "or type — the ACTIVE ALARMS section above shows alarms BEFORE this "
+                "action ran and is NOT a record of what this action did; using it to "
+                "fabricate a per-device breakdown is strictly forbidden.\n"
+                "Line to send: "
+            )
             if not action_result.get("success", True):
                 update_instruction = (
-                    f"Tell the user: Could not update alarms — "
-                    f"{action_result.get('reason', 'unknown error')}. Be brief."
+                    guard + f"Could not update alarms — {action_result.get('reason', 'unknown error')}."
                 )
             elif count == 0:
                 update_instruction = (
-                    f"Tell the user EXACTLY: No matching active alarms found for this request. "
-                    f"Be brief."
+                    guard + "No matching active alarms found for this request."
                 )
             else:
                 update_instruction = (
-                    f"Tell the user EXACTLY: ✅ {count} alarm(s) {act_label}. Be brief."
+                    guard + f"✅ {count} alarm(s) {act_label}."
                 )
         elif intent == "RULE" and isinstance(action_result, dict):
             if not action_result.get("success", True):
                 update_instruction = (
-                    f"Tell the user: Could not update the rule — "
-                    f"{action_result.get('reason', 'unknown error')}. Be brief."
+                    "Reply with ONLY this line, verbatim, and nothing else. Do NOT "
+                    "list or describe any existing rules from context as if this "
+                    "action touched them.\n"
+                    f"Line to send: Could not update the rule — "
+                    f"{action_result.get('reason', 'unknown error')}."
                 )
             elif "deleted" in action_result:
                 update_instruction = (
