@@ -2889,7 +2889,7 @@ const AIChatbot = React.memo(function AIChatbot({ user }) {
                     <div style={{marginTop:6,padding:"4px 8px",borderRadius:8,background:"rgba(245,158,11,0.12)",border:"1px solid rgba(245,158,11,0.3)",display:"flex",alignItems:"center",gap:5}}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" style={{width:11,height:11,flexShrink:0}}><polyline points="20 6 9 17 4 12"/></svg>
                       <span style={{fontSize:10,color:"#d97706",fontWeight:600}}>
-                        {m.alarm_actioned.count} alarm(s) {m.alarm_actioned.action.replace("_all","")}d{m.alarm_actioned.severity ? ` (${m.alarm_actioned.severity})` : ""}
+                        {m.alarm_actioned.count} alarm(s) {m.alarm_actioned.action}{m.alarm_actioned.severity ? ` (${m.alarm_actioned.severity})` : ""}
                       </span>
                     </div>
                   )}

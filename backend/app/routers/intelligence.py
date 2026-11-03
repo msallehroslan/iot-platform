@@ -1414,6 +1414,8 @@ async def ai_chat(
     risk_level       = "LOW"
     action_result    = None
     verification     = None
+    exact_reply      = None  # when set, skip the LLM entirely for this reply —
+                              # guarantees no hallucinated per-item breakdown
 
     write_intents = {"DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE", "REMEMBER"}
 
@@ -1774,10 +1776,7 @@ async def ai_chat(
             and action_result.get("success")
         ):
             fact = action_result.get("remembered", "")
-            update_instruction = (
-                f"Tell the user EXACTLY: ✅ Saved permanently: \"{fact}\". "
-                f"I will use this in all future conversations."
-            )
+            exact_reply = f"✅ Saved permanently: \"{fact}\". I will use this in all future conversations."
         elif (
             intent == "SCHEDULE"
             and isinstance(action_result, dict)
@@ -1791,117 +1790,76 @@ async def ai_chat(
             )
             dev  = action_result.get("device_name", "device")
             prms = action_result.get("params", {})
-            update_instruction = (
-                f"Output EXACTLY this line, no changes: "
-                f"⏰ Scheduled → {dev}: {prms} at {disp}"
-            )
+            exact_reply = f"⏰ Scheduled → {dev}: {prms} at {disp}"
         elif intent == "USER" and isinstance(action_result, dict):
             uact = action_result.get("action", "")
             if action_result.get("error"):
-                update_instruction = (
-                    "Reply with ONLY this line, verbatim, and nothing else.\n"
-                    f"Line to send: Could not complete the user action — "
-                    f"{action_result['error']}."
-                )
+                exact_reply = f"Could not complete the user action — {action_result['error']}."
             elif uact == "list":
                 users = action_result.get("users", [])
                 summary = ", ".join(f"{u['email']} ({u['role']})" for u in users[:10])
-                update_instruction = (
-                    f"Tell the user: {len(users)} user(s): {summary}. Be brief."
-                )
+                exact_reply = f"{len(users)} user(s): {summary}" if users else "No users found."
             elif uact == "invited":
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Invited {action_result.get('email')} "
-                    f"as {action_result.get('role')}. Temporary password: {action_result.get('password')}. "
-                    f"Tell them to share this password securely and have the user change it on first login."
+                exact_reply = (
+                    f"✅ Invited {action_result.get('email')} as {action_result.get('role')}. "
+                    f"Temporary password: {action_result.get('password')}. "
+                    f"Share this securely and have them change it on first login."
                 )
             elif uact == "deleted":
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Removed user {action_result.get('email')}. Be brief."
-                )
+                exact_reply = f"✅ Removed user {action_result.get('email')}."
             elif uact == "role_changed":
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Changed {action_result.get('email')}'s role from "
-                    f"{action_result.get('old_role')} to {action_result.get('new_role')}. Be brief."
+                exact_reply = (
+                    f"✅ Changed {action_result.get('email')}'s role from "
+                    f"{action_result.get('old_role')} to {action_result.get('new_role')}."
                 )
         elif intent == "ALARM" and isinstance(action_result, dict):
             count     = action_result.get("count", 0)
             act_label = action_result.get("action", "updated")
-            guard = (
-                "Reply with ONLY the single line below, verbatim, and nothing else. "
-                "Do NOT enumerate, list, or individually confirm any alarms by device "
-                "or type — the ACTIVE ALARMS section above shows alarms BEFORE this "
-                "action ran and is NOT a record of what this action did; using it to "
-                "fabricate a per-device breakdown is strictly forbidden.\n"
-                "Line to send: "
-            )
             if not action_result.get("success", True):
-                update_instruction = (
-                    guard + f"Could not update alarms — {action_result.get('reason', 'unknown error')}."
-                )
+                exact_reply = f"Could not update alarms — {action_result.get('reason', 'unknown error')}."
             elif count == 0:
-                update_instruction = (
-                    guard + "No matching active alarms found for this request."
-                )
+                exact_reply = "No matching active alarms found for this request."
             else:
-                update_instruction = (
-                    guard + f"✅ {count} alarm(s) {act_label}."
-                )
+                exact_reply = f"✅ {count} alarm(s) {act_label}."
         elif intent == "RULE" and isinstance(action_result, dict):
             if not action_result.get("success", True):
-                update_instruction = (
-                    "Reply with ONLY this line, verbatim, and nothing else. Do NOT "
-                    "list or describe any existing rules from context as if this "
-                    "action touched them.\n"
-                    f"Line to send: Could not update the rule — "
-                    f"{action_result.get('reason', 'unknown error')}."
-                )
+                exact_reply = f"Could not update the rule — {action_result.get('reason', 'unknown error')}."
             elif "deleted" in action_result:
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Deleted {action_result['deleted']} rule(s). Be brief."
-                )
+                exact_reply = f"✅ Deleted {action_result['deleted']} rule(s)."
             elif action_result.get("rule_id") and "device" in action_result:
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Created rule — {action_result.get('key')} "
+                exact_reply = (
+                    f"✅ Created rule — {action_result.get('key')} "
                     f"{action_result.get('condition')} {action_result.get('threshold')} "
-                    f"({action_result.get('severity')}) on {action_result.get('device')}. Be brief."
+                    f"({action_result.get('severity')}) on {action_result.get('device')}."
                 )
             elif action_result.get("rule_id"):
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Updated rule — {action_result.get('key')} "
+                exact_reply = (
+                    f"✅ Updated rule — {action_result.get('key')} "
                     f"{action_result.get('condition')} {action_result.get('threshold')} "
-                    f"({action_result.get('severity')}). Be brief."
+                    f"({action_result.get('severity')})."
                 )
             else:
-                update_instruction = (
-                    f"Tell the user EXACTLY: ✅ Rule for '{action_result.get('key', '')}' deleted. Be brief."
-                )
+                exact_reply = f"✅ Rule for '{action_result.get('key', '')}' deleted."
         elif ver_overall == "success" and ver_msg:
-            update_instruction = (
-                f"Tell the user: Command executed on {dev_name}: {params}. {ver_msg}. "
-                f"Device confirmed the change. Be brief and direct."
-            )
+            exact_reply = f"✅ Command executed on {dev_name}: {params}. {ver_msg}. Device confirmed the change."
         elif ver_overall == "failed" and ver_msg:
-            update_instruction = (
-                f"Tell the user: Command was sent to {dev_name}: {params}, but {ver_msg}. "
-                f"The device may be offline or firmware did not respond. Be direct."
+            exact_reply = (
+                f"⚠️ Command was sent to {dev_name}: {params}, but {ver_msg}. "
+                f"The device may be offline or firmware did not respond."
             )
         else:
-            update_instruction = (
-                f"Tell the user: Command sent to {dev_name}: {params}. "
-                f"Waiting for device to respond (verification pending or skipped). Be brief."
+            exact_reply = (
+                f"Command sent to {dev_name}: {params}. "
+                f"Waiting for device to respond (verification pending or skipped)."
             )
 
+        # Record what actually happened for audit/debugging, but don't route
+        # it back through the LLM — exact_reply above is sent to the user
+        # verbatim so there is nothing left for the model to embellish or
+        # contradict with stale context-list data.
         chat_messages.append({
             "role":    "system",
-            "content": (
-                f"[ACTION {outcome}] {update_instruction}\n"
-                "This is the ONLY source of truth for what this action did. "
-                "Device/alarm/rule/user lists shown elsewhere in this prompt "
-                "reflect state BEFORE this action ran — do not use them to "
-                "invent a per-item breakdown, list, or count that contradicts "
-                "or elaborates on the line above."
-            ),
+            "content": f"[ACTION {outcome}] {exact_reply}",
         })
     if confirm_required:
         chat_messages.append({
@@ -1935,13 +1893,20 @@ async def ai_chat(
     for msg in body.messages:
         chat_messages.append({"role": msg.role, "content": msg.content})
 
-    # ── Step 11: Groq reply ───────────────────────────────────────────────────
+    # ── Step 11: Reply ─────────────────────────────────────────────────────────
     try:
-        reply = await _call_groq(api_key, chat_messages, max_tokens=4096, temperature=0.4)
+        if exact_reply is not None:
+            # Deterministic action confirmation — skip the LLM entirely so it
+            # has no chance to embellish or contradict this with stale
+            # context-list data (devices/alarms/rules/users shown earlier in
+            # the prompt reflect state BEFORE this action ran).
+            reply = exact_reply
+        else:
+            reply = await _call_groq(api_key, chat_messages, max_tokens=4096, temperature=0.4)
 
         return {
             "reply":            reply,
-            "engine":           f"groq/{GROQ_MODEL_FAST}",
+            "engine":           f"groq/{GROQ_MODEL_FAST}" if exact_reply is None else "deterministic",
             "intent":           intent,
             "risk":             risk_level,
             "action_result":    action_result,
