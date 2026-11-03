@@ -1894,7 +1894,14 @@ async def ai_chat(
 
         chat_messages.append({
             "role":    "system",
-            "content": f"[ACTION {outcome}] {update_instruction}",
+            "content": (
+                f"[ACTION {outcome}] {update_instruction}\n"
+                "This is the ONLY source of truth for what this action did. "
+                "Device/alarm/rule/user lists shown elsewhere in this prompt "
+                "reflect state BEFORE this action ran — do not use them to "
+                "invent a per-item breakdown, list, or count that contradicts "
+                "or elaborates on the line above."
+            ),
         })
     if confirm_required:
         chat_messages.append({
