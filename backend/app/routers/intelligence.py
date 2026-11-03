@@ -1795,6 +1795,49 @@ async def ai_chat(
                 f"Output EXACTLY this line, no changes: "
                 f"⏰ Scheduled → {dev}: {prms} at {disp}"
             )
+        elif intent == "ALARM" and isinstance(action_result, dict):
+            count     = action_result.get("count", 0)
+            act_label = action_result.get("action", "updated")
+            if not action_result.get("success", True):
+                update_instruction = (
+                    f"Tell the user: Could not update alarms — "
+                    f"{action_result.get('reason', 'unknown error')}. Be brief."
+                )
+            elif count == 0:
+                update_instruction = (
+                    f"Tell the user EXACTLY: No matching active alarms found for this request. "
+                    f"Be brief."
+                )
+            else:
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ {count} alarm(s) {act_label}. Be brief."
+                )
+        elif intent == "RULE" and isinstance(action_result, dict):
+            if not action_result.get("success", True):
+                update_instruction = (
+                    f"Tell the user: Could not update the rule — "
+                    f"{action_result.get('reason', 'unknown error')}. Be brief."
+                )
+            elif "deleted" in action_result:
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Deleted {action_result['deleted']} rule(s). Be brief."
+                )
+            elif action_result.get("rule_id") and "device" in action_result:
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Created rule — {action_result.get('key')} "
+                    f"{action_result.get('condition')} {action_result.get('threshold')} "
+                    f"({action_result.get('severity')}) on {action_result.get('device')}. Be brief."
+                )
+            elif action_result.get("rule_id"):
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Updated rule — {action_result.get('key')} "
+                    f"{action_result.get('condition')} {action_result.get('threshold')} "
+                    f"({action_result.get('severity')}). Be brief."
+                )
+            else:
+                update_instruction = (
+                    f"Tell the user EXACTLY: ✅ Rule for '{action_result.get('key', '')}' deleted. Be brief."
+                )
         elif ver_overall == "success" and ver_msg:
             update_instruction = (
                 f"Tell the user: Command executed on {dev_name}: {params}. {ver_msg}. "
