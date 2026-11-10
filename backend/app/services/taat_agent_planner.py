@@ -174,10 +174,10 @@ def _plan_alarm(ctx, action, message, device_id) -> Plan:
     # whichever device happens to be in UI focus.
     target_device_id = action.get("device_id") or device_id
 
-    steps = [
-        Step("get_alarms", {"device_id": target_device_id}, "Fetch current alarms before action", "alarms"),
-        Step(tool, {"device_id": target_device_id, "severity": severity}, f"{op} alarms", "alarm_result"),
-    ]
+    steps = []
+    if target_device_id:  # get_alarms is per-device; skip it for tenant-wide actions
+        steps.append(Step("get_alarms", {"device_id": target_device_id}, "Fetch current alarms before action", "alarms"))
+    steps.append(Step(tool, {"device_id": target_device_id, "severity": severity}, f"{op} alarms", "alarm_result"))
     return Plan(intent="ALARM", steps=steps, risk="MEDIUM",
                 summary=f"{op} alarms{' — ' + severity if severity else ''}")
 

@@ -1463,7 +1463,11 @@ async def ai_chat(
                 ctx       = ctx,
                 action    = action,
                 message   = last_user_msg,
-                device_id = device_id_str,
+                # device_id_str falls back to the first device when the chat
+                # has no device in focus; for alarms that would silently
+                # scope "acknowledge all" to one arbitrary device.
+                device_id = (str(body.device_id) if body.device_id else None)
+                            if intent == "ALARM" else device_id_str,
             )
             risk_level = plan.risk
 
