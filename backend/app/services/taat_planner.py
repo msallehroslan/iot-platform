@@ -72,6 +72,13 @@ _RULE_EDIT_RE = re.compile(
 # output is parsed leniently and then checked against the user's own words
 # before anything is executed.
 
+# Token budgets for the short structured calls. Reasoning models spend output
+# tokens thinking before they answer, so a tight cap (the old 10 / 100) leaves
+# nothing for the answer and the reply comes back empty.
+_CLASSIFY_TOKENS = 400
+_EXTRACT_TOKENS  = 800
+
+
 def parse_llm_json(raw) -> Optional[dict]:
     """First JSON object in a model reply — tolerates code fences, a leading
     sentence or trailing commentary. None for null / no object / bad JSON."""
@@ -220,20 +227,21 @@ Message: "{message}"
 
 Respond with ONLY the category name, nothing else."""
 
-    intent = ""
+    intent, _raw = "", None
     try:
         result = await call_groq(
             api_key,
             [{"role": "user", "content": prompt}],
-            max_tokens=10,
+            max_tokens=_CLASSIFY_TOKENS,
             temperature=0.0,
         )
+        _raw = result
         intent = parse_llm_intent(result)
     except Exception as exc:
-        logger.debug("intent classification failed: %s", exc)
+        _raw = f"error: {exc}"
 
     if intent not in INTENT_CATEGORIES:
-        logger.warning("taat.classify unusable model reply — using keyword classification")
+        logger.warning("taat.classify unusable model reply %r — using keyword classification", str(_raw)[:120])
         intent = _keyword_intent(message)
 
     # Whatever produced the intent, an obvious command must reach the tools:
@@ -1158,7 +1166,7 @@ IMPORTANT: Key names have NO spaces — "led2" not "led 2", "relay1" not "relay 
 Respond JSON only: {{"device_name":"<name>","method":"set","params":{{"<key>":<value>}}}}
 If not a control command: null"""
     try:
-        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=100, temperature=0.0)
+        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=_EXTRACT_TOKENS, temperature=0.0)
         parsed = parse_llm_json(r)
         if parsed and "device_name" in parsed and "params" in parsed \
                 and params_match_message(normalised_msg, parsed.get("params")):
@@ -1214,7 +1222,7 @@ Respond JSON only:
 - Delete: {{"action":"delete","key":"<key>"}}
 - If unclear: null"""
     try:
-        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
+        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=_EXTRACT_TOKENS, temperature=0.0)
         return parse_llm_json(r)
     except Exception:
         pass
@@ -1261,7 +1269,7 @@ Respond JSON only:
 - List: {{"action":"list"}}
 - If unclear: null"""
     try:
-        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
+        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=_EXTRACT_TOKENS, temperature=0.0)
         return parse_llm_json(r)
     except Exception:
         pass
@@ -1300,7 +1308,7 @@ For list:   {{"action":"list"}}
 If unclear: null"""
 
     try:
-        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
+        r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=_EXTRACT_TOKENS, temperature=0.0)
         return parse_llm_json(r)
     except Exception:
         pass
