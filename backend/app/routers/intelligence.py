@@ -1377,12 +1377,14 @@ async def ai_chat(
             intent = "QUESTION"
 
     # ── Step 2: Build context ─────────────────────────────────────────────────
-    device_id_str = str(body.device_id) if body.device_id else None
-    if not device_id_str and devices:
-        device_id_str = devices[0]["id"]
-    # Auto-detect device_id if not provided — use single device or first device
-    if not device_id_str and devices:
-        device_id_str = devices[0]["id"] if len(devices) >= 1 else None
+    # Focus device: the one the UI sent, else one named in the message, else
+    # the tenant's only device. Never an arbitrary "first" device — that made
+    # every device-less request silently act on / describe whichever device
+    # happened to be listed first.
+    from app.services.taat_planner import resolve_focus_device, reconcile_action_device
+    ui_device_id  = str(body.device_id) if body.device_id else None
+    _focus_dev    = resolve_focus_device(last_user_msg, devices, ui_device_id)
+    device_id_str = _focus_dev["id"] if _focus_dev else None
     try:
         # build_context() is a plain sync function that runs up to ~10
         # blocking DB queries per device. Called directly (no await) from
@@ -1409,6 +1411,7 @@ async def ai_chat(
 
     # ── Step 3: Permission check ──────────────────────────────────────────────
     action           = None
+    plan             = None
     trace            = None
     confirm_required = None
     risk_level       = "LOW"
@@ -1438,6 +1441,25 @@ async def ai_chat(
             except Exception as exc:
                 logger.debug("action extraction failed: %s", exc)
 
+        # Align the action's device with what the user actually said; if a
+        # device is required and none was identified, ask — never guess.
+        if action and not (confirm_mode and pending_action):
+            action, _target_dev, _needs_device = reconcile_action_device(
+                intent, action, last_user_msg, devices, ui_device_id
+            )
+            if _target_dev:
+                device_id_str = _target_dev["id"]
+            if _needs_device:
+                _names = [d["name"] for d in devices]
+                _shown = ", ".join(_names[:8]) + (f" … ({len(_names)} devices)" if len(_names) > 8 else "")
+                return {
+                    "reply":        f"Which device should I use? Please name it — e.g. {_shown}.",
+                    "engine":       "deterministic",
+                    "intent":       intent,
+                    "needs_device": True,
+                    "rate":         rate_info,
+                }
+
         # SCHEDULE and USER have their own dedicated execution blocks below
         # (elif intent == "SCHEDULE"/"USER") — they are not in the generic
         # planner's _PLAN_BUILDERS, so routing them through `if action:`
@@ -1463,11 +1485,7 @@ async def ai_chat(
                 ctx       = ctx,
                 action    = action,
                 message   = last_user_msg,
-                # device_id_str falls back to the first device when the chat
-                # has no device in focus; for alarms that would silently
-                # scope "acknowledge all" to one arbitrary device.
-                device_id = (str(body.device_id) if body.device_id else None)
-                            if intent == "ALARM" else device_id_str,
+                device_id = device_id_str,
             )
             risk_level = plan.risk
 
@@ -1763,116 +1781,18 @@ async def ai_chat(
     # ── Step 10: Build Groq messages ──────────────────────────────────────────
     chat_messages = [{"role": "system", "content": system_prompt}]
 
-    if action_result:
-        outcome   = "✅ SUCCESS" if action_result.get("success", True) else "⚠️ FAILED"
-        ver_result = ctx.get("verification", {})
-        ver_msg   = ver_result.get("message", "") if isinstance(ver_result, dict) else ""
-        ver_overall = ver_result.get("overall", "skipped") if isinstance(ver_result, dict) else "skipped"
-
-        # Build a structured update the LLM MUST include in its reply
-        dev_name = action_result.get("device_name", "device")
-        params   = action_result.get("params", {})
-
-        # Scheduled action response override
-        if (
-            intent == "REMEMBER"
-            and isinstance(action_result, dict)
-            and action_result.get("success")
-        ):
-            fact = action_result.get("remembered", "")
-            exact_reply = f"✅ Saved permanently: \"{fact}\". I will use this in all future conversations."
-        elif (
-            intent == "SCHEDULE"
-            and isinstance(action_result, dict)
-            and action_result.get("is_scheduled")
-        ):
-            # Use scheduled_display (MYT) if available, else human_label, else raw scheduled_for
-            disp = (
-                action_result.get("scheduled_display")
-                or action_result.get("human_label")
-                or action_result.get("scheduled_for", "")
-            )
-            dev  = action_result.get("device_name", "device")
-            prms = action_result.get("params", {})
-            exact_reply = f"⏰ Scheduled → {dev}: {prms} at {disp}"
-        elif intent == "USER" and isinstance(action_result, dict):
-            uact = action_result.get("action", "")
-            if action_result.get("error"):
-                exact_reply = f"Could not complete the user action — {action_result['error']}."
-            elif uact == "list":
-                users = action_result.get("users", [])
-                summary = ", ".join(f"{u['email']} ({u['role']})" for u in users[:10])
-                exact_reply = f"{len(users)} user(s): {summary}" if users else "No users found."
-            elif uact == "invited":
-                exact_reply = (
-                    f"✅ Invited {action_result.get('email')} as {action_result.get('role')}. "
-                    f"Temporary password: {action_result.get('password')}. "
-                    f"Share this securely and have them change it on first login."
-                )
-            elif uact == "deleted":
-                exact_reply = f"✅ Removed user {action_result.get('email')}."
-            elif uact == "role_changed":
-                exact_reply = (
-                    f"✅ Changed {action_result.get('email')}'s role from "
-                    f"{action_result.get('old_role')} to {action_result.get('new_role')}."
-                )
-        elif intent == "ALARM" and isinstance(action_result, dict):
-            count     = action_result.get("count", 0)
-            act_label = action_result.get("action", "updated")
-            if not action_result.get("success", True):
-                exact_reply = f"Could not update alarms — {action_result.get('reason', 'unknown error')}."
-            elif count == 0:
-                exact_reply = "No matching active alarms found for this request."
-            else:
-                exact_reply = f"✅ {count} alarm(s) {act_label}."
-        elif intent == "RULE" and isinstance(action_result, dict):
-            if not action_result.get("success", True):
-                exact_reply = f"Could not update the rule — {action_result.get('reason', 'unknown error')}."
-            elif "deleted" in action_result:
-                exact_reply = f"✅ Deleted {action_result['deleted']} rule(s)."
-            elif action_result.get("rule_id") and "device" in action_result:
-                exact_reply = (
-                    f"✅ Created rule — {action_result.get('key')} "
-                    f"{action_result.get('condition')} {action_result.get('threshold')} "
-                    f"({action_result.get('severity')}) on {action_result.get('device')}."
-                )
-            elif action_result.get("rule_id"):
-                exact_reply = (
-                    f"✅ Updated rule — {action_result.get('key')} "
-                    f"{action_result.get('condition')} {action_result.get('threshold')} "
-                    f"({action_result.get('severity')})."
-                )
-            else:
-                exact_reply = f"✅ Rule for '{action_result.get('key', '')}' deleted."
-        elif ver_overall == "success" and ver_msg:
-            exact_reply = f"✅ Command executed on {dev_name}: {params}. {ver_msg}. Device confirmed the change."
-        elif ver_overall == "failed" and ver_msg:
-            exact_reply = (
-                f"⚠️ Command was sent to {dev_name}: {params}, but {ver_msg}. "
-                f"The device may be offline or firmware did not respond."
-            )
-        else:
-            exact_reply = (
-                f"Command sent to {dev_name}: {params}. "
-                f"Waiting for device to respond (verification pending or skipped)."
-            )
-
-        # Record what actually happened for audit/debugging, but don't route
-        # it back through the LLM — exact_reply above is sent to the user
-        # verbatim so there is nothing left for the model to embellish or
-        # contradict with stale context-list data.
-        chat_messages.append({
-            "role":    "system",
-            "content": f"[ACTION {outcome}] {exact_reply}",
-        })
-    if confirm_required:
-        chat_messages.append({
-            "role":    "system",
-            "content": (
-                f"[HIGH RISK ACTION PENDING] Intent: {intent}. Action: {json.dumps(action)}. "
-                "Explain clearly what will happen and ask the user to reply 'proceed' to confirm."
-            ),
-        })
+    # Write intents are answered from the action's real result, never by the
+    # LLM — see app/services/taat_replies.py.
+    from app.services.taat_replies import build_action_reply
+    exact_reply = build_action_reply(
+        intent           = intent,
+        action           = action,
+        action_result    = action_result,
+        verification     = ctx.get("verification"),
+        ctx              = ctx,
+        confirm_required = confirm_required,
+        plan_summary     = getattr(plan, "summary", "") or "",
+    )
 
     # Inject daily comparison as hard system message so LLM cannot ignore it
     if ctx.get("daily_comparison"):

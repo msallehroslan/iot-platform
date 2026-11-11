@@ -147,6 +147,103 @@ Respond with ONLY the category name, nothing else."""
     return "QUESTION"
 
 
+# ── Device resolution ─────────────────────────────────────────────────────────
+# The chat must never guess a device. A device is "in focus" only if the UI
+# sent one, the message names one, or the tenant has exactly one.
+
+def resolve_device_from_message(message: str, devices: list) -> Optional[dict]:
+    """Return the device whose name appears in the message (separators and
+    case are flexible: "pump 01" / "pump01" match "Pump-01"). Longest name wins."""
+    import re as _re
+    msg = (message or "").lower()
+    best = None
+    for d in devices:
+        tokens = _re.findall(r"[a-z0-9]+", (d.get("name") or "").lower())
+        if not tokens:
+            continue
+        pattern = r"(?<![a-z0-9])" + r"[\s\-_]*".join(_re.escape(t) for t in tokens) + r"(?![a-z0-9])"
+        if _re.search(pattern, msg):
+            if best is None or len(d["name"]) > len(best["name"]):
+                best = d
+    return best
+
+
+def _loosely_mentions(message: str, name: str) -> bool:
+    """True if the message plausibly refers to this device name, e.g.
+    "sensor 7" for "LoadTest-Sensor-07". Only used to validate a device the
+    LLM picked — never to pick one."""
+    import re as _re
+    msg = (message or "").lower()
+    tokens = _re.findall(r"[a-z]+|\d+", (name or "").lower())
+    alphas = [t for t in tokens if t.isalpha() and len(t) >= 3]
+    if not tokens or not alphas:
+        return False
+    if tokens[-1].isdigit():
+        return bool(_re.search(
+            r"(?<![a-z])" + _re.escape(alphas[-1]) + r"[\s\-_#]*0*" + str(int(tokens[-1])) + r"(?!\d)", msg))
+    return bool(_re.search(r"(?<![a-z])" + _re.escape(alphas[0]) + r"(?![a-z])", msg))
+
+
+def _unique_loose_match(message: str, devices: list) -> Optional[dict]:
+    """The single device the message loosely refers to ("sensor 17"), limited
+    to names ending in a number so a generic word can't select a device."""
+    hits = [d for d in devices
+            if (d.get("name") or "")[-1:].isdigit() and _loosely_mentions(message, d["name"])]
+    return hits[0] if len(hits) == 1 else None
+
+
+def resolve_focus_device(message: str, devices: list, ui_device_id: Optional[str] = None) -> Optional[dict]:
+    """UI-selected device > device named in the message > the only device > None."""
+    if ui_device_id:
+        hit = next((d for d in devices if d["id"] == str(ui_device_id)), None)
+        if hit:
+            return hit
+    named = resolve_device_from_message(message, devices) or _unique_loose_match(message, devices)
+    if named:
+        return named
+    return devices[0] if len(devices) == 1 else None
+
+
+def reconcile_action_device(intent: str, action: dict, message: str, devices: list,
+                            ui_device_id: Optional[str] = None) -> tuple:
+    """
+    Make the device an extracted action targets match what the user actually
+    said, instead of trusting whichever device the LLM filled in.
+
+    Returns (action, target_device_or_None, needs_device: bool).
+    needs_device=True means the action requires a device and none was
+    identified — the caller must ask instead of executing.
+    """
+    if not isinstance(action, dict):
+        return action, None, False
+
+    op = action.get("action")
+    device_required = intent == "DEVICE_CONTROL" or (intent == "SCHEDULE" and op in (None, "schedule"))
+    device_optional = intent == "RULE" and op in (None, "create", "update")
+    if not (device_required or device_optional):
+        return action, None, False
+
+    ui_dev = next((d for d in devices if ui_device_id and d["id"] == str(ui_device_id)), None)
+    named  = resolve_device_from_message(message, devices) or _unique_loose_match(message, devices)
+    target = named or ui_dev
+
+    if not target and action.get("device_name"):
+        llm_name = str(action["device_name"]).lower()
+        llm_dev = next((d for d in devices if d["name"].lower() == llm_name), None)
+        if llm_dev and _loosely_mentions(message, llm_dev["name"]):
+            target = llm_dev
+
+    if not target and device_required and len(devices) == 1:
+        target = devices[0]
+
+    if intent == "RULE" and op == "update" and not named:
+        target = None          # only narrow an update to a device the user named
+
+    action = {**action, "device_name": target["name"] if target else None}
+    return action, target, bool(device_required and not target)
+
+
+
 # ── Step 2: Context Builder ───────────────────────────────────────────────────
 
 def build_context(
@@ -970,12 +1067,9 @@ def _extract_alarm_action(message: str, ctx: dict) -> dict:
     # Match a device name mentioned in the message against known devices —
     # without this, a request like "ack the alarm on Pump-01" silently
     # falls back to acting on every device in the tenant.
-    device_id = None
-    for d in ctx.get("device_list", []):
-        name = (d.get("name") or "").lower()
-        if name and name in msg_lower:
-            device_id = d.get("id")
-            break
+    _devs = ctx.get("device_list", [])
+    named = resolve_device_from_message(message, _devs) or _unique_loose_match(message, _devs)
+    device_id = named.get("id") if named else None
     return {
         "action":    "clear" if is_clear else "ack",
         "bulk":      is_bulk,

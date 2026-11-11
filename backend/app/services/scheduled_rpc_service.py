@@ -508,8 +508,10 @@ def _humanise_schedule(
 
     if hours < 1:
         time_part = f"in {int(delta.total_seconds() / 60)} min"
-    elif hours < 24:
-        time_part = scheduled_for.astimezone(_schedule_tz()).strftime("%H:%M %Z today")
+    elif hours < 48 and (scheduled_for.astimezone(_schedule_tz()).date() - now.astimezone(_schedule_tz()).date()).days <= 1:
+        local = scheduled_for.astimezone(_schedule_tz())
+        day   = "today" if local.date() == now.astimezone(_schedule_tz()).date() else "tomorrow"
+        time_part = local.strftime("%H:%M %Z ") + day
     else:
         time_part = scheduled_for.astimezone(_schedule_tz()).strftime("%d %b %H:%M %Z")
 
