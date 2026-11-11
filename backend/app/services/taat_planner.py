@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
@@ -60,6 +61,19 @@ CUSTOMER_ALLOWED_INTENTS = {"QUESTION", "REPORT"}
 
 
 # ── Step 1: Intent Router ─────────────────────────────────────────────────────
+
+_RULE_EDIT_RE = re.compile(
+    r"\b(update|change|modify|set|raise|lower|increase|decrease|create|add|delete|remove)\b"
+    r".*\b(threshold|rule|rules)\b", re.I)
+
+
+def _looks_like_rule_edit(message: str) -> bool:
+    """An imperative that edits a threshold rule ("update the pressure threshold to 5")."""
+    m = (message or "").strip()
+    if m.endswith("?") or re.match(r"(?i)\s*(what|which|why|how|when|who|is|are|does|do|can|show|list)\b", m):
+        return False
+    return bool(_RULE_EDIT_RE.search(m))
+
 
 async def classify_intent(
     api_key: str,
@@ -100,6 +114,10 @@ Respond with ONLY the category name, nothing else."""
         )
         intent = result.strip().upper()
         if intent in INTENT_CATEGORIES:
+            # The model sometimes files an obvious rule edit under QUESTION, which
+            # sends it to free-text narration instead of the rule tools.
+            if intent == "QUESTION" and _looks_like_rule_edit(message):
+                return "RULE"
             return intent
     except Exception as exc:
         logger.debug("intent classification failed: %s", exc)
