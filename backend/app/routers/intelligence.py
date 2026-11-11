@@ -1641,10 +1641,16 @@ async def ai_chat(
                         parse_schedule_time,
                     )
                     sched_action = action.get("action", "schedule")
+                    # list/cancel act on the device the user named, or on
+                    # everything only when no device is named.
+                    from app.services.taat_planner import resolve_device_from_message, _unique_loose_match
+                    _sched_dev = (resolve_device_from_message(last_user_msg, devices)
+                                  or _unique_loose_match(last_user_msg, devices))
+                    _sched_dev_id = UUID(_sched_dev["id"]) if _sched_dev else None
                     if sched_action == "list":
-                        action_result = list_scheduled(db, current_user)
+                        action_result = list_scheduled(db, current_user, device_id=_sched_dev_id)
                     elif sched_action == "cancel":
-                        action_result = cancel_scheduled(db, device_id=None, current_user=current_user)
+                        action_result = cancel_scheduled(db, device_id=_sched_dev_id, current_user=current_user)
                     elif sched_action == "schedule" and action.get("device_name"):
                         from zoneinfo import ZoneInfo
                         MYT = ZoneInfo("Asia/Kuala_Lumpur")
@@ -1797,7 +1803,7 @@ async def ai_chat(
     # A command that reached this point without running anything must never be
     # handed to the LLM — it will narrate a confirmation for work nobody did.
     if (exact_reply is None and action_result is None and not confirm_required
-            and intent == "QUESTION"
+            and intent not in ("DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE", "REMEMBER")
             and not re.search(r"\b(report|summary|analysis|chart|compare)\b", last_user_msg, re.I)):
         from app.services.taat_planner import is_imperative_write, is_bare_confirmation
         if is_bare_confirmation(last_user_msg):
