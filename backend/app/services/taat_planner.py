@@ -220,6 +220,7 @@ Message: "{message}"
 
 Respond with ONLY the category name, nothing else."""
 
+    intent = ""
     try:
         result = await call_groq(
             api_key,
@@ -228,20 +229,22 @@ Respond with ONLY the category name, nothing else."""
             temperature=0.0,
         )
         intent = parse_llm_intent(result)
-        if intent in INTENT_CATEGORIES:
-            # The model sometimes files an obvious rule edit under QUESTION, which
-            # sends it to free-text narration instead of the rule tools.
-            if intent not in _WRITE_INTENTS and is_imperative_write(message):
-                if _looks_like_rule_edit(message):
-                    return "RULE"
-                kw = _keyword_intent(message)
-                if kw in _WRITE_INTENTS:
-                    return kw
-            return intent
     except Exception as exc:
         logger.debug("intent classification failed: %s", exc)
 
-    return _keyword_intent(message)
+    if intent not in INTENT_CATEGORIES:
+        logger.warning("taat.classify unusable model reply — using keyword classification")
+        intent = _keyword_intent(message)
+
+    # Whatever produced the intent, an obvious command must reach the tools:
+    # a read-only intent for an imperative message is re-checked by keyword.
+    if intent not in _WRITE_INTENTS and is_imperative_write(message):
+        if _looks_like_rule_edit(message):
+            return "RULE"
+        kw = _keyword_intent(message)
+        if kw in _WRITE_INTENTS:
+            return kw
+    return intent
 
 
 def _keyword_intent(message: str) -> str:
