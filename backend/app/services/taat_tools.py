@@ -451,50 +451,92 @@ def tool_create_rule(
     }
 
 
+def _select_rules(db: Session, current_user, key: Optional[str],
+                  device_name: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Resolve which rule(s) a rule edit refers to. Returns (rules, error).
+
+    scope: None     → the one rule for this key (error if there are several)
+           "global" → the rule that applies to all devices (device_id IS NULL)
+           "every"  → every rule with this key
+    A device_name narrows to that device's own rule. Never picks arbitrarily.
+    """
+    from app.models.models import ThresholdRule, Device
+
+    if not key:
+        return [], "I couldn't tell which rule you mean"
+    rules = db.query(ThresholdRule).filter(
+        ThresholdRule.tenant_id == current_user.tenant_id,
+        ThresholdRule.key == key,
+    ).all()
+    if not rules:
+        return [], f"No existing rule found for key '{key}'"
+
+    names = {str(d.id): d.name for d in db.query(Device).filter(
+        Device.tenant_id == current_user.tenant_id,
+        Device.id.in_([r.device_id for r in rules if r.device_id]),
+    ).all()} if any(r.device_id for r in rules) else {}
+
+    def _where(r):
+        return names.get(str(r.device_id), "a device") if r.device_id else "All devices"
+
+    def _listing(rs):
+        return "; ".join(f"{_where(r)} ({r.condition} {r.threshold})" for r in rs[:8])
+
+    if device_name:
+        picked = [r for r in rules if r.device_id and names.get(str(r.device_id), "").lower() == device_name.lower()]
+        if not picked:
+            return [], f"No '{key}' rule on {device_name}. Existing '{key}' rules: {_listing(rules)}"
+        return picked, None
+    if scope == "global":
+        picked = [r for r in rules if r.device_id is None]
+        if not picked:
+            return [], f"No '{key}' rule applies to all devices. Existing '{key}' rules: {_listing(rules)}"
+        return picked, None
+    if scope == "every":
+        return rules, None
+    if len(rules) > 1:
+        return [], (f"There are {len(rules)} '{key}' rules: {_listing(rules)}. "
+                    f"Say which one — e.g. \"… the {key} rule on <device>\" or \"… on all devices\"")
+    return rules, None
+
+
 def tool_update_rule(db: Session, current_user, key: str,
                      threshold: Optional[float] = None,
                      condition: Optional[str] = None,
                      severity: Optional[str] = None,
-                     device_name: Optional[str] = None) -> dict:
-    """Update the threshold/condition/severity of an EXISTING rule in place
+                     device_name: Optional[str] = None,
+                     scope: Optional[str] = None) -> dict:
+    """Update the threshold/condition/severity of EXISTING rule(s) in place
     (by key, optionally scoped to a device) — does not create a new row."""
-    from app.models.models import ThresholdRule, Device, AlarmSeverity
+    from app.models.models import AlarmSeverity
     from app.services.audit import audit
 
-    q = db.query(ThresholdRule).filter(
-        ThresholdRule.tenant_id == current_user.tenant_id,
-        ThresholdRule.key == key,
-    )
-    if device_name:
-        device = db.query(Device).filter(
-            Device.tenant_id == current_user.tenant_id,
-            Device.name.ilike(f"%{device_name}%"),
-        ).first()
-        if device:
-            q = q.filter(ThresholdRule.device_id == device.id)
+    rules, err = _select_rules(db, current_user, key, device_name, scope)
+    if err:
+        return {"success": False, "reason": err}
 
-    rule = q.first()
-    if not rule:
-        return {"success": False, "reason": f"No existing rule found for key '{key}'"}
-
-    if threshold is not None:
-        rule.threshold = threshold
-    if condition:
-        rule.condition = condition
-    if severity:
-        try:
-            rule.severity = AlarmSeverity[severity.upper()]
-        except KeyError:
-            pass
+    for rule in rules:
+        if threshold is not None:
+            rule.threshold = threshold
+        if condition:
+            rule.condition = condition
+        if severity:
+            try:
+                rule.severity = AlarmSeverity[severity.upper()]
+            except KeyError:
+                pass
     db.commit()
+    for rule in rules:
+        audit(db, tenant_id=current_user.tenant_id, user=current_user,
+              action="rule.update", resource="threshold_rule", resource_id=str(rule.id),
+              detail={"key": key, "threshold": rule.threshold, "source": "taat_v2"}, commit=True)
+    rule = rules[0]
     db.refresh(rule)
-    audit(db, tenant_id=current_user.tenant_id, user=current_user,
-          action="rule.update", resource="threshold_rule", resource_id=str(rule.id),
-          detail={"key": key, "threshold": rule.threshold, "source": "taat_v2"}, commit=True)
-
     return {
         "success":   True,
         "rule_id":   str(rule.id),
+        "updated":   len(rules),
         "key":       rule.key,
         "condition": rule.condition,
         "threshold": rule.threshold,
@@ -506,6 +548,8 @@ def tool_delete_rule(
     db: Session, current_user,
     key: Optional[str] = None,
     delete_all: bool = False,
+    device_name: Optional[str] = None,
+    scope: Optional[str] = None,
 ) -> dict:
     """Delete threshold rule(s)."""
     from app.models.models import ThresholdRule
@@ -524,20 +568,16 @@ def tool_delete_rule(
         db.commit()
         return {"success": True, "deleted": count, "scope": "all"}
 
-    if key:
-        rule = db.query(ThresholdRule).filter(
-            ThresholdRule.tenant_id == current_user.tenant_id,
-            ThresholdRule.key == key,
-        ).first()
-        if rule:
-            audit(db, tenant_id=current_user.tenant_id, user=current_user,
-                  action="rule.delete", resource="threshold_rule",
-                  resource_id=str(rule.id), detail={"key": key, "source": "taat_v2"})
-            db.delete(rule)
-            db.commit()
-            return {"success": True, "deleted": 1, "key": key}
-
-    return {"success": False, "reason": "No matching rule found"}
+    rules, err = _select_rules(db, current_user, key, device_name, scope)
+    if err:
+        return {"success": False, "reason": err}
+    for rule in rules:
+        audit(db, tenant_id=current_user.tenant_id, user=current_user,
+              action="rule.delete", resource="threshold_rule",
+              resource_id=str(rule.id), detail={"key": key, "source": "taat_v2"})
+        db.delete(rule)
+    db.commit()
+    return {"success": True, "deleted": len(rules), "key": key}
 
 
 def tool_save_memory(

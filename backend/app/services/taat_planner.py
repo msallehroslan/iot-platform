@@ -67,6 +67,26 @@ _RULE_EDIT_RE = re.compile(
     r".*\b(threshold|rule|rules)\b", re.I)
 
 
+_WRITE_INTENTS = ("DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE", "REMEMBER")
+
+_IMPERATIVE_RE = re.compile(
+    r"^\s*(please\s+|pls\s+|tolong\s+)?"
+    r"(delete|remove|acknowledge|ack|clear|dismiss|resolve|create|add|update|change|modify|set|raise|lower|"
+    r"turn|switch|enable|disable|toggle|reboot|restart|schedule|cancel|invite|padam|buang)\b", re.I)
+
+_CONFIRM_WORDS = ("proceed", "confirm", "yes", "ok", "do it", "proceed.", "yes.", "confirmed", "go ahead")
+
+
+def is_imperative_write(message: str) -> bool:
+    """True for a message phrased as a command that changes something."""
+    m = (message or "").strip()
+    return bool(_IMPERATIVE_RE.match(m)) and not m.endswith("?")
+
+
+def is_bare_confirmation(message: str) -> bool:
+    return (message or "").strip().lower() in _CONFIRM_WORDS
+
+
 def _looks_like_rule_edit(message: str) -> bool:
     """An imperative that edits a threshold rule ("update the pressure threshold to 5")."""
     m = (message or "").strip()
@@ -116,13 +136,22 @@ Respond with ONLY the category name, nothing else."""
         if intent in INTENT_CATEGORIES:
             # The model sometimes files an obvious rule edit under QUESTION, which
             # sends it to free-text narration instead of the rule tools.
-            if intent == "QUESTION" and _looks_like_rule_edit(message):
-                return "RULE"
+            if intent not in _WRITE_INTENTS and is_imperative_write(message):
+                if _looks_like_rule_edit(message):
+                    return "RULE"
+                kw = _keyword_intent(message)
+                if kw in _WRITE_INTENTS:
+                    return kw
             return intent
     except Exception as exc:
         logger.debug("intent classification failed: %s", exc)
 
-    # Keyword fallback so we never return QUESTION for obvious actions
+    return _keyword_intent(message)
+
+
+def _keyword_intent(message: str) -> str:
+    """Keyword classification — used when the model is unavailable, and to
+    rescue obvious commands the model filed under a read-only intent."""
     msg = message.lower()
     # SCHEDULE must be checked FIRST — "turn on at midnight" has both control + time words
     schedule_time_words = ["at midnight", "at noon", "tomorrow at", "at 9", "at 10", "at 11",
@@ -237,7 +266,7 @@ def reconcile_action_device(intent: str, action: dict, message: str, devices: li
 
     op = action.get("action")
     device_required = intent == "DEVICE_CONTROL" or (intent == "SCHEDULE" and op in (None, "schedule"))
-    device_optional = intent == "RULE" and op in (None, "create", "update")
+    device_optional = intent == "RULE" and op in (None, "create", "update", "delete")
     if not (device_required or device_optional):
         return action, None, False
 
@@ -254,8 +283,8 @@ def reconcile_action_device(intent: str, action: dict, message: str, devices: li
     if not target and device_required and len(devices) == 1:
         target = devices[0]
 
-    if intent == "RULE" and op == "update" and not named:
-        target = None          # only narrow an update to a device the user named
+    if intent == "RULE" and op in ("update", "delete") and not named:
+        target = None          # only narrow an edit to a device the user named
 
     action = {**action, "device_name": target["name"] if target else None}
     return action, target, bool(device_required and not target)
@@ -1037,20 +1066,36 @@ async def _extract_rule_action(api_key, message, ctx, call_groq) -> Optional[dic
     rules = ctx.get("existing_rules", [])
     msg_lower = message.lower()
 
-    # Fast path for delete all
-    if any(w in msg_lower for w in ["delete all", "remove all", "clear all rules"]):
+    import re as _re
+
+    def _key_in_msg():
+        """Longest existing rule key the message mentions ("flow rate" = flow_rate)."""
+        norm = _re.sub(r"[\s_\-]+", " ", msg_lower)
+        keys = {(r.get("key", "") if isinstance(r, dict) else str(r)) for r in rules}
+        hits = [k for k in keys if k and _re.search(
+            r"(?<![a-z0-9])" + _re.escape(_re.sub(r"[\s_\-]+", " ", k.lower())) + r"(?![a-z0-9])", norm)]
+        return max(hits, key=len) if hits else None
+
+    rkey = _key_in_msg()
+    is_delete = bool(_re.search(r"\b(delete|remove|padam|buang)\b", msg_lower))
+
+    # Fast path for delete all — only when no specific rule key is named, so
+    # "delete all temperature rules" can never wipe every rule.
+    if not rkey and any(w in msg_lower for w in ["delete all", "remove all", "clear all rules"]):
         return {"action": "delete", "delete_all": True}
 
-    # Fast path UPDATE — change/update/modify + key + number
-    import re as _re
-    if any(w in msg_lower for w in ["change", "update", "modify", "change the", "update the"]):
-        for rule in rules:
-            rkey = rule.get("key", "") if isinstance(rule, dict) else str(rule)
-            if rkey.lower() in msg_lower:
-                nums = _re.findall(r'[0-9]+\.?[0-9]*', message)
-                if nums:
-                    dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
-                    return {"action": "update", "key": rkey, "device_name": dn, "threshold": float(nums[0])}
+    # Fast path DELETE — delete/remove + existing key
+    if is_delete and rkey:
+        return {"action": "delete", "key": rkey}
+
+    # Fast path UPDATE — change/update/modify + existing key + number
+    if rkey and _re.search(r"\b(change|update|modify|raise|lower|increase|decrease)\b", msg_lower):
+        nums = _re.findall(r"[0-9]+\.?[0-9]*", _re.sub(_re.escape(rkey), " ", message, flags=_re.I))
+        dn = next((d["name"] for d in devices if d["name"].lower() in msg_lower), None)
+        if dn:
+            nums = _re.findall(r"[0-9]+\.?[0-9]*", _re.sub(_re.escape(dn), " ", _re.sub(_re.escape(rkey), " ", message, flags=_re.I), flags=_re.I))
+        if nums:
+            return {"action": "update", "key": rkey, "device_name": dn, "threshold": float(nums[-1])}
 
     prompt = f"""Extract threshold rule action from: "{message}"
 Devices: {json.dumps([d['name'] for d in devices])}

@@ -200,9 +200,20 @@ def _plan_rule(ctx, action, message, device_id) -> Plan:
         return Plan(intent="RULE", steps=steps, risk="HIGH",
                     summary="Delete ALL threshold rules")
 
+    import re as _re
+    _m = (message or "").lower()
+    if _re.search(r"\b(all|every)\s+(the\s+)?devices?\b|\bsemua\s+device", _m):
+        scope = "global"      # the tenant-wide rule shown as "All devices"
+    elif _re.search(r"\b(all|every)\b", _m):
+        scope = "every"       # "delete all temperature rules"
+    else:
+        scope = None
+
     if op == "delete":
         steps = [
-            Step("delete_rule", {"key": action.get("key")}, f"Delete rule: {action.get('key')}", "rule_result")
+            Step("delete_rule", {"key": action.get("key"), "device_name": action.get("device_name"),
+                                 "scope": scope},
+                 f"Delete rule: {action.get('key')}", "rule_result")
         ]
         return Plan(intent="RULE", steps=steps, risk="MEDIUM",
                     summary=f"Delete rule for key '{action.get('key')}'")
@@ -216,6 +227,7 @@ def _plan_rule(ctx, action, message, device_id) -> Plan:
                 "condition":   action.get("condition"),
                 "severity":    action.get("severity"),
                 "device_name": action.get("device_name"),
+                "scope":       scope,
             }, f"Update rule: {action.get('key')} -> {threshold}", "rule_result"),
         ]
         return Plan(intent="RULE", steps=steps, risk="MEDIUM",

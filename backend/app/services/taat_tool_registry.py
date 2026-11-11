@@ -250,11 +250,14 @@ async def tool_create_rule(
 async def tool_delete_rule(
     db: Session, current_user,
     key: Optional[str] = None,
-    delete_all: bool = False, **_
+    delete_all: bool = False,
+    device_name: Optional[str] = None,
+    scope: Optional[str] = None, **_
 ) -> ToolResult:
     try:
         from app.services.taat_tools import tool_delete_rule as _fn
-        return _result("delete_rule", _fn(db, current_user, key=key, delete_all=delete_all))
+        return _result("delete_rule", _fn(db, current_user, key=key, delete_all=delete_all,
+                                          device_name=device_name, scope=scope))
     except Exception as e:
         return _error("delete_rule", str(e))
 
@@ -265,7 +268,8 @@ async def tool_update_rule(
     threshold: Optional[float] = None,
     condition: Optional[str] = None,
     severity: Optional[str] = None,
-    device_name: Optional[str] = None, **_
+    device_name: Optional[str] = None,
+    scope: Optional[str] = None, **_
 ) -> ToolResult:
     if not key:
         return _error("update_rule", "key required")
@@ -273,7 +277,7 @@ async def tool_update_rule(
         from app.services.taat_tools import tool_update_rule as _fn
         return _result("update_rule", _fn(
             db, current_user, key=key, threshold=threshold,
-            condition=condition, severity=severity, device_name=device_name,
+            condition=condition, severity=severity, device_name=device_name, scope=scope,
         ))
     except Exception as e:
         return _error("update_rule", str(e))

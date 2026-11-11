@@ -64,7 +64,8 @@ def build_action_reply(
         if r.get("rule_id") and "device" in r:
             return f"✅ Created rule — {_fmt_rule(r)} on {r.get('device')}."
         if r.get("rule_id"):
-            return f"✅ Updated rule — {_fmt_rule(r)}."
+            n = r.get("updated", 1)
+            return f"✅ Updated {n} rules — {_fmt_rule(r)}." if n > 1 else f"✅ Updated rule — {_fmt_rule(r)}."
         return "⚠️ The rule action did not complete — nothing was changed."
 
     if intent == "USER":

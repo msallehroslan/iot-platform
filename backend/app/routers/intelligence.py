@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import logging
 import httpx
 from datetime import datetime, timezone, timedelta
@@ -1793,6 +1794,19 @@ async def ai_chat(
         confirm_required = confirm_required,
         plan_summary     = getattr(plan, "summary", "") or "",
     )
+    # A command that reached this point without running anything must never be
+    # handed to the LLM — it will narrate a confirmation for work nobody did.
+    if (exact_reply is None and action_result is None and not confirm_required
+            and intent == "QUESTION"
+            and not re.search(r"\b(report|summary|analysis|chart|compare)\b", last_user_msg, re.I)):
+        from app.services.taat_planner import is_imperative_write, is_bare_confirmation
+        if is_bare_confirmation(last_user_msg):
+            exact_reply = ("Nothing is waiting for confirmation, so nothing was changed. "
+                           "Please send the full command again.")
+        elif is_imperative_write(last_user_msg):
+            exact_reply = ("⚠️ No action was taken — I couldn't turn that into a command. "
+                           "Try naming the target, e.g. \"delete the temperature rule on <device>\", "
+                           "\"acknowledge all alarms\" or \"turn on led2 on <device>\".")
 
     # Inject daily comparison as hard system message so LLM cannot ignore it
     if ctx.get("daily_comparison"):
