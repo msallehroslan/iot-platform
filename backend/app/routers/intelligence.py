@@ -1790,7 +1790,7 @@ async def ai_chat(
 
     # Write intents are answered from the action's real result, never by the
     # LLM — see app/services/taat_replies.py.
-    from app.services.taat_replies import build_action_reply
+    from app.services.taat_replies import build_action_reply, build_chips
     exact_reply = build_action_reply(
         intent           = intent,
         action           = action,
@@ -1858,10 +1858,7 @@ async def ai_chat(
             "verification":     ctx.get("verification"),
             "decision":         ctx.get("decision"),
             # Legacy chip fields
-            "rpc_executed":     action_result if intent in ("DEVICE_CONTROL", "SCHEDULE") and action_result else None,
-            "alarm_actioned":   action_result if intent == "ALARM"  and action_result else None,
-            "rule_actioned":    action_result if intent == "RULE"   and action_result else None,
-            "user_actioned":    action_result if intent == "USER"   and action_result else None,
+            **build_chips(intent, action_result),
             "rate":             rate_info,
             "trace_id":         trace.trace_id if trace else None,
         }

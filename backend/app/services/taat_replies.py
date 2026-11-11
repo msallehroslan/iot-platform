@@ -132,3 +132,38 @@ def build_action_reply(
         return (f"⚠️ Command was sent to {dev}: {prm}, but {msg}. "
                 f"The device may be offline or its firmware did not respond.")
     return f"Command sent to {dev}: {prm}. Waiting for the device to confirm."
+
+
+def build_chips(intent: str, action_result) -> dict:
+    """
+    Payloads for the chat UI's action chips. A chip is a green "done" badge,
+    so one is only returned for an action that actually succeeded, and in the
+    shape the UI expects — never the raw tool result.
+    """
+    chips = {"rpc_executed": None, "alarm_actioned": None, "rule_actioned": None, "user_actioned": None}
+    r = action_result
+    if not isinstance(r, dict) or r.get("success") is False or r.get("error"):
+        return chips
+
+    if intent in ("DEVICE_CONTROL", "SCHEDULE"):
+        chips["rpc_executed"] = r
+    elif intent == "ALARM":
+        if r.get("count"):
+            chips["alarm_actioned"] = r
+    elif intent == "RULE":
+        if "deleted" in r:
+            if not r["deleted"]:
+                return chips
+            if r.get("scope") == "all":
+                chips["rule_actioned"] = {"action": "deleted_all", "count": r["deleted"]}
+            else:
+                n = r["deleted"]
+                chips["rule_actioned"] = {"action": "deleted",
+                                          "key": f"{r.get('key')} ({n} rules)" if n > 1 else r.get("key")}
+        elif r.get("rule_id") and "device" in r:
+            chips["rule_actioned"] = {**r, "action": "created"}
+        elif r.get("rule_id"):
+            chips["rule_actioned"] = {**r, "action": "updated"}
+    elif intent == "USER":
+        chips["user_actioned"] = r
+    return chips
