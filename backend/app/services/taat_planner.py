@@ -67,6 +67,101 @@ _RULE_EDIT_RE = re.compile(
     r".*\b(threshold|rule|rules)\b", re.I)
 
 
+# ── Model-output hygiene ──────────────────────────────────────────────────────
+# Nothing below may assume a particular LLM. Whatever model is plugged in, its
+# output is parsed leniently and then checked against the user's own words
+# before anything is executed.
+
+def parse_llm_json(raw) -> Optional[dict]:
+    """First JSON object in a model reply — tolerates code fences, a leading
+    sentence or trailing commentary. None for null / no object / bad JSON."""
+    if not isinstance(raw, str):
+        return None
+    start = raw.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(raw[start:])
+    except ValueError:
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def parse_llm_intent(raw) -> str:
+    """Category name from a classifier reply such as 'RULE', 'Intent: rule.'"""
+    text = str(raw or "").upper()
+    if text.strip() in INTENT_CATEGORIES:
+        return text.strip()
+    hits = [c for c in INTENT_CATEGORIES if re.search(r"(?<![A-Z_])" + c + r"(?![A-Z_])", text)]
+    return hits[0] if len(hits) == 1 else ""
+
+
+def _squash(text) -> str:
+    return re.sub(r"[^a-z0-9.]+", "", str(text).lower())
+
+
+_ON_WORDS  = r"\b(on|enable|enabled|start|open|activate|true|hidupkan|hidup|buka|pasang)\b"
+_OFF_WORDS = r"\b(off|disable|disabled|stop|close|shut|deactivate|false|matikan|mati|tutup|padam)\b"
+
+
+def params_match_message(message: str, params) -> bool:
+    """
+    True only if every key and value the model extracted is something the user
+    actually wrote. Stops a model that misreads or invents a command from
+    having it sent: "set fan to 3" must yield fan=3, nothing else.
+    """
+    if not isinstance(params, dict) or not params:
+        return isinstance(params, dict)
+    low, flat = (message or "").lower(), _squash(message)
+    numbers = [float(n) for n in re.findall(r"(?<![a-z])\d+(?:\.\d+)?", low)]
+    for key, val in params.items():
+        if _squash(key) not in flat:
+            return False
+        if isinstance(val, bool):
+            if not re.search(_ON_WORDS if val else _OFF_WORDS, low):
+                return False
+        elif isinstance(val, (int, float)):
+            # the digits inside the key itself ("led2") don't count as a value
+            rest = re.sub(r"(?<![a-z0-9])" + re.escape(str(key).lower()) + r"(?![a-z0-9])", " ", low)
+            nums = [float(n) for n in re.findall(r"(?<![a-z])\d+(?:\.\d+)?", rest)]
+            if float(val) not in nums:
+                return False
+        elif isinstance(val, str):
+            if _squash(val) not in flat:
+                return False
+        else:
+            return False
+    return True
+
+
+def action_matches_message(intent: str, action, message: str) -> bool:
+    """Same check for rule / schedule / user actions extracted by a model."""
+    if not isinstance(action, dict):
+        return False
+    low, flat = (message or "").lower(), _squash(message)
+    op = action.get("action")
+    if intent == "SCHEDULE" and op in (None, "schedule"):
+        norm = re.sub(r"\b(led|relay|pump|fan|motor|valve|gpio|pin)\s+(\d+)\b", r"\1\2", message, flags=re.I)
+        return params_match_message(norm, action.get("params"))
+    if intent == "RULE" and not action.get("delete_all"):
+        key = action.get("key")
+        words = re.findall(r"[a-z]{3,}", low)
+        if not key or not (_squash(key) in flat
+                           or any(str(key).lower().startswith(w) and len(w) >= 4 for w in words)):
+            return False
+        if op in ("create", "update") and action.get("threshold") is not None:
+            try:
+                want = float(action["threshold"])
+            except (TypeError, ValueError):
+                return False
+            if want not in [float(n) for n in re.findall(r"\d+(?:\.\d+)?", low)]:
+                return False
+    if intent == "USER" and action.get("email"):
+        if str(action["email"]).lower() not in low:
+            return False
+    return True
+
+
 _WRITE_INTENTS = ("DEVICE_CONTROL", "ALARM", "RULE", "USER", "SCHEDULE", "REMEMBER")
 
 _IMPERATIVE_RE = re.compile(
@@ -132,7 +227,7 @@ Respond with ONLY the category name, nothing else."""
             max_tokens=10,
             temperature=0.0,
         )
-        intent = result.strip().upper()
+        intent = parse_llm_intent(result)
         if intent in INTENT_CATEGORIES:
             # The model sometimes files an obvious rule edit under QUESTION, which
             # sends it to free-text narration instead of the rule tools.
@@ -1020,15 +1115,26 @@ async def extract_action(
     """
     if intent == "DEVICE_CONTROL":
         return await _extract_rpc_action(api_key, message, ctx, call_groq)
-    if intent == "RULE":
-        return await _extract_rule_action(api_key, message, ctx, call_groq)
     if intent == "ALARM":
         return _extract_alarm_action(message, ctx)
-    if intent == "USER":
-        return await _extract_user_action(api_key, message, ctx, call_groq)
-    if intent == "SCHEDULE":
-        return await _extract_schedule_action(api_key, message, ctx, call_groq)
-    return None
+    if intent == "RULE":
+        action = await _extract_rule_action(api_key, message, ctx, call_groq)
+    elif intent == "USER":
+        action = await _extract_user_action(api_key, message, ctx, call_groq)
+    elif intent == "SCHEDULE":
+        action = await _extract_schedule_action(api_key, message, ctx, call_groq)
+    else:
+        return None
+    if intent == "USER" and action and action.get("user_id"):
+        # A delete / role change may only target the user whose email was typed.
+        target = next((u for u in ctx.get("users", []) if str(u.get("id")) == str(action["user_id"])), None)
+        if not target or str(target.get("email", "")).lower() not in message.lower():
+            logger.warning("taat.extract rejected USER action=%s — user not named in the message", action)
+            return None
+    if action is not None and not action_matches_message(intent, action, message):
+        logger.warning("taat.extract rejected intent=%s action=%s — not supported by the message", intent, action)
+        return None
+    return action
 
 
 async def _extract_rpc_action(api_key, message, ctx, call_groq) -> Optional[dict]:
@@ -1050,11 +1156,9 @@ Respond JSON only: {{"device_name":"<name>","method":"set","params":{{"<key>":<v
 If not a control command: null"""
     try:
         r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=100, temperature=0.0)
-        r = r.strip()
-        if r.lower() == "null" or not r.startswith("{"):
-            return None
-        parsed = json.loads(r)
-        if "device_name" in parsed and "params" in parsed:
+        parsed = parse_llm_json(r)
+        if parsed and "device_name" in parsed and "params" in parsed \
+                and params_match_message(normalised_msg, parsed.get("params")):
             return parsed
     except Exception:
         pass
@@ -1108,10 +1212,7 @@ Respond JSON only:
 - If unclear: null"""
     try:
         r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
-        r = r.strip()
-        if r.lower() == "null" or not r.startswith("{"):
-            return None
-        return json.loads(r)
+        return parse_llm_json(r)
     except Exception:
         pass
     return None
@@ -1158,10 +1259,7 @@ Respond JSON only:
 - If unclear: null"""
     try:
         r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
-        r = r.strip()
-        if r.lower() == "null" or not r.startswith("{"):
-            return None
-        return json.loads(r)
+        return parse_llm_json(r)
     except Exception:
         pass
     return None
@@ -1200,10 +1298,7 @@ If unclear: null"""
 
     try:
         r = await call_groq(api_key, [{"role": "user", "content": prompt}], max_tokens=150, temperature=0.0)
-        r = r.strip()
-        if r.lower() == "null" or not r.startswith("{"):
-            return None
-        return json.loads(r)
+        return parse_llm_json(r)
     except Exception:
         pass
     return None
